@@ -175,12 +175,29 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             fontRepository.initialize()
             _draftTextStyle.value = _draftTextStyle.value.copy(fontId = fontRepository.selectedFontId.value)
-            refreshDiagnostics()
+            syncPinnedFonts()
+            refreshDiagnostics(includeDetails = false)
         }
     }
 
-    fun refreshDiagnostics() {
-        _diagnostics.value = fontRenderEngine.getDiagnosticsSnapshot()
+    fun refreshDiagnostics(includeDetails: Boolean = true) {
+        _diagnostics.value = fontRenderEngine.getDiagnosticsSnapshot(includePerFontDetails = includeDetails)
+    }
+
+    private fun syncPinnedFonts() {
+        val ids = mutableSetOf(fontRepository.selectedFontId.value)
+        _document.value.appEmojiFontId?.let { ids.add(it) }
+        fun collectTextFonts(layers: List<EditorLayer>) {
+            for (layer in layers) {
+                when (layer) {
+                    is TextLayer -> ids.add(layer.fontId)
+                    is GroupLayer -> collectTextFonts(layer.children)
+                    else -> Unit
+                }
+            }
+        }
+        collectTextFonts(_document.value.layers)
+        fontRenderEngine.pinFonts(ids)
     }
 
     fun clearBanner() {
@@ -238,7 +255,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateCanvasViewportTransform(zoomDelta: Float, panDx: Float, panDy: Float) {
-        _canvasZoom.value = (_canvasZoom.value * zoomDelta).coerceIn(0.25f, 30f)
+        _canvasZoom.value = (_canvasZoom.value * zoomDelta).coerceIn(0.25f, 100f)
         val (px, py) = _canvasPan.value
         _canvasPan.value = (px + panDx) to (py + panDy)
     }
@@ -330,6 +347,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _draftText.value = ""
         lastAppliedCaseMode = null
         _document.value = loaded
+        syncPinnedFonts()
         preloadProjectAssets(loaded)
         return true
     }
@@ -386,6 +404,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = false
         _document.value = next
+        syncPinnedFonts()
     }
 
     fun undo() {
@@ -963,7 +982,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
         }
-        refreshDiagnostics()
+        syncPinnedFonts()
+        refreshDiagnostics(includeDetails = false)
     }
 
     fun setEmojiSourceMode(mode: EmojiSourceMode) {
@@ -1008,7 +1028,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     layer.withBaseTransform(
                         offsetXNorm = (layer.offsetXNorm + deltaXNorm).coerceIn(-0.98f, 0.98f),
                         offsetYNorm = (layer.offsetYNorm + deltaYNorm).coerceIn(-0.98f, 0.98f),
-                        scale = (layer.scale * scaleFactor).coerceIn(0.05f, 25f),
+                        scale = (layer.scale * scaleFactor).coerceIn(0.05f, 100f),
                         stretchX = (layer.stretchX * stretchXFactor).coerceIn(0.15f, 8f),
                         stretchY = (layer.stretchY * stretchYFactor).coerceIn(0.15f, 8f),
                         rotationDeg = (layer.rotationDeg + rotationDelta) % 360f
@@ -1074,7 +1094,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val selId = _document.value.selectedLayerId ?: return
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
-                if (!layer.locked) layer.withBaseTransform(scale = scale.coerceIn(0.05f, 25f)) else layer
+                if (!layer.locked) layer.withBaseTransform(scale = scale.coerceIn(0.05f, 100f)) else layer
             }
         )
     }
@@ -1377,7 +1397,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }.onFailure { err ->
                 _exportFeedback.value = ExportFeedbackState.Error(err.localizedMessage ?: "Export failed")
             }
-            refreshDiagnostics()
+            refreshDiagnostics(includeDetails = false)
         }
     }
 
@@ -1399,21 +1419,24 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun importFontFiles(uris: List<Uri>) {
         viewModelScope.launch {
             fontRepository.importFontUris(uris)
-            refreshDiagnostics()
+            syncPinnedFonts()
+            refreshDiagnostics(includeDetails = false)
         }
     }
 
     fun importFontArchive(uri: Uri) {
         viewModelScope.launch {
             fontRepository.importArchiveUri(uri)
-            refreshDiagnostics()
+            syncPinnedFonts()
+            refreshDiagnostics(includeDetails = false)
         }
     }
 
     fun deleteImportedFont(fontId: String) {
         viewModelScope.launch {
             fontRepository.deleteImportedFont(fontId)
-            refreshDiagnostics()
+            syncPinnedFonts()
+            refreshDiagnostics(includeDetails = false)
         }
     }
 
@@ -1607,7 +1630,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 child.withBaseTransform(
                     offsetXNorm = (group.offsetXNorm + child.offsetXNorm).coerceIn(-0.95f, 0.95f),
                     offsetYNorm = (group.offsetYNorm + child.offsetYNorm).coerceIn(-0.95f, 0.95f),
-                    scale = (group.scale * child.scale).coerceIn(0.2f, 8f),
+                    scale = (group.scale * child.scale).coerceIn(0.05f, 100f),
                     rotationDeg = (group.rotationDeg + child.rotationDeg) % 360f,
                     opacity = (group.opacity * child.opacity).coerceIn(0f, 1f)
                 )

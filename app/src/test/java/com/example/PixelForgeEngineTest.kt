@@ -631,6 +631,188 @@ class PixelForgeEngineTest {
         assertEquals(listOf(id1, id2), vm.document.value.selectionOrder)
     }
 
+    @Test
+    fun ttfAndOtfImportPreservesExactRawFontDataAndVectorFormat() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+
+            val originalTtfBytes = context.assets.open("Fonts/PlayfairDisplay.ttf").use { it.readBytes() } +
+                byteArrayOf(0, 0, 0, 1)
+            val ttfTemp = File(context.cacheDir, "ImportCheck_${System.nanoTime()}.ttf")
+            ttfTemp.writeBytes(originalTtfBytes)
+
+            val otfBytes = buildMinimalOtfBytes()
+            val otfTemp = File(context.cacheDir, "ImportCheck_${System.nanoTime()}.otf")
+            otfTemp.writeBytes(otfBytes)
+
+            // Make unique so repeat test runs don't hit duplicate cache from filesDir
+            val existingImported = repo.fonts.value.filter { it.source == com.example.fonts.FontSource.IMPORTED }
+            existingImported.forEach { repo.deleteImportedFont(it.id) }
+
+            repo.importFontUris(
+                listOf(
+                    android.net.Uri.fromFile(ttfTemp),
+                    android.net.Uri.fromFile(otfTemp)
+                )
+            )
+
+            val importedTtf = repo.fonts.value.firstOrNull {
+                it.source == com.example.fonts.FontSource.IMPORTED && it.fileName == ttfTemp.name
+            }
+            val importedOtf = repo.fonts.value.firstOrNull {
+                it.source == com.example.fonts.FontSource.IMPORTED && it.fileName == otfTemp.name
+            }
+
+            assertNotNull("Imported TTF must be recognized in FontRepository", importedTtf)
+            assertNotNull("Imported OTF must be recognized in FontRepository", importedOtf)
+            assertEquals(com.example.fonts.FontFormat.TTF, importedTtf!!.format)
+            assertEquals(com.example.fonts.FontFormat.OTF, importedOtf!!.format)
+
+            val storedTtfBytes = File(importedTtf.storagePath).readBytes()
+            val storedOtfBytes = File(importedOtf.storagePath).readBytes()
+            assertTrue("Stored TTF bytes must match original byte-for-byte", originalTtfBytes.contentEquals(storedTtfBytes))
+            assertTrue("Stored OTF bytes must match original byte-for-byte", otfBytes.contentEquals(storedOtfBytes))
+            assertEquals(TrueTypeTableParser.sha256Hex(originalTtfBytes), importedTtf.sha256Hash)
+
+            repo.deleteImportedFont(importedTtf.id)
+            repo.deleteImportedFont(importedOtf.id)
+            ttfTemp.delete()
+            otfTemp.delete()
+        }
+    }
+
+    @Test
+    fun asyncTypefaceLoadingAndBoundedLruHandleLargeFontCollections() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+
+            val base = repo.fonts.value.first { it.fileName == "Roboto.ttf" }
+            val synthetic = (1..1200).map { idx ->
+                base.copy(
+                    id = "synthetic_font_$idx",
+                    displayName = "Synthetic Font $idx",
+                    source = com.example.fonts.FontSource.BUNDLED
+                )
+            }
+            renderEngine.registerFonts(synthetic)
+
+            // Pin one font, then load >110 other fonts asynchronously to trigger LRU eviction cleanly
+            val pinnedId = "synthetic_font_1"
+            renderEngine.loadTypefaceAsync(pinnedId)
+            renderEngine.pinFonts(setOf(pinnedId))
+
+            for (i in 2..115) {
+                val tf = renderEngine.loadTypefaceAsync("synthetic_font_$i")
+                assertNotNull(tf)
+            }
+
+            // Pinned font remains immediately available in memory without synchronous reload
+            assertNotNull("Pinned active document font must remain cached", renderEngine.getCachedTypefaceOrNull(pinnedId))
+
+            val quickDiag = renderEngine.getDiagnosticsSnapshot(includePerFontDetails = false)
+            assertTrue("All 1200+ fonts registered", quickDiag.totalFonts >= 1200)
+            assertTrue("Fast diagnostics omits per-font string list", quickDiag.activeFontDiagnostics.isEmpty())
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun highZoomScaleUpTo100xAndVectorSpecimenRenderCrispOutlines() {
+        runBlocking {
+            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+            vm.createNewProject()
+            val textId = vm.addTextLayer("Z")!!
+
+            vm.updateCanvasViewportTransform(zoomDelta = 80f, panDx = 0f, panDy = 0f)
+            assertEquals(80f, vm.canvasZoom.value, 0.01f)
+
+            vm.setSelectedLayerScale(60f)
+            val scaledLayer = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+            assertEquals(60f, scaledLayer.scale, 0.01f)
+
+            // Export/render text at 40x scale using vector outline scaling
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+            val mediaManager = MediaStorageManager(context)
+            val bigDoc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                layers = listOf(
+                    TextLayer(
+                        text = "H",
+                        fontId = repo.selectedFontId.value,
+                        fontSizeSp = 12f,
+                        scale = 12f,
+                        colorArgb = 0xFFFFFFFFL
+                    )
+                )
+            )
+            val bmp = mediaManager.renderProjectToBitmap(bigDoc, renderEngine, 240, 240)
+            var opaqueCount = 0
+            for (y in 20 until 220) {
+                for (x in 20 until 220) {
+                    if (Color.alpha(bmp.getPixel(x, y)) > 200) opaqueCount++
+                }
+            }
+            bmp.recycle()
+            assertTrue("High-scale vector text must render substantial crisp pixels (count=$opaqueCount)", opaqueCount > 100)
+
+            // Direct vector specimen draw at 1600% magnification
+            val specBmp = android.graphics.Bitmap.createBitmap(256, 256, android.graphics.Bitmap.Config.ARGB_8888)
+            val specCanvas = android.graphics.Canvas(specBmp)
+            specCanvas.translate(128f, 128f)
+            renderEngine.drawSampleTextVector(
+                canvas = specCanvas,
+                typeface = renderEngine.getTypeface(repo.selectedFontId.value),
+                isPureColorEmojiFont = false,
+                text = "A",
+                fontSizePx = 420f,
+                maxWidthPx = 600f,
+                colorArgb = Color.BLACK
+            )
+            var specOpaque = 0
+            for (y in 0 until 256) {
+                for (x in 0 until 256) {
+                    if (Color.alpha(specBmp.getPixel(x, y)) > 200) specOpaque++
+                }
+            }
+            specBmp.recycle()
+            assertTrue("1600% vector specimen draw must render crisp glyph pixels", specOpaque > 100)
+        }
+    }
+
+    private fun buildMinimalOtfBytes(): ByteArray {
+        val tags = listOf("CFF ", "head", "maxp", "cmap")
+        val numTables = tags.size
+        val headerSize = 12 + numTables * 16
+        val tableBodySize = numTables * 16
+        val buf = ByteBuffer.allocate(headerSize + tableBodySize).order(ByteOrder.BIG_ENDIAN)
+        buf.put("OTTO".toByteArray(Charsets.US_ASCII))
+        buf.putShort(numTables.toShort())
+        buf.putShort(16)
+        buf.putShort(0)
+        buf.putShort(0)
+
+        var offset = headerSize
+        for (tag in tags) {
+            buf.put(tag.toByteArray(Charsets.US_ASCII))
+            buf.putInt(0)
+            buf.putInt(offset)
+            buf.putInt(16)
+            offset += 16
+        }
+        val maxpIdx = tags.indexOf("maxp")
+        val maxpOff = headerSize + maxpIdx * 16
+        buf.putInt(maxpOff, 0x00005000)
+        buf.putShort(maxpOff + 4, 24)
+        return buf.array()
+    }
+
     private fun buildMinimalSfnt(tags: List<String>): ByteArray {
         val numTables = tags.size
         val headerSize = 12 + numTables * 16

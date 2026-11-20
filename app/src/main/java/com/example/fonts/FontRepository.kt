@@ -21,6 +21,7 @@ class FontRepository(
     private val importedDir = File(context.filesDir, "imported_fonts")
     private val unwrappedDir = File(context.filesDir, "imported_fonts/unwrapped")
     private val registryFile = File(importedDir, "registry.json")
+    private val bundledRegistryFile = File(importedDir, "bundled_registry.json")
     private val historyFile = File(importedDir, "import_history.json")
     private val archiveExtractor = FontArchiveExtractor(context)
 
@@ -45,7 +46,8 @@ class FontRepository(
 
         val bundled = scanBundledFontsDirectory()
         val imported = loadImportedRegistry().filter { meta ->
-            File(meta.storagePath).exists()
+            File(meta.storagePath).exists() &&
+                (meta.renderablePath == null || File(meta.renderablePath).exists())
         }
         val combined = bundled + imported
         renderEngine.registerFonts(combined)
@@ -74,12 +76,21 @@ class FontRepository(
     private fun scanBundledFontsDirectory(): List<FontMetadata> {
         val assetFiles = context.assets.list("Fonts")?.sorted() ?: emptyList()
         val supportedExts = setOf("ttf", "otf", "ttc", "otc", "woff", "woff2")
+        val validAssetNames = assetFiles.filter { fileName ->
+            fileName.substringAfterLast('.', "").lowercase() in supportedExts
+        }
+
+        val cached = loadBundledRegistryCache()
+        if (cached.isNotEmpty() && cached.map { it.fileName }.sorted() == validAssetNames) {
+            return cached.sortedWith(
+                compareByDescending<FontMetadata> { it.isDefaultMandatory }
+                    .thenBy { it.displayName.lowercase() }
+            )
+        }
+
         val results = mutableListOf<FontMetadata>()
 
-        for (fileName in assetFiles) {
-            val ext = fileName.substringAfterLast('.', "").lowercase()
-            if (ext !in supportedExts) continue
-
+        for (fileName in validAssetNames) {
             val assetPath = "Fonts/$fileName"
             val bytes = runCatching {
                 context.assets.open(assetPath).use { it.readBytes() }
@@ -121,10 +132,12 @@ class FontRepository(
         }
 
         // Ensure mandatory default Roboto appears first
-        return results.sortedWith(
+        val sorted = results.sortedWith(
             compareByDescending<FontMetadata> { it.isDefaultMandatory }
                 .thenBy { it.displayName.lowercase() }
         )
+        saveBundledRegistryCache(sorted)
+        return sorted
     }
 
     suspend fun importFontUris(uris: List<Uri>) = withContext(Dispatchers.IO) {
@@ -138,13 +151,18 @@ class FontRepository(
 
         val results = mutableListOf<FontImportItemResult>()
         val existingHashes = _fonts.value.map { it.sha256Hash }.toMutableSet()
+        var lastEmitMs = 0L
 
         uris.forEachIndexed { idx, uri ->
             val name = queryDisplayName(uri) ?: "font_${idx + 1}.ttf"
-            _importProgress.value = _importProgress.value.copy(
-                currentFile = name,
-                processed = idx
-            )
+            val now = System.currentTimeMillis()
+            if (idx == 0 || idx == uris.lastIndex || now - lastEmitMs >= 100L) {
+                lastEmitMs = now
+                _importProgress.value = _importProgress.value.copy(
+                    currentFile = name,
+                    processed = idx
+                )
+            }
             val bytes = runCatching {
                 context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             }.getOrNull()
@@ -198,12 +216,17 @@ class FontRepository(
                     )
                 } else {
                     val total = outcome.candidates.size
+                    var lastEmitMs = 0L
                     outcome.candidates.forEachIndexed { idx, candidate ->
-                        _importProgress.value = _importProgress.value.copy(
-                            currentFile = candidate.relativePath,
-                            processed = idx,
-                            total = total.coerceAtLeast(1)
-                        )
+                        val now = System.currentTimeMillis()
+                        if (idx == 0 || idx == total - 1 || now - lastEmitMs >= 100L) {
+                            lastEmitMs = now
+                            _importProgress.value = _importProgress.value.copy(
+                                currentFile = candidate.relativePath,
+                                processed = idx,
+                                total = total.coerceAtLeast(1)
+                            )
+                        }
                         val bytes = runCatching { candidate.file.readBytes() }.getOrNull()
                         if (bytes == null) {
                             results.add(
@@ -384,6 +407,19 @@ class FontRepository(
         }
     }
 
+    private fun loadBundledRegistryCache(): List<FontMetadata> {
+        if (!bundledRegistryFile.exists()) return emptyList()
+        return runCatching {
+            json.decodeFromString<List<FontMetadata>>(bundledRegistryFile.readText())
+        }.getOrElse { emptyList() }
+    }
+
+    private fun saveBundledRegistryCache(bundled: List<FontMetadata>) {
+        runCatching {
+            bundledRegistryFile.writeText(json.encodeToString(kotlinx.serialization.builtins.ListSerializer(FontMetadata.serializer()), bundled))
+        }
+    }
+
     private fun loadHistory(): List<ImportHistoryEntry> {
         if (!historyFile.exists()) return emptyList()
         return runCatching {
@@ -398,7 +434,7 @@ class FontRepository(
     }
 
     private fun queryDisplayName(uri: Uri): String? {
-        return runCatching {
+        val queried = runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                 ?.use { cursor ->
                     if (cursor.moveToFirst()) {
@@ -406,6 +442,7 @@ class FontRepository(
                         if (idx >= 0) cursor.getString(idx) else null
                     } else null
                 }
-        }.getOrNull()
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+        return queried ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
     }
 }

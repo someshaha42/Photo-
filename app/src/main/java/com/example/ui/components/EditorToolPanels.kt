@@ -1,10 +1,11 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
-import android.util.TypedValue
-import android.widget.TextView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -37,6 +38,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.MergeType
 import androidx.compose.material.icons.automirrored.rounded.RotateLeft
 import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.rounded.Add
@@ -59,7 +61,6 @@ import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.LayersClear
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
-import androidx.compose.material.icons.rounded.MergeType
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -97,7 +98,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -105,7 +105,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
@@ -461,7 +461,7 @@ fun LayersSideDrawer(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                         .testTag("drawer_merge_group_button")
                 ) {
-                    Icon(Icons.Rounded.MergeType, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Rounded.MergeType, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Merge / Group (${selectionOrder.size})", fontWeight = FontWeight.Bold, maxLines = 1)
                 }
@@ -925,7 +925,8 @@ fun TextToolPanel(
     onStartNewText: () -> Unit,
     onCycleTextCase: () -> Unit,
     onOpenFontLibrary: () -> Unit,
-    onUpdateTextLayer: ((TextLayer) -> TextLayer) -> Unit
+    onUpdateTextLayer: ((TextLayer) -> TextLayer) -> Unit,
+    isCompactImeMode: Boolean = false
 ) {
     val activeStyle = selectedTextLayer ?: draftStyle
     val currentBoxValue = selectedTextLayer?.text ?: draftText
@@ -937,7 +938,7 @@ fun TextToolPanel(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Immediate Text Box + ✓ Button right beside it
+        // Immediate Text Box + ✓ Button right beside it (always stays mounted across IME open/close)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -963,14 +964,24 @@ fun TextToolPanel(
             }
         }
 
-        // Font | Shadow | Stroke | B | Aa | Italic | Pill | New (no Size row here — Size lives inside Font tab)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // Collapse formatting controls while typing so canvas remains visible without unmounting the focused OutlinedTextField
+        AnimatedVisibility(
+            visible = !isCompactImeMode,
+            enter = expandVertically(),
+            exit = shrinkVertically()
         ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Font | Shadow | Stroke | B | Aa | Italic | Pill | New (no Size row here — Size lives inside Font tab)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
             FilledTonalButton(
                 onClick = onOpenFontLibrary,
                 modifier = Modifier.testTag("text_panel_font_button")
@@ -1157,6 +1168,8 @@ fun TextToolPanel(
                         )
                     }
                 }
+            }
+        }
             }
         }
     }
@@ -1412,9 +1425,9 @@ fun RotateTransformPanel(
                 Text("${(selectedLayer.scale * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
             }
             Slider(
-                value = selectedLayer.scale.coerceIn(0.1f, 10f),
+                value = selectedLayer.scale.coerceIn(0.1f, 50f),
                 onValueChange = onSetScale,
-                valueRange = 0.1f..10f
+                valueRange = 0.1f..50f
             )
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1439,7 +1452,7 @@ fun EmojiSettingsPanel(
     onSelectMode: (EmojiSourceMode) -> Unit,
     onSelectAppEmojiFont: (String) -> Unit
 ) {
-    val textColorInt = MaterialTheme.colorScheme.onSurface.toArgb()
+    val previewColor = MaterialTheme.colorScheme.onSurface
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1499,7 +1512,11 @@ fun EmojiSettingsPanel(
                         .heightIn(max = 260.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(fontsRecentToOld, key = { it.id }) { font ->
+                    items(
+                        items = fontsRecentToOld,
+                        key = { it.id },
+                        contentType = { "emoji_font" }
+                    ) { font ->
                         val isSelected = font.id == appEmojiFontId
                         val sample = if (font.classification == FontClassification.COLOR_EMOJI || font.hasEmojiCoverage) {
                             "😀 🚀 🌈 ✨"
@@ -1533,18 +1550,13 @@ fun EmojiSettingsPanel(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                AndroidView(
-                                    factory = { ctx ->
-                                        TextView(ctx).apply {
-                                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                                            setTextColor(textColorInt)
-                                        }
-                                    },
-                                    update = { tv ->
-                                        tv.typeface = renderEngine.getTypeface(font.id)
-                                        tv.text = sample
-                                        tv.setTextColor(textColorInt)
-                                    }
+                                FontSpecimenText(
+                                    fontId = font.id,
+                                    text = sample,
+                                    renderEngine = renderEngine,
+                                    color = previewColor,
+                                    fontSize = 18.sp,
+                                    maxLines = 1
                                 )
                             }
                             if (isSelected) {

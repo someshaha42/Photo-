@@ -29,9 +29,17 @@ data class ParsedFontInspection(
 
 object TrueTypeTableParser {
 
+    private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
     fun sha256Hex(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return digest.joinToString("") { "%02x".format(it) }
+        val out = CharArray(digest.size * 2)
+        for (i in digest.indices) {
+            val v = digest[i].toInt() and 0xFF
+            out[i * 2] = HEX_CHARS[v ushr 4]
+            out[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+        }
+        return String(out)
     }
 
     fun inspectBytes(bytes: ByteArray, fallbackName: String): ParsedFontInspection {

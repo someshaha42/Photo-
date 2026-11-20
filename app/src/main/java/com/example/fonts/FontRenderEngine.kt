@@ -15,6 +15,10 @@ import android.util.LruCache
 import com.example.model.EmojiSourceMode
 import com.example.model.TextAlignOption
 import com.example.model.TextLayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
@@ -72,16 +76,22 @@ data class MeasuredTextBounds(
 )
 
 /**
- * High-resolution RGBA8888 font & Color Emoji rendering engine with intelligent resolution-aware LRU cache.
- * Preserves custom TTF/OTF Typeface identity even when Bold/Italic toggles are used (via isFakeBoldText & textSkewX),
- * and accurately isolates emoji runs for System vs Application emoji source mode.
+ * Vector-first font & Color Emoji rendering engine:
+ * - Bounded LRU Typeface cache (plus pinned active-document typefaces) so browsing thousands of fonts never leaks memory.
+ * - Async IO Typeface loading (`loadTypefaceAsync`) + O(1) non-blocking memory lookup (`getCachedTypefaceOrNull`)
+ *   so font browser scrolling never performs synchronous disk I/O or font parsing on the UI thread.
+ * - Resolution-independent vector rendering directly from TTF/OTF/SFNT outlines at any zoom level.
+ * - Preserves custom TTF/OTF Typeface identity even when Bold/Italic toggles are used (via isFakeBoldText & textSkewX),
+ *   and accurately isolates emoji runs for System vs Application emoji source mode.
  */
 class FontRenderEngine(private val context: Context) {
 
-    private val typefaceCache = ConcurrentHashMap<String, Typeface>()
+    private val typefaceLru = object : LruCache<String, Typeface>(96) {}
+    private val pinnedTypefaces = ConcurrentHashMap<String, Typeface>()
     private val metadataIndex = ConcurrentHashMap<String, FontMetadata>()
+    private val loadLocks = ConcurrentHashMap<String, Mutex>()
 
-    private val maxCacheBytes = 32 * 1024 * 1024 // 32 MB bounded memory
+    private val maxCacheBytes = 32 * 1024 * 1024 // 32 MB bounded memory for optional glyph bitmaps
     private val glyphCache = object : LruCache<GlyphCacheKey, CachedGlyph>(maxCacheBytes) {
         override fun sizeOf(key: GlyphCacheKey, value: CachedGlyph): Int = value.byteCount
     }
@@ -102,17 +112,51 @@ class FontRenderEngine(private val context: Context) {
 
     fun getMetadata(fontId: String): FontMetadata? = metadataIndex[fontId]
 
+    fun getCachedTypefaceOrNull(fontId: String): Typeface? {
+        pinnedTypefaces[fontId]?.let { return it }
+        return typefaceLru.get(fontId)
+    }
+
+    fun pinFonts(fontIds: Set<String>) {
+        val currentKeys = pinnedTypefaces.keys.toList()
+        currentKeys.forEach { id ->
+            if (id !in fontIds) {
+                pinnedTypefaces.remove(id)
+            }
+        }
+        fontIds.forEach { id ->
+            if (!pinnedTypefaces.containsKey(id)) {
+                typefaceLru.get(id)?.let { pinnedTypefaces[id] = it }
+            }
+        }
+    }
+
+    suspend fun loadTypefaceAsync(fontId: String): Typeface {
+        getCachedTypefaceOrNull(fontId)?.let { return it }
+        val lock = loadLocks.computeIfAbsent(fontId) { Mutex() }
+        return lock.withLock {
+            getCachedTypefaceOrNull(fontId)?.let { return it }
+            val loaded = withContext(Dispatchers.IO) {
+                loadTypefaceInternal(metadataIndex[fontId])
+            }
+            typefaceLru.put(fontId, loaded)
+            loaded
+        }
+    }
+
     fun getTypeface(fontId: String): Typeface {
-        typefaceCache[fontId]?.let { return it }
+        getCachedTypefaceOrNull(fontId)?.let { return it }
         val meta = metadataIndex[fontId]
         val loaded = loadTypefaceInternal(meta)
-        typefaceCache[fontId] = loaded
+        typefaceLru.put(fontId, loaded)
         return loaded
     }
 
     fun evictFont(fontId: String) {
-        typefaceCache.remove(fontId)
+        pinnedTypefaces.remove(fontId)
+        typefaceLru.remove(fontId)
         metadataIndex.remove(fontId)
+        loadLocks.remove(fontId)
         glyphCache.snapshot().keys.filter { it.fontId == fontId }.forEach { glyphCache.remove(it) }
     }
 
@@ -135,7 +179,7 @@ class FontRenderEngine(private val context: Context) {
     private fun createTextPaint(
         layer: TextLayer,
         effectiveFontSizePx: Float,
-        isColorEmojiFont: Boolean
+        isPureColorEmojiFont: Boolean
     ): TextPaint {
         val baseTypeface = getTypeface(layer.fontId)
         val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
@@ -146,7 +190,11 @@ class FontRenderEngine(private val context: Context) {
             this.textSkewX = if (layer.isItalic) -0.22f else 0f
             this.textSize = effectiveFontSizePx.coerceAtLeast(8f)
             this.letterSpacing = layer.letterSpacing
-            if (!isColorEmojiFont) {
+            if (effectiveFontSizePx > 96f) {
+                // Disable pixel-grid hinting at large sizes so vector outlines stay geometrically pure
+                this.hinting = Paint.HINTING_OFF
+            }
+            if (!isPureColorEmojiFont) {
                 val colorInt = layer.colorArgb.toInt()
                 this.color = colorInt
                 this.alpha = ((android.graphics.Color.alpha(colorInt) / 255f) * layer.opacity * 255f)
@@ -156,12 +204,11 @@ class FontRenderEngine(private val context: Context) {
                 this.alpha = layerAlpha
             }
             if (layer.shadowEnabled) {
-                setShadowLayer(
-                    layer.shadowRadius.coerceAtLeast(2f) * (effectiveFontSizePx / 36f),
-                    2f * (effectiveFontSizePx / 36f),
-                    3f * (effectiveFontSizePx / 36f),
-                    layer.shadowColorArgb.toInt()
-                )
+                val scaleRatio = effectiveFontSizePx / 36f
+                val radius = (layer.shadowRadius.coerceAtLeast(2f) * scaleRatio).coerceIn(1f, 120f)
+                val dx = (2f * scaleRatio).coerceIn(-80f, 80f)
+                val dy = (3f * scaleRatio).coerceIn(-80f, 80f)
+                setShadowLayer(radius, dx, dy, layer.shadowColorArgb.toInt())
             }
         }
     }
@@ -174,10 +221,9 @@ class FontRenderEngine(private val context: Context) {
         appEmojiFontId: String? = null
     ): MeasuredTextBounds {
         val meta = metadataIndex[layer.fontId]
-        val isColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI ||
-            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
+        val isPureColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI
         val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
-        val paint = createTextPaint(layer, effectiveFontSizePx, isColorEmojiFont)
+        val paint = createTextPaint(layer, effectiveFontSizePx, isPureColorEmojiFont)
         val styled = buildStyledSpannable(
             text = layer.text.ifEmpty { " " },
             layerFontId = layer.fontId,
@@ -215,10 +261,9 @@ class FontRenderEngine(private val context: Context) {
     ) {
         val startNs = System.nanoTime()
         val meta = metadataIndex[layer.fontId]
-        val isColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI ||
-            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
+        val isPureColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI
         val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
-        val textPaint = createTextPaint(layer, effectiveFontSizePx, isColorEmojiFont)
+        val textPaint = createTextPaint(layer, effectiveFontSizePx, isPureColorEmojiFont)
 
         val styledText = buildStyledSpannable(
             text = layer.text,
@@ -271,10 +316,12 @@ class FontRenderEngine(private val context: Context) {
             canvas.drawRoundRect(pillRect, effectiveFontSizePx * 0.35f, effectiveFontSizePx * 0.35f, pillPaint)
         }
 
-        if (layer.strokeWidth > 0f && !isColorEmojiFont) {
+        if (layer.strokeWidth > 0f && !isPureColorEmojiFont) {
             val strokePaint = TextPaint(textPaint).apply {
                 style = Paint.Style.STROKE
                 color = layer.strokeColorArgb.toInt()
+                alpha = ((android.graphics.Color.alpha(layer.strokeColorArgb.toInt()) / 255f) * layer.opacity * 255f)
+                    .roundToInt().coerceIn(0, 255)
                 strokeWidth = layer.strokeWidth * (effectiveFontSizePx / 36f)
                 strokeJoin = Paint.Join.ROUND
                 clearShadowLayer()
@@ -306,6 +353,39 @@ class FontRenderEngine(private val context: Context) {
         lastRenderedPx = effectiveFontSizePx.roundToInt()
     }
 
+    /**
+     * Draws a crisp resolution-independent vector specimen centered on the given Canvas.
+     * Used by the interactive font inspector zoom dialog so magnification never relies on a low-res bitmap.
+     */
+    fun drawSampleTextVector(
+        canvas: Canvas,
+        typeface: Typeface,
+        isPureColorEmojiFont: Boolean,
+        text: String,
+        fontSizePx: Float,
+        maxWidthPx: Float,
+        colorArgb: Int
+    ) {
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
+            this.typeface = typeface
+            this.textSize = fontSizePx.coerceAtLeast(8f)
+            this.color = if (isPureColorEmojiFont) android.graphics.Color.WHITE else colorArgb
+            if (fontSizePx > 96f) {
+                this.hinting = Paint.HINTING_OFF
+            }
+        }
+        val layoutWidth = maxWidthPx.roundToInt().coerceAtLeast(64)
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, paint, layoutWidth)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .setIncludePad(true)
+            .build()
+        canvas.save()
+        canvas.translate(-layoutWidth / 2f, -layout.height / 2f)
+        layout.draw(canvas)
+        canvas.restore()
+    }
+
     fun buildStyledSpannable(
         text: String,
         layerFontId: String,
@@ -319,7 +399,7 @@ class FontRenderEngine(private val context: Context) {
 
         val segments = segmentEmojiRuns(text)
         val useAppFont = emojiSourceMode == EmojiSourceMode.APPLICATION && !appEmojiFontId.isNullOrBlank()
-        val resolvedEmojiFontId = if (useAppFont) appEmojiFontId!! else null
+        val resolvedEmojiFontId = if (useAppFont) appEmojiFontId else null
         val emojiTypeface = if (resolvedEmojiFontId != null) getTypeface(resolvedEmojiFontId) else Typeface.DEFAULT
         val emojiMeta = resolvedEmojiFontId?.let { metadataIndex[it] }
         val preserveColor = if (!useAppFont) {
@@ -358,7 +438,7 @@ class FontRenderEngine(private val context: Context) {
         isItalic: Boolean = false,
         shadowEnabled: Boolean = false
     ): Bitmap {
-        val clampedPx = targetFontPx.coerceIn(16, 640)
+        val clampedPx = targetFontPx.coerceIn(16, 1024)
         val bucketPx = ((clampedPx + 15) / 16) * 16
         val key = GlyphCacheKey(
             fontId = fontId,
@@ -383,8 +463,7 @@ class FontRenderEngine(private val context: Context) {
         cacheMisses++
         val startNs = System.nanoTime()
         val meta = metadataIndex[fontId]
-        val isColorEmoji = meta?.classification == FontClassification.COLOR_EMOJI ||
-            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
+        val isColorEmoji = meta?.classification == FontClassification.COLOR_EMOJI
         val baseTypeface = getTypeface(fontId)
 
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
@@ -401,8 +480,8 @@ class FontRenderEngine(private val context: Context) {
         val maxLineW = lines.maxOfOrNull { ceil(paint.measureText(it).toDouble()).toInt() }
             ?.coerceAtLeast(bucketPx) ?: bucketPx
         val pad = (bucketPx * 0.25f).roundToInt().coerceAtLeast(12)
-        val bmpW = (maxLineW + pad * 2).coerceIn(32, 1600)
-        val bmpH = (lineHeight * lines.size + pad * 2).coerceIn(32, 1600)
+        val bmpW = (maxLineW + pad * 2).coerceIn(32, 2048)
+        val bmpH = (lineHeight * lines.size + pad * 2).coerceIn(32, 2048)
 
         val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -432,16 +511,32 @@ class FontRenderEngine(private val context: Context) {
         return bitmap
     }
 
-    fun getDiagnosticsSnapshot(): FontDiagnosticsSnapshot {
-        val all = metadataIndex.values.toList()
+    fun getDiagnosticsSnapshot(includePerFontDetails: Boolean = true): FontDiagnosticsSnapshot {
+        val all = metadataIndex.values
+        var bundled = 0
+        var imported = 0
+        var emoji = 0
+        for (f in all) {
+            if (f.source == FontSource.BUNDLED) bundled++ else imported++
+            if (f.classification == FontClassification.COLOR_EMOJI ||
+                f.classification == FontClassification.MIXED_TEXT_COLOR_EMOJI
+            ) {
+                emoji++
+            }
+        }
+        val details = if (includePerFontDetails) {
+            all.take(150).map { f ->
+                val strikes = if (f.bitmapStrikePpem.isNotEmpty()) " • strikes=${f.bitmapStrikePpem.joinToString("/")}px" else ""
+                "${f.displayName}: ${f.classification.badgeName} (${f.colorTableType.label}, ${f.glyphCount} glyphs$strikes)"
+            }
+        } else {
+            emptyList()
+        }
         return FontDiagnosticsSnapshot(
             totalFonts = all.size,
-            bundledCount = all.count { it.source == FontSource.BUNDLED },
-            importedCount = all.count { it.source == FontSource.IMPORTED },
-            colorEmojiCount = all.count {
-                it.classification == FontClassification.COLOR_EMOJI ||
-                    it.classification == FontClassification.MIXED_TEXT_COLOR_EMOJI
-            },
+            bundledCount = bundled,
+            importedCount = imported,
+            colorEmojiCount = emoji,
             cacheHitCount = cacheHits,
             cacheMissCount = cacheMisses,
             cacheMemoryBytes = glyphCache.size(),
@@ -451,10 +546,7 @@ class FontRenderEngine(private val context: Context) {
             avgRasterizationMs = if (rasterCount > 0) totalRasterMs / rasterCount else 0.0,
             lastRequestedPx = lastRequestedPx,
             lastRenderedPx = lastRenderedPx,
-            activeFontDiagnostics = all.map { f ->
-                val strikes = if (f.bitmapStrikePpem.isNotEmpty()) " • strikes=${f.bitmapStrikePpem.joinToString("/")}px" else ""
-                "${f.displayName}: ${f.classification.badgeName} (${f.colorTableType.label}, ${f.glyphCount} glyphs$strikes)"
-            }
+            activeFontDiagnostics = details
         )
     }
 

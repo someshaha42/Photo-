@@ -284,6 +284,8 @@ fun EditorCanvasViewport(
                         primarySelectedId = document.selectedLayerId,
                         parentGroup = null,
                         parentLocked = false,
+                        parentScale = 1f,
+                        canvasZoom = canvasZoom,
                         canvasWpx = canvasWpx,
                         canvasHpx = canvasHpx,
                         baseUnitPx = baseUnitPx,
@@ -412,6 +414,8 @@ private fun RenderCanvasLayerNode(
     primarySelectedId: String?,
     parentGroup: GroupLayer?,
     parentLocked: Boolean,
+    parentScale: Float,
+    canvasZoom: Float,
     canvasWpx: Float,
     canvasHpx: Float,
     baseUnitPx: Float,
@@ -529,6 +533,8 @@ private fun RenderCanvasLayerNode(
                             primarySelectedId = primarySelectedId,
                             parentGroup = childForwardParent,
                             parentLocked = effectiveLocked,
+                            parentScale = parentScale * layer.scale,
+                            canvasZoom = canvasZoom,
                             canvasWpx = canvasWpx,
                             canvasHpx = canvasHpx,
                             baseUnitPx = baseUnitPx,
@@ -809,6 +815,9 @@ private fun RenderCanvasLayerNode(
                 val boxWdp = with(LocalDensity.current) { measured.widthPx.toDp() }
                 val boxHdp = with(LocalDensity.current) { measured.heightPx.toDp() }
 
+                val uniformZoom = (layer.scale * parentScale * canvasZoom).coerceAtLeast(1f)
+                val renderScale = uniformZoom.coerceIn(1f, (1536f / effPx.coerceAtLeast(1f)).coerceAtLeast(1f))
+
                 Box(
                     modifier = Modifier
                         .size(width = boxWdp, height = boxHdp)
@@ -818,11 +827,14 @@ private fun RenderCanvasLayerNode(
                         drawIntoCanvas { canvas ->
                             canvas.nativeCanvas.save()
                             canvas.nativeCanvas.translate(size.width / 2f, size.height / 2f)
+                            if (renderScale > 1.01f) {
+                                canvas.nativeCanvas.scale(1f / renderScale, 1f / renderScale)
+                            }
                             fontRenderEngine.drawTextLayerOnCanvas(
                                 canvas = canvas.nativeCanvas,
                                 layer = layer,
-                                effectiveFontSizePx = effPx,
-                                maxWidthPx = (measured.widthPx + 4f).coerceAtMost(maxBoxW),
+                                effectiveFontSizePx = effPx * renderScale,
+                                maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(maxBoxW)) * renderScale,
                                 emojiSourceMode = document.emojiSourceMode,
                                 appEmojiFontId = document.appEmojiFontId
                             )
@@ -1164,8 +1176,8 @@ private fun SelectionDotHandlesOverlay(
     var boxH by remember { mutableFloatStateOf(160f) }
     val liveLayer by rememberUpdatedState(targetLayer)
 
-    val invScaleX = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.15f, 2.5f)
-    val invScaleY = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.15f, 2.5f)
+    val invScaleX = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+    val invScaleY = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
 
     Box(
         modifier = boxModifier.onSizeChanged { sz ->
@@ -1218,9 +1230,14 @@ private fun SelectionDotHandlesOverlay(
                     .pointerInput(liveLayer.id, "corner_$idx") {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            val radialDelta = (dragAmount.x * sxSign + dragAmount.y * sySign) * 0.5f
-                            val span = min(boxW, boxH).coerceAtLeast(60f)
-                            val zoomFactor = (1f + (radialDelta / span) * 0.85f).coerceIn(0.92f, 1.09f)
+                            val realDeltaX = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * invScaleX)
+                            val realDeltaY = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * invScaleY)
+                            val radialDelta = (realDeltaX * sxSign + realDeltaY * sySign) * 0.55f
+                            val curSpan = min(
+                                boxW * liveLayer.scale * liveLayer.stretchX,
+                                boxH * liveLayer.scale * liveLayer.stretchY
+                            ).coerceAtLeast(40f)
+                            val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
                             onUniformZoom(zoomFactor)
                         }
                     }

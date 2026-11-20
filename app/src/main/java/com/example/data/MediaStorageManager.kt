@@ -239,7 +239,8 @@ class MediaStorageManager(private val context: Context) {
                 targetWidth = targetWidth,
                 targetHeight = targetHeight,
                 isNestedInGroup = false,
-                parentOpacity = 1f
+                parentOpacity = 1f,
+                parentScale = 1f
             )
         }
 
@@ -265,12 +266,14 @@ class MediaStorageManager(private val context: Context) {
         targetWidth: Int,
         targetHeight: Int,
         isNestedInGroup: Boolean,
-        parentOpacity: Float
+        parentOpacity: Float,
+        parentScale: Float
     ) {
         if (!layer.visible) return
         val cx = if (isNestedInGroup) targetWidth * layer.offsetXNorm else targetWidth * (0.5f + layer.offsetXNorm)
         val cy = if (isNestedInGroup) targetHeight * layer.offsetYNorm else targetHeight * (0.5f + layer.offsetYNorm)
         val effectiveOpacity = (layer.opacity * parentOpacity).coerceIn(0f, 1f)
+        val cumulativeScale = (layer.scale * parentScale).coerceAtLeast(0.05f)
 
         canvas.save()
         canvas.translate(cx, cy)
@@ -288,7 +291,8 @@ class MediaStorageManager(private val context: Context) {
                         targetWidth = targetWidth,
                         targetHeight = targetHeight,
                         isNestedInGroup = true,
-                        parentOpacity = effectiveOpacity
+                        parentOpacity = effectiveOpacity,
+                        parentScale = cumulativeScale
                     )
                 }
             }
@@ -359,11 +363,15 @@ class MediaStorageManager(private val context: Context) {
                     emojiSourceMode = document.emojiSourceMode,
                     appEmojiFontId = document.appEmojiFontId
                 )
+                val renderScale = cumulativeScale.coerceIn(1f, (2048f / effPx.coerceAtLeast(1f)).coerceAtLeast(1f))
+                if (renderScale > 1.01f) {
+                    canvas.scale(1f / renderScale, 1f / renderScale)
+                }
                 fontRenderEngine.drawTextLayerOnCanvas(
                     canvas = canvas,
                     layer = layer.copy(opacity = effectiveOpacity),
-                    effectiveFontSizePx = effPx,
-                    maxWidthPx = (measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f),
+                    effectiveFontSizePx = effPx * renderScale,
+                    maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f)) * renderScale,
                     emojiSourceMode = document.emojiSourceMode,
                     appEmojiFontId = document.appEmojiFontId
                 )

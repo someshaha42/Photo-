@@ -1,11 +1,10 @@
 package com.example.ui.components
 
-import android.util.TypedValue
-import android.widget.TextView
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,28 +49,37 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.example.fonts.FontClassification
 import com.example.fonts.FontDiagnosticsSnapshot
 import com.example.fonts.FontImportProgress
@@ -254,7 +262,11 @@ fun FontLibrarySheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 8.dp)
             ) {
-                items(filteredFonts, key = { it.id }) { font ->
+                items(
+                    items = filteredFonts,
+                    key = { it.id },
+                    contentType = { "font_card" }
+                ) { font ->
                     val isSelected = font.id == selectedFontId
                     FontPreviewCard(
                         font = font,
@@ -378,7 +390,7 @@ private fun FontPreviewCard(
             else -> "Aa Bb Cc 123"
         }
     }
-    val textColorInt = MaterialTheme.colorScheme.onSurface.toArgb()
+    val previewColor = MaterialTheme.colorScheme.onSurface
 
     Card(
         modifier = Modifier
@@ -456,24 +468,53 @@ private fun FontPreviewCard(
                 }
             }
 
-            AndroidView(
-                factory = { ctx ->
-                    TextView(ctx).apply {
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-                        setTextColor(textColorInt)
-                        includeFontPadding = true
-                        setPadding(0, 8, 0, 8)
-                    }
-                },
-                update = { tv ->
-                    tv.typeface = renderEngine.getTypeface(font.id)
-                    tv.text = previewSample
-                    tv.setTextColor(textColorInt)
-                },
-                modifier = Modifier.fillMaxWidth()
+            FontSpecimenText(
+                fontId = font.id,
+                text = previewSample,
+                renderEngine = renderEngine,
+                color = previewColor,
+                fontSize = 22.sp,
+                maxLines = 1,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
             )
         }
     }
+}
+
+@Composable
+fun FontSpecimenText(
+    fontId: String,
+    text: String,
+    renderEngine: FontRenderEngine,
+    color: Color,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier,
+    maxLines: Int = 1,
+    overflow: TextOverflow = TextOverflow.Ellipsis
+) {
+    val typeface by produceState(
+        initialValue = renderEngine.getCachedTypefaceOrNull(fontId),
+        key1 = fontId,
+        key2 = renderEngine
+    ) {
+        if (value == null) {
+            value = renderEngine.loadTypefaceAsync(fontId)
+        }
+    }
+    val fontFamily = remember(typeface) {
+        typeface?.let { FontFamily(it) } ?: FontFamily.Default
+    }
+    Text(
+        text = text,
+        fontFamily = fontFamily,
+        fontSize = fontSize,
+        color = color,
+        maxLines = maxLines,
+        overflow = overflow,
+        modifier = modifier
+    )
 }
 
 @Composable
@@ -483,22 +524,24 @@ private fun FontDetailZoomDialog(
     onSelectAndClose: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var zoomPercent by remember { mutableIntStateOf(200) }
+    var zoomPercent by remember { mutableFloatStateOf(200f) }
+    var panOffset by remember(font.id) { mutableStateOf(Offset.Zero) }
     val sampleText = if (font.classification == FontClassification.COLOR_EMOJI || font.hasEmojiCoverage) {
         "😀 🚀 🌈 🎨"
     } else {
         "Aa Bb 123"
     }
-    val textColorLong = MaterialTheme.colorScheme.onSurface.toArgb().toLong() and 0xFFFFFFFFL
-    val targetPx = (36 * (zoomPercent / 100f)).toInt()
-    val renderedBitmap = remember(font.id, zoomPercent, sampleText) {
-        renderEngine.getOrRenderGlyphBitmap(
-            fontId = font.id,
-            text = sampleText,
-            targetFontPx = targetPx,
-            colorArgb = textColorLong
-        )
+    val textColorInt = MaterialTheme.colorScheme.onSurface.toArgb()
+    val loadedTypeface by produceState(
+        initialValue = renderEngine.getCachedTypefaceOrNull(font.id),
+        key1 = font.id,
+        key2 = renderEngine
+    ) {
+        if (value == null) {
+            value = renderEngine.loadTypefaceAsync(font.id)
+        }
     }
+    val density = LocalDensity.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -522,11 +565,39 @@ private fun FontDetailZoomDialog(
                     }
                 }
                 HorizontalDivider()
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(100, 200, 400, 800).forEach { pct ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Zoom: ${zoomPercent.roundToInt()}%",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Vector Outlines",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StudioTeal
+                    )
+                }
+                Slider(
+                    value = zoomPercent,
+                    onValueChange = { zoomPercent = it },
+                    valueRange = 100f..2000f,
+                    modifier = Modifier.testTag("font_detail_zoom_slider")
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(100, 200, 400, 800, 1600).forEach { pct ->
                         FilterChip(
-                            selected = zoomPercent == pct,
-                            onClick = { zoomPercent = pct },
+                            selected = zoomPercent.roundToInt() == pct,
+                            onClick = {
+                                zoomPercent = pct.toFloat()
+                                panOffset = Offset.Zero
+                            },
                             label = { Text("${pct}%") }
                         )
                     }
@@ -534,17 +605,51 @@ private fun FontDetailZoomDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(100.dp)
+                        .height(140.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .clipToBounds()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .pointerInput(font.id) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                panOffset += dragAmount
+                            }
+                        }
+                        .testTag("font_detail_vector_preview"),
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        bitmap = renderedBitmap.asImageBitmap(),
-                        contentDescription = "Glyph Zoom Preview",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.padding(8.dp)
-                    )
+                    val tf = loadedTypeface
+                    if (tf != null) {
+                        val isPureColorEmoji = font.classification == FontClassification.COLOR_EMOJI
+                        val zoomFactor = zoomPercent / 100f
+                        val basePx = with(density) { 26.dp.toPx() }
+                        val effectivePx = basePx * zoomFactor
+                        Canvas(modifier = Modifier.fillMaxWidth().height(140.dp)) {
+                            drawIntoCanvas { canvas ->
+                                canvas.nativeCanvas.save()
+                                canvas.nativeCanvas.translate(
+                                    size.width / 2f + panOffset.x,
+                                    size.height / 2f + panOffset.y
+                                )
+                                renderEngine.drawSampleTextVector(
+                                    canvas = canvas.nativeCanvas,
+                                    typeface = tf,
+                                    isPureColorEmojiFont = isPureColorEmoji,
+                                    text = sampleText,
+                                    fontSizePx = effectivePx,
+                                    maxWidthPx = (size.width * zoomFactor).coerceAtLeast(effectivePx * 8f),
+                                    colorArgb = textColorInt
+                                )
+                                canvas.nativeCanvas.restore()
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "Loading font outlines...",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         },

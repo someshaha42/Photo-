@@ -1,8 +1,6 @@
 package com.example.ui.components
 
 import android.graphics.Color as AndroidColor
-import android.util.TypedValue
-import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -74,7 +72,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.sp
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
@@ -208,7 +206,7 @@ fun FontBrowserToolPanel(
     val activeFontId = selectedTextLayer?.fontId ?: selectedFontId
     val activeFont = fonts.firstOrNull { it.id == activeFontId }
     var searchQuery by remember { mutableStateOf("") }
-    val textColorInt = MaterialTheme.colorScheme.onSurface.toArgb()
+    val previewColor = MaterialTheme.colorScheme.onSurface
 
     val filteredFonts = remember(fontsRecentToOld, searchQuery) {
         if (searchQuery.isBlank()) fontsRecentToOld
@@ -300,7 +298,7 @@ fun FontBrowserToolPanel(
                     modifier = Modifier.width(34.dp)
                 )
                 IconButton(
-                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp - 4f).coerceIn(12f, 180f)) },
+                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp - 4f).coerceIn(8f, 400f)) },
                     modifier = Modifier
                         .size(34.dp)
                         .testTag("text_size_decrease")
@@ -308,15 +306,15 @@ fun FontBrowserToolPanel(
                     Icon(Icons.Rounded.Remove, contentDescription = "Decrease Size", modifier = Modifier.size(18.dp))
                 }
                 Slider(
-                    value = activeStyle.fontSizeSp.coerceIn(12f, 180f),
+                    value = activeStyle.fontSizeSp.coerceIn(8f, 400f),
                     onValueChange = onUpdateTextSize,
-                    valueRange = 12f..180f,
+                    valueRange = 8f..400f,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("text_size_slider")
                 )
                 IconButton(
-                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp + 4f).coerceIn(12f, 180f)) },
+                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp + 4f).coerceIn(8f, 400f)) },
                     modifier = Modifier
                         .size(34.dp)
                         .testTag("text_size_increase")
@@ -337,10 +335,15 @@ fun FontBrowserToolPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(vertical = 2.dp)
         ) {
-            items(filteredFonts, key = { it.id }) { font ->
+            items(
+                items = filteredFonts,
+                key = { it.id },
+                contentType = { "font_chip" }
+            ) { font ->
                 val isSelected = font.id == activeFontId
+                val selectedText = selectedTextLayer?.text?.trim().orEmpty()
                 val samplePreview = when {
-                    !selectedTextLayer?.text.isNullOrBlank() -> selectedTextLayer!!.text.take(14)
+                    selectedText.isNotEmpty() -> selectedText.take(14)
                     font.classification == FontClassification.COLOR_EMOJI -> "😀🚀🌈"
                     else -> "Abc 123"
                 }
@@ -384,19 +387,13 @@ fun FontBrowserToolPanel(
                             }
                         }
 
-                        AndroidView(
-                            factory = { ctx ->
-                                TextView(ctx).apply {
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                                    setTextColor(textColorInt)
-                                    maxLines = 1
-                                }
-                            },
-                            update = { tv ->
-                                tv.typeface = renderEngine.getTypeface(font.id)
-                                tv.text = samplePreview
-                                tv.setTextColor(textColorInt)
-                            }
+                        FontSpecimenText(
+                            fontId = font.id,
+                            text = samplePreview,
+                            renderEngine = renderEngine,
+                            color = previewColor,
+                            fontSize = 17.sp,
+                            maxLines = 1
                         )
                     }
                 }
