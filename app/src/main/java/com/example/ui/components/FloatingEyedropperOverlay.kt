@@ -136,8 +136,8 @@ fun FloatingEyedropperOverlay(
                 detectDragGestures { change, dragAmount ->
                     change.consume()
                     val next = Offset(
-                        (change.position.x).coerceIn(0f, overlayWidth.toFloat()),
-                        (change.position.y).coerceIn(0f, overlayHeight.toFloat())
+                        (cursorLocal.x + dragAmount.x).coerceIn(0f, overlayWidth.toFloat()),
+                        (cursorLocal.y + dragAmount.y).coerceIn(0f, overlayHeight.toFloat())
                     )
                     cursorLocal = next
                     sampledColor = sampleAtLocal(next, snapshot)
@@ -221,7 +221,7 @@ fun FloatingEyedropperOverlay(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Tap or drag screen",
+                    text = "Glide like mouse • ✓",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -35,7 +36,9 @@ import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Category
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Crop
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
@@ -52,16 +55,17 @@ import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Title
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ZoomIn
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -91,6 +95,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.model.DrawLayer
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ShapeLayer
@@ -104,6 +109,7 @@ import com.example.ui.components.BackgroundSettingsPanel
 import com.example.ui.components.CanvasSettingsPanel
 import com.example.ui.components.ColorToolPanel
 import com.example.ui.components.CropToolPanel
+import com.example.ui.components.DrawToolPanel
 import com.example.ui.components.EditorCanvasViewport
 import com.example.ui.components.EmojiSettingsPanel
 import com.example.ui.components.FloatingEyedropperOverlay
@@ -112,11 +118,12 @@ import com.example.ui.components.HorizontalLayerStrip
 import com.example.ui.components.LayersSideDrawer
 import com.example.ui.components.PhotoImportToolPanel
 import com.example.ui.components.RotateTransformPanel
+import com.example.ui.components.SaveExportDialog
 import com.example.ui.components.ShapesToolPanel
 import com.example.ui.components.TextToolPanel
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
-import com.example.ui.theme.StudioTeal
+import com.example.ui.theme.StudioEmerald
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -161,11 +168,17 @@ fun EditorScreen(
     val fonts by viewModel.fonts.collectAsStateWithLifecycle()
     val fontsRecentToOld by viewModel.fontsRecentToOld.collectAsStateWithLifecycle()
     val selectedFontId by viewModel.selectedFontId.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val drawColorArgb by viewModel.drawColorArgb.collectAsStateWithLifecycle()
+    val drawBrushSizeNorm by viewModel.drawBrushSizeNorm.collectAsStateWithLifecycle()
 
     var showAddMenu by remember { mutableStateOf(false) }
     var showThreeDotMenu by remember { mutableStateOf(false) }
     var activeThreeDotSection by remember { mutableStateOf(ThreeDotSheetSection.NONE) }
     var showExportDialog by remember { mutableStateOf(false) }
+
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
 
     // Multi-stage Android Back behavior: never quit app directly when panels/options are open
     BackHandler {
@@ -213,8 +226,9 @@ fun EditorScreen(
         val fb = exportFeedback
         if (fb is ExportFeedbackState.Success && fb.shareImmediately) {
             val shareUri = viewModel.mediaManager.getShareUri(fb.file)
+            val mime = if (fb.file.extension.equals("jpg", true)) "image/jpeg" else "image/png"
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/png"
+                type = mime
                 putExtra(Intent.EXTRA_STREAM, shareUri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -230,6 +244,9 @@ fun EditorScreen(
     val selectedShapeLayer = selectedLayer as? ShapeLayer
     val activeFont = fonts.firstOrNull { it.id == (selectedTextLayer?.fontId ?: selectedFontId) }
     val photoCount = document.layers.count { it is ImageLayer }
+    val hasDrawContent = (selectedLayer as? DrawLayer)?.strokes?.isNotEmpty() == true ||
+        document.layers.filterIsInstance<DrawLayer>().any { it.strokes.isNotEmpty() }
+    val isClearTypingMode = isImeVisible && activeToolDrawer == ToolDrawerTab.TEXT
 
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
@@ -313,8 +330,8 @@ fun EditorScreen(
                             label = "Save",
                             tag = "save_project_button",
                             onClick = {
+                                viewModel.clearExportFeedback()
                                 showExportDialog = true
-                                viewModel.exportProjectPng(shareImmediately = false)
                             }
                         )
                         TopActionItem(
@@ -404,6 +421,44 @@ fun EditorScreen(
             }
         },
         bottomBar = {
+            if (isClearTypingMode) {
+                // Minimal slim input bar when soft keyboard is open so the canvas remains clearly visible!
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .imePadding()
+                        .testTag("ime_minimal_text_bar")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = selectedTextLayer?.text ?: draftText,
+                            onValueChange = { viewModel.updateSelectedTextTransient(it) },
+                            placeholder = { Text("Enter text...") },
+                            maxLines = 3,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("ime_text_layer_input")
+                        )
+                        FilledIconButton(
+                            onClick = { viewModel.confirmTextBox() },
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = StudioEmerald),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("ime_text_confirm_button")
+                        ) {
+                            Icon(Icons.Rounded.Check, contentDescription = "Confirm Text", tint = Color.White)
+                        }
+                    }
+                }
+            } else {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -471,7 +526,8 @@ fun EditorScreen(
                                         CropToolPanel(
                                             selectedImageLayer = selectedImageLayer,
                                             onUpdateCrop = { viewModel.updateSelectedImageCrop(it) },
-                                            onResetCrop = { viewModel.resetSelectedImageCrop() }
+                                            onResetCrop = { viewModel.resetSelectedImageCrop() },
+                                            onDone = { viewModel.closeToolDrawer() }
                                         )
                                     }
                                     ToolDrawerTab.COLOR -> {
@@ -487,11 +543,15 @@ fun EditorScreen(
                                     ToolDrawerTab.FONT -> {
                                         FontBrowserToolPanel(
                                             selectedTextLayer = selectedTextLayer,
+                                            draftStyle = draftTextStyle,
                                             fonts = fonts,
                                             fontsRecentToOld = fontsRecentToOld,
                                             selectedFontId = selectedFontId,
                                             renderEngine = viewModel.fontRenderEngine,
                                             onSelectFont = { viewModel.applyFontGloballyAndToSelection(it) },
+                                            onUpdateTextSize = { sz ->
+                                                viewModel.updateSelectedTextLayer { it.copy(fontSizeSp = sz) }
+                                            },
                                             onImportFontsClick = onImportFontsClick,
                                             onImportArchiveClick = onImportArchiveClick,
                                             onOpenFullFontLibrary = onOpenFontLibrary
@@ -551,6 +611,18 @@ fun EditorScreen(
                                             onDuplicate = {
                                                 selectedLayer?.let { viewModel.duplicateLayer(it.id) }
                                             }
+                                        )
+                                    }
+                                    ToolDrawerTab.DRAW -> {
+                                        DrawToolPanel(
+                                            brushColorArgb = drawColorArgb,
+                                            brushSizeNorm = drawBrushSizeNorm,
+                                            canUndoStroke = hasDrawContent,
+                                            onSelectColor = { viewModel.setDrawColor(it) },
+                                            onSetBrushSize = { viewModel.setDrawBrushSizeNorm(it) },
+                                            onUndoStroke = { viewModel.undoLastDrawStroke() },
+                                            onClearDraw = { viewModel.clearActiveDrawLayer() },
+                                            onDone = { viewModel.closeToolDrawer() }
                                         )
                                     }
                                     ToolDrawerTab.NONE -> Unit
@@ -710,8 +782,16 @@ fun EditorScreen(
                             tag = "bottom_tool_rotate",
                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
                         )
+                        BottomToolItem(
+                            icon = Icons.Rounded.Brush,
+                            label = "Draw",
+                            selected = activeToolDrawer == ToolDrawerTab.DRAW,
+                            tag = "bottom_tool_draw",
+                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
+                        )
                     }
                 }
+            }
             }
         }
     ) { innerPadding ->
@@ -729,6 +809,10 @@ fun EditorScreen(
                 blurredPreview = blurredPreview,
                 fontRenderEngine = viewModel.fontRenderEngine,
                 isZoomMode = isZoomMode,
+                isCropMode = activeToolDrawer == ToolDrawerTab.CROP,
+                isDrawMode = activeToolDrawer == ToolDrawerTab.DRAW,
+                drawColorArgb = drawColorArgb,
+                drawBrushSizeNorm = drawBrushSizeNorm,
                 canvasZoom = canvasZoom,
                 canvasPan = canvasPan,
                 isEyedropperActive = isEyedropperActive,
@@ -738,9 +822,16 @@ fun EditorScreen(
                 onSelectLayer = { viewModel.selectLayer(it) },
                 onLayerTapped = { viewModel.onCanvasLayerTapped(it) },
                 onEmptyCanvasTap = { viewModel.dismissAllOverlaysAndSelection() },
+                onDeleteLayer = { viewModel.deleteLayer(it) },
                 onTransformLayer = { id, dx, dy, sc, rot, sx, sy ->
                     viewModel.transformLayerTransient(id, dx, dy, sc, rot, sx, sy)
                 },
+                onAnchoredStretch = { id, sx, sy, sdx, sdy, bw, bh, cw, ch ->
+                    viewModel.transformLayerAnchoredStretch(id, sx, sy, sdx, sdy, bw, bh, cw, ch)
+                },
+                onUpdateCropTransient = { viewModel.updateSelectedImageCropTransient(it) },
+                onCommitCrop = { viewModel.updateSelectedImageCrop(it) },
+                onAddDrawStroke = { viewModel.addDrawStroke(it) },
                 onEyedropperTap = { nx, ny ->
                     scope.launch {
                         val bmp = viewModel.mediaManager.renderProjectToBitmap(
@@ -795,9 +886,10 @@ fun EditorScreen(
                     isMultiSelectMode = isMultiSelectMode,
                     imageBitmaps = imageBitmaps,
                     onSelectLayer = { viewModel.selectLayer(it) },
-                    onHoldSelectMulti = { viewModel.toggleMultiSelectLayer(it) },
+                    onHoldSelectMulti = { viewModel.enterMultiSelectWithLayer(it) },
                     onToggleVisibility = { viewModel.toggleLayerVisibility(it) },
                     onToggleLock = { viewModel.toggleLayerLock(it) },
+                    onDeleteLayer = { viewModel.deleteLayer(it) },
                     onMoveLayerOrder = { id, dir -> viewModel.moveLayerOrder(id, dir) },
                     onGroupSelected = { viewModel.handleGroupAction() },
                     onToggleGroupExpanded = { viewModel.toggleGroupExpanded(it) },
@@ -886,47 +978,25 @@ fun EditorScreen(
     }
 
     if (showExportDialog) {
-        AlertDialog(
-            onDismissRequest = {
+        SaveExportDialog(
+            canvas = document.canvas,
+            initialFormat = settings.exportFormat,
+            initialPreset = settings.exportResolutionPreset,
+            initialCustomWidth = settings.exportCustomWidth,
+            initialCustomHeight = settings.exportCustomHeight,
+            exportFeedback = exportFeedback,
+            onExport = { fmt, preset, cw, ch ->
+                viewModel.exportProjectWithOptions(
+                    format = fmt,
+                    preset = preset,
+                    customWidth = cw,
+                    customHeight = ch,
+                    shareImmediately = false
+                )
+            },
+            onDismiss = {
                 viewModel.clearExportFeedback()
                 showExportDialog = false
-            },
-            title = { Text("Save PNG", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "${document.canvas.label} (${document.canvas.exportWidth}×${document.canvas.exportHeight}px)",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    when (val fb = exportFeedback) {
-                        ExportFeedbackState.Idle -> Unit
-                        ExportFeedbackState.Exporting -> {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                                Text("Saving...")
-                            }
-                        }
-                        is ExportFeedbackState.Success -> {
-                            Text(fb.message, color = StudioTeal, fontWeight = FontWeight.SemiBold)
-                        }
-                        is ExportFeedbackState.Error -> {
-                            Text(fb.message, color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.clearExportFeedback()
-                        showExportDialog = false
-                    }
-                ) {
-                    Text("OK")
-                }
             }
         )
     }

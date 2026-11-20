@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -41,25 +42,25 @@ import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FolderCopy
 import androidx.compose.material.icons.rounded.FontDownload
 import androidx.compose.material.icons.rounded.FormatBold
 import androidx.compose.material.icons.rounded.FormatItalic
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.LayersClear
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.MergeType
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
@@ -109,6 +110,7 @@ import androidx.compose.ui.zIndex
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
+import com.example.model.DrawLayer
 import com.example.model.EditorLayer
 import com.example.model.EmojiSourceMode
 import com.example.model.GroupLayer
@@ -120,6 +122,7 @@ import com.example.model.ShapeLayer
 import com.example.model.TextLayer
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
+import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
 import com.example.ui.theme.StudioPurple
 import kotlinx.coroutines.delay
@@ -335,6 +338,14 @@ private fun LayerMiniThumbnail(
                     }
                 }
             }
+            is DrawLayer -> {
+                Icon(
+                    imageVector = Icons.Rounded.Brush,
+                    contentDescription = layer.name,
+                    tint = Color((layer.strokes.lastOrNull()?.colorArgb ?: 0xFFFF4D4FL).toInt()),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
 
         if (!layer.visible) {
@@ -383,6 +394,7 @@ fun LayersSideDrawer(
     onHoldSelectMulti: (String) -> Unit,
     onToggleVisibility: (String) -> Unit,
     onToggleLock: (String) -> Unit,
+    onDeleteLayer: (String) -> Unit,
     onMoveLayerOrder: (String, Int) -> Unit,
     onGroupSelected: () -> Unit,
     onToggleGroupExpanded: (String) -> Unit,
@@ -390,9 +402,6 @@ fun LayersSideDrawer(
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val expandedGroup = remember(layers) {
-        layers.filterIsInstance<GroupLayer>().firstOrNull { it.isExpanded }
-    }
     val displayLayers = remember(layers) { layers.reversed() }
 
     var drawerDragX by remember { mutableFloatStateOf(0f) }
@@ -405,7 +414,7 @@ fun LayersSideDrawer(
         shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
         modifier = modifier
             .fillMaxHeight()
-            .fillMaxWidth(0.55f)
+            .fillMaxWidth(0.58f)
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragStart = { drawerDragX = 0f },
@@ -458,7 +467,7 @@ fun LayersSideDrawer(
                 }
             } else {
                 Text(
-                    text = if (isMultiSelectMode) "Tap layers to multi-select" else "Hold 2s on a layer to select & merge",
+                    text = if (isMultiSelectMode) "Tap layers to select & merge" else "Hold 0.5s to select • Drag ≡ to reorder",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
@@ -498,6 +507,7 @@ fun LayersSideDrawer(
                             onHoldSelectMulti = onHoldSelectMulti,
                             onToggleVisibility = onToggleVisibility,
                             onToggleLock = onToggleLock,
+                            onDeleteLayer = onDeleteLayer,
                             onMoveUp = { onMoveLayerOrder(layer.id, +1) },
                             onMoveDown = { onMoveLayerOrder(layer.id, -1) },
                             onToggleGroupExpand = if (layer is GroupLayer) {
@@ -525,6 +535,7 @@ fun LayersSideDrawer(
                                         onHoldSelectMulti = onHoldSelectMulti,
                                         onToggleVisibility = onToggleVisibility,
                                         onToggleLock = onToggleLock,
+                                        onDeleteLayer = onDeleteLayer,
                                         onMoveUp = { onMoveLayerOrder(child.id, +1) },
                                         onMoveDown = { onMoveLayerOrder(child.id, -1) },
                                         onToggleGroupExpand = null,
@@ -550,6 +561,7 @@ private fun DrawerLayerRow(
     onHoldSelectMulti: (String) -> Unit,
     onToggleVisibility: (String) -> Unit,
     onToggleLock: (String) -> Unit,
+    onDeleteLayer: (String) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onToggleGroupExpand: (() -> Unit)?,
@@ -559,10 +571,18 @@ private fun DrawerLayerRow(
     val selIndex = selectionOrder.indexOf(layer.id)
     val isSelected = layer.id == selectedLayerId || selIndex >= 0
     var holdProgress by remember(layer.id) { mutableFloatStateOf(0f) }
+    val dragStepPx = with(LocalDensity.current) { 38.dp.toPx() }
+    var dragAccumY by remember(layer.id) { mutableFloatStateOf(0f) }
+    var lastReorderTime by remember(layer.id) { mutableLongStateOf(0L) }
+    var isReordering by remember(layer.id) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .zIndex(if (isReordering) 5f else 0f)
+            .graphicsLayer {
+                translationY = (dragAccumY * 0.45f).coerceIn(-24f, 24f)
+            }
             .clip(RoundedCornerShape(10.dp))
             .background(
                 when {
@@ -581,13 +601,13 @@ private fun DrawerLayerRow(
                 shape = RoundedCornerShape(10.dp)
             )
             .pointerInput(layer.id) {
-                // Detects quick tap OR 1.8s (~2s) long hold with live progress feedback
+                // Quick tap or 0.5s (500ms) long hold to enter multi-select mode immediately
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     var triggeredHold = false
                     val progressJob = scope.launch {
-                        val totalMs = 1750L
-                        val stepMs = 50L
+                        val totalMs = 500L
+                        val stepMs = 40L
                         var elapsed = 0L
                         while (elapsed < totalMs) {
                             delay(stepMs)
@@ -623,11 +643,59 @@ private fun DrawerLayerRow(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            // Vertical Hand-Gesture Drag Grip to reorder layers smoothly without arrows
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(width = 24.dp, height = 34.dp)
+                    .pointerInput(layer.id, dragStepPx) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                isReordering = true
+                                dragAccumY = 0f
+                            },
+                            onDragEnd = {
+                                isReordering = false
+                                dragAccumY = 0f
+                            },
+                            onDragCancel = {
+                                isReordering = false
+                                dragAccumY = 0f
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                dragAccumY += dragAmount
+                                val now = System.currentTimeMillis()
+                                if (now - lastReorderTime >= 320L) {
+                                    // Top of drawer list is front (+1), dragging UP lifts layer forward
+                                    if (dragAccumY <= -dragStepPx) {
+                                        onMoveUp()
+                                        lastReorderTime = now
+                                        dragAccumY = 0f
+                                    } else if (dragAccumY >= dragStepPx) {
+                                        onMoveDown()
+                                        lastReorderTime = now
+                                        dragAccumY = 0f
+                                    }
+                                }
+                            }
+                        )
+                    }
+                    .testTag("drawer_drag_handle_${layer.id}"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.DragIndicator,
+                    contentDescription = "Drag to Reorder",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.surface),
                 contentAlignment = Alignment.Center
@@ -643,69 +711,70 @@ private fun DrawerLayerRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Icon(
-                        imageVector = Icons.Rounded.KeyboardArrowUp,
-                        contentDescription = "Move Up",
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable(onClick = onMoveUp)
-                    )
-                    Icon(
-                        imageVector = Icons.Rounded.KeyboardArrowDown,
-                        contentDescription = "Move Down",
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable(onClick = onMoveDown)
-                    )
-                    if (onToggleGroupExpand != null) {
-                        Icon(
-                            imageVector = if ((layer as GroupLayer).isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                            contentDescription = "Expand/Collapse",
-                            tint = StudioPurple,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clickable(onClick = onToggleGroupExpand)
-                        )
-                    }
-                    if (onUngroup != null) {
-                        Icon(
-                            imageVector = Icons.Rounded.LayersClear,
-                            contentDescription = "Ungroup",
-                            tint = StudioPurple,
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clickable(onClick = onUngroup)
-                        )
+                if (onToggleGroupExpand != null || onUngroup != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (onToggleGroupExpand != null) {
+                            Icon(
+                                imageVector = if ((layer as GroupLayer).isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                contentDescription = "Expand/Collapse",
+                                tint = StudioPurple,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clickable(onClick = onToggleGroupExpand)
+                            )
+                        }
+                        if (onUngroup != null) {
+                            Icon(
+                                imageVector = Icons.Rounded.LayersClear,
+                                contentDescription = "Ungroup",
+                                tint = StudioPurple,
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable(onClick = onUngroup)
+                            )
+                        }
                     }
                 }
             }
 
-            // Right-side Hide & Lock buttons inside the Layers drawer
+            // Right-side Hide, Lock, and Delete controls inside the Layers drawer
             IconButton(
                 onClick = { onToggleVisibility(layer.id) },
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(28.dp)
                     .testTag("drawer_hide_${layer.id}")
             ) {
                 Icon(
                     imageVector = if (layer.visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                     contentDescription = "Hide",
                     tint = if (!layer.visible) StudioAmber else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
             IconButton(
                 onClick = { onToggleLock(layer.id) },
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(28.dp)
                     .testTag("drawer_lock_${layer.id}")
             ) {
                 Icon(
                     imageVector = if (layer.locked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
                     contentDescription = "Lock",
                     tint = if (layer.locked) StudioAmber else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            IconButton(
+                onClick = { onDeleteLayer(layer.id) },
+                modifier = Modifier
+                    .size(28.dp)
+                    .testTag("drawer_delete_${layer.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.DeleteOutline,
+                    contentDescription = "Delete",
+                    tint = StudioCoral,
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
@@ -716,7 +785,8 @@ private fun DrawerLayerRow(
 fun CropToolPanel(
     selectedImageLayer: ImageLayer?,
     onUpdateCrop: ((ImageCropRect) -> ImageCropRect) -> Unit,
-    onResetCrop: () -> Unit
+    onResetCrop: () -> Unit,
+    onDone: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -733,12 +803,37 @@ fun CropToolPanel(
         } else {
             val crop = selectedImageLayer.crop.normalized()
             Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Drag crop edges directly on canvas",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "${((crop.right - crop.left) * 100).roundToInt()}% × ${((crop.bottom - crop.top) * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = StudioEmerald
+                )
+            }
+
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                OutlinedButton(
+                    onClick = onResetCrop,
+                    modifier = Modifier.testTag("crop_ratio_free")
+                ) {
+                    Text("Free")
+                }
+
                 OutlinedButton(
                     onClick = {
                         val imgRatio = selectedImageLayer.originalWidth.coerceAtLeast(1).toFloat() /
@@ -754,60 +849,69 @@ fun CropToolPanel(
                         }
                         onUpdateCrop { target }
                     }
-                ) { Text("1:1 Square") }
+                ) { Text("1:1") }
 
-                OutlinedButton(onClick = { onUpdateCrop { ImageCropRect(0.08f, 0.08f, 0.92f, 0.92f) } }) {
-                    Text("Trim Edges")
+                OutlinedButton(onClick = {
+                    val imgRatio = selectedImageLayer.originalWidth.coerceAtLeast(1).toFloat() /
+                        selectedImageLayer.originalHeight.coerceAtLeast(1)
+                    val targetRatio = 16f / 9f
+                    val target = if (imgRatio > targetRatio) {
+                        val span = targetRatio / imgRatio
+                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
+                        ImageCropRect(left = margin, top = 0f, right = 1f - margin, bottom = 1f)
+                    } else {
+                        val span = imgRatio / targetRatio
+                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
+                        ImageCropRect(left = 0f, top = margin, right = 1f, bottom = 1f - margin)
+                    }
+                    onUpdateCrop { target }
+                }) {
+                    Text("16:9")
                 }
-                OutlinedButton(onClick = { onUpdateCrop { ImageCropRect(0f, 0.18f, 1f, 0.82f) } }) {
-                    Text("Wide 16:9")
+
+                OutlinedButton(onClick = {
+                    val imgRatio = selectedImageLayer.originalWidth.coerceAtLeast(1).toFloat() /
+                        selectedImageLayer.originalHeight.coerceAtLeast(1)
+                    val targetRatio = 9f / 16f
+                    val target = if (imgRatio > targetRatio) {
+                        val span = targetRatio / imgRatio
+                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
+                        ImageCropRect(left = margin, top = 0f, right = 1f - margin, bottom = 1f)
+                    } else {
+                        val span = imgRatio / targetRatio
+                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
+                        ImageCropRect(left = 0f, top = margin, right = 1f, bottom = 1f - margin)
+                    }
+                    onUpdateCrop { target }
+                }) {
+                    Text("9:16")
                 }
+
                 TextButton(onClick = onResetCrop) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Reset")
                 }
-            }
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Left ${(crop.left * 100).roundToInt()}%", style = MaterialTheme.typography.labelSmall)
-                    Slider(
-                        value = crop.left,
-                        onValueChange = { v -> onUpdateCrop { it.copy(left = v) } },
-                        valueRange = 0f..0.45f
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Right ${((1f - crop.right) * 100).roundToInt()}%", style = MaterialTheme.typography.labelSmall)
-                    Slider(
-                        value = 1f - crop.right,
-                        onValueChange = { v -> onUpdateCrop { it.copy(right = 1f - v) } },
-                        valueRange = 0f..0.45f
-                    )
-                }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Top ${(crop.top * 100).roundToInt()}%", style = MaterialTheme.typography.labelSmall)
-                    Slider(
-                        value = crop.top,
-                        onValueChange = { v -> onUpdateCrop { it.copy(top = v) } },
-                        valueRange = 0f..0.45f
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Bottom ${((1f - crop.bottom) * 100).roundToInt()}%", style = MaterialTheme.typography.labelSmall)
-                    Slider(
-                        value = 1f - crop.bottom,
-                        onValueChange = { v -> onUpdateCrop { it.copy(bottom = 1f - v) } },
-                        valueRange = 0f..0.45f
-                    )
+                Button(
+                    onClick = onDone,
+                    colors = ButtonDefaults.buttonColors(containerColor = StudioEmerald),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("crop_done_button")
+                ) {
+                    Icon(Icons.Rounded.Check, contentDescription = "Done", modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Done", fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
+}
+
+private enum class TextSubOption {
+    NONE,
+    SHADOW,
+    STROKE
 }
 
 @Composable
@@ -825,6 +929,7 @@ fun TextToolPanel(
 ) {
     val activeStyle = selectedTextLayer ?: draftStyle
     val currentBoxValue = selectedTextLayer?.text ?: draftText
+    var activeSubOption by remember { mutableStateOf(TextSubOption.NONE) }
 
     Column(
         modifier = Modifier
@@ -854,11 +959,11 @@ fun TextToolPanel(
                     .size(48.dp)
                     .testTag("text_confirm_button")
             ) {
-                Icon(Icons.Rounded.Check, contentDescription = "Add Text", tint = Color.White)
+                Icon(Icons.Rounded.Check, contentDescription = "Confirm Text", tint = Color.White)
             }
         }
 
-        // Font | Shadow | Stroke | B | Aa (always visible first, NO align controls)
+        // Font | Shadow | Stroke | B | Aa | Italic | Pill | New (no Size row here — Size lives inside Font tab)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -876,17 +981,33 @@ fun TextToolPanel(
             }
 
             FilterChip(
-                selected = activeStyle.shadowEnabled,
-                onClick = { onUpdateTextLayer { it.copy(shadowEnabled = !it.shadowEnabled) } },
+                selected = activeStyle.shadowEnabled || activeSubOption == TextSubOption.SHADOW,
+                onClick = {
+                    if (!activeStyle.shadowEnabled) {
+                        onUpdateTextLayer { it.copy(shadowEnabled = true) }
+                        activeSubOption = TextSubOption.SHADOW
+                    } else if (activeSubOption != TextSubOption.SHADOW) {
+                        activeSubOption = TextSubOption.SHADOW
+                    } else {
+                        onUpdateTextLayer { it.copy(shadowEnabled = false) }
+                        activeSubOption = TextSubOption.NONE
+                    }
+                },
                 label = { Text("Shadow") },
                 modifier = Modifier.testTag("text_shadow_chip")
             )
 
             FilterChip(
-                selected = activeStyle.strokeWidth > 0f,
+                selected = activeStyle.strokeWidth > 0f || activeSubOption == TextSubOption.STROKE,
                 onClick = {
-                    onUpdateTextLayer {
-                        it.copy(strokeWidth = if (it.strokeWidth > 0f) 0f else 4f)
+                    if (activeStyle.strokeWidth <= 0f) {
+                        onUpdateTextLayer { it.copy(strokeWidth = 4f) }
+                        activeSubOption = TextSubOption.STROKE
+                    } else if (activeSubOption != TextSubOption.STROKE) {
+                        activeSubOption = TextSubOption.STROKE
+                    } else {
+                        onUpdateTextLayer { it.copy(strokeWidth = 0f) }
+                        activeSubOption = TextSubOption.NONE
                     }
                 },
                 label = { Text("Stroke") },
@@ -933,72 +1054,109 @@ fun TextToolPanel(
             }
         }
 
-        // Size controller (- / Slider / +)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = "Size",
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.width(34.dp)
-            )
-            IconButton(
-                onClick = {
-                    onUpdateTextLayer { it.copy(fontSizeSp = (it.fontSizeSp - 4f).coerceIn(12f, 160f)) }
-                },
-                modifier = Modifier
-                    .size(34.dp)
-                    .testTag("text_size_decrease")
-            ) {
-                Icon(Icons.Rounded.Remove, contentDescription = "Decrease Size", modifier = Modifier.size(18.dp))
-            }
-            Slider(
-                value = activeStyle.fontSizeSp.coerceIn(12f, 160f),
-                onValueChange = { sz -> onUpdateTextLayer { it.copy(fontSizeSp = sz) } },
-                valueRange = 12f..160f,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("text_size_slider")
-            )
-            IconButton(
-                onClick = {
-                    onUpdateTextLayer { it.copy(fontSizeSp = (it.fontSizeSp + 4f).coerceIn(12f, 160f)) }
-                },
-                modifier = Modifier
-                    .size(34.dp)
-                    .testTag("text_size_increase")
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = "Increase Size", modifier = Modifier.size(18.dp))
-            }
-            Text(
-                text = "${activeStyle.fontSizeSp.roundToInt()}sp",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        // Color swatches
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            LAYER_COLORS.forEach { argb ->
-                val selected = activeStyle.colorArgb == argb
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(Color(argb.toInt()))
-                        .border(
-                            width = if (selected) 2.5.dp else 1.dp,
-                            color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
-                            shape = CircleShape
+        // Contextual Slider when Shadow or Stroke is active
+        when (activeSubOption) {
+            TextSubOption.SHADOW -> {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Shadow Radius: ${activeStyle.shadowRadius.roundToInt()}",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
                         )
-                        .clickable { onUpdateTextLayer { it.copy(colorArgb = argb) } }
-                )
+                        TextButton(onClick = {
+                            onUpdateTextLayer { it.copy(shadowEnabled = false) }
+                            activeSubOption = TextSubOption.NONE
+                        }) {
+                            Text("Off")
+                        }
+                    }
+                    Slider(
+                        value = activeStyle.shadowRadius.coerceIn(1f, 28f),
+                        onValueChange = { r -> onUpdateTextLayer { it.copy(shadowEnabled = true, shadowRadius = r) } },
+                        valueRange = 1f..28f,
+                        modifier = Modifier.testTag("text_shadow_slider")
+                    )
+                }
+            }
+            TextSubOption.STROKE -> {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Stroke Width: ${activeStyle.strokeWidth.roundToInt()}",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        TextButton(onClick = {
+                            onUpdateTextLayer { it.copy(strokeWidth = 0f) }
+                            activeSubOption = TextSubOption.NONE
+                        }) {
+                            Text("Off")
+                        }
+                    }
+                    Slider(
+                        value = activeStyle.strokeWidth.coerceIn(0f, 16f),
+                        onValueChange = { w -> onUpdateTextLayer { it.copy(strokeWidth = w) } },
+                        valueRange = 0f..16f,
+                        modifier = Modifier.testTag("text_stroke_slider")
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LAYER_COLORS.forEach { argb ->
+                            val selected = activeStyle.strokeColorArgb == argb
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(argb.toInt()))
+                                    .border(
+                                        width = if (selected) 2.5.dp else 1.dp,
+                                        color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
+                                        shape = CircleShape
+                                    )
+                                    .clickable { onUpdateTextLayer { it.copy(strokeColorArgb = argb) } }
+                            )
+                        }
+                    }
+                }
+            }
+            TextSubOption.NONE -> {
+                // Quick text color swatches when not tuning Shadow/Stroke slider
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LAYER_COLORS.forEach { argb ->
+                        val selected = activeStyle.colorArgb == argb
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(argb.toInt()))
+                                .border(
+                                    width = if (selected) 2.5.dp else 1.dp,
+                                    color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
+                                    shape = CircleShape
+                                )
+                                .clickable { onUpdateTextLayer { it.copy(colorArgb = argb) } }
+                        )
+                    }
+                }
             }
         }
     }
@@ -1254,9 +1412,9 @@ fun RotateTransformPanel(
                 Text("${(selectedLayer.scale * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
             }
             Slider(
-                value = selectedLayer.scale.coerceIn(0.2f, 4f),
+                value = selectedLayer.scale.coerceIn(0.1f, 10f),
                 onValueChange = onSetScale,
-                valueRange = 0.2f..4f
+                valueRange = 0.1f..10f
             )
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

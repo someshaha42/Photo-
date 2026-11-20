@@ -472,6 +472,69 @@ data class GroupLayer(
 }
 
 @Serializable
+data class DrawPoint(
+    val xNorm: Float,
+    val yNorm: Float
+)
+
+@Serializable
+data class DrawStroke(
+    val colorArgb: Long = 0xFFFF4D4FL,
+    val strokeWidthNorm: Float = 0.012f,
+    val points: List<DrawPoint> = emptyList()
+)
+
+@Serializable
+@SerialName("draw")
+data class DrawLayer(
+    override val id: String = UUID.randomUUID().toString(),
+    override val name: String = "Draw",
+    val strokes: List<DrawStroke> = emptyList(),
+    override val offsetXNorm: Float = 0f,
+    override val offsetYNorm: Float = 0f,
+    override val scale: Float = 1f,
+    override val stretchX: Float = 1f,
+    override val stretchY: Float = 1f,
+    override val rotationDeg: Float = 0f,
+    override val opacity: Float = 1f,
+    override val visible: Boolean = true,
+    override val locked: Boolean = false
+) : EditorLayer {
+    override fun withBaseTransform(
+        offsetXNorm: Float,
+        offsetYNorm: Float,
+        scale: Float,
+        stretchX: Float,
+        stretchY: Float,
+        rotationDeg: Float,
+        opacity: Float,
+        visible: Boolean,
+        locked: Boolean
+    ) = copy(
+        offsetXNorm = offsetXNorm,
+        offsetYNorm = offsetYNorm,
+        scale = scale,
+        stretchX = stretchX,
+        stretchY = stretchY,
+        rotationDeg = rotationDeg,
+        opacity = opacity,
+        visible = visible,
+        locked = locked
+    )
+}
+
+enum class ExportImageFormat(val label: String, val ext: String, val mimeType: String) {
+    PNG("PNG", "png", "image/png"),
+    JPG("JPG", "jpg", "image/jpeg")
+}
+
+enum class ExportResolutionPreset(val label: String) {
+    RES_4K("4K"),
+    RES_2K("2K"),
+    CUSTOM("Custom")
+}
+
+@Serializable
 data class ProjectDocument(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "Untitled Project",

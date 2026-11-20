@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.FontDownload
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -77,6 +78,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
+import com.example.model.DrawLayer
 import com.example.model.EditorLayer
 import com.example.model.ImageLayer
 import com.example.model.ShapeLayer
@@ -191,15 +193,18 @@ fun PhotoImportToolPanel(
 @Composable
 fun FontBrowserToolPanel(
     selectedTextLayer: TextLayer?,
+    draftStyle: TextLayer? = null,
     fonts: List<FontMetadata>,
     fontsRecentToOld: List<FontMetadata>,
     selectedFontId: String,
     renderEngine: FontRenderEngine,
     onSelectFont: (String) -> Unit,
+    onUpdateTextSize: ((Float) -> Unit)? = null,
     onImportFontsClick: () -> Unit,
     onImportArchiveClick: () -> Unit,
     onOpenFullFontLibrary: () -> Unit
 ) {
+    val activeStyle = selectedTextLayer ?: draftStyle
     val activeFontId = selectedTextLayer?.fontId ?: selectedFontId
     val activeFont = fonts.firstOrNull { it.id == activeFontId }
     var searchQuery by remember { mutableStateOf("") }
@@ -281,6 +286,50 @@ fun FontBrowserToolPanel(
                 .fillMaxWidth()
                 .testTag("editor_font_search_input")
         )
+
+        // Text Size (- / Slider / +) inside Font Tool Panel
+        if (activeStyle != null && onUpdateTextSize != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "Size",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.width(34.dp)
+                )
+                IconButton(
+                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp - 4f).coerceIn(12f, 180f)) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("text_size_decrease")
+                ) {
+                    Icon(Icons.Rounded.Remove, contentDescription = "Decrease Size", modifier = Modifier.size(18.dp))
+                }
+                Slider(
+                    value = activeStyle.fontSizeSp.coerceIn(12f, 180f),
+                    onValueChange = onUpdateTextSize,
+                    valueRange = 12f..180f,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("text_size_slider")
+                )
+                IconButton(
+                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp + 4f).coerceIn(12f, 180f)) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("text_size_increase")
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = "Increase Size", modifier = Modifier.size(18.dp))
+                }
+                Text(
+                    text = "${activeStyle.fontSizeSp.roundToInt()}sp",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
 
         // Horizontal quick-pick cards showing real font glyphs & display names right above keyboard/bar
         LazyRow(
@@ -383,12 +432,14 @@ fun ColorToolPanel(
             is TextLayer -> selectedLayer.colorArgb
             is ImageLayer -> selectedLayer.tintColorArgb
             is ShapeLayer -> selectedLayer.fillColorArgb
+            is DrawLayer -> selectedLayer.strokes.lastOrNull()?.colorArgb ?: 0xFFFF4D4FL
             is com.example.model.GroupLayer -> null
         }
         val isDefaultState = when (selectedLayer) {
             is ImageLayer -> selectedLayer.tintColorArgb == null
             is TextLayer -> selectedLayer.colorArgb == 0xFFFFFFFFL
             is ShapeLayer -> selectedLayer.fillColorArgb == 0xFF2D8CFFL
+            is DrawLayer -> false
             is com.example.model.GroupLayer -> true
         }
 

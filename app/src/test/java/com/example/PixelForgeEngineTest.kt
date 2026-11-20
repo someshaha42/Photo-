@@ -13,7 +13,12 @@ import com.example.fonts.TrueTypeTableParser
 import com.example.model.BackgroundConfig
 import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
+import com.example.model.DrawLayer
+import com.example.model.DrawPoint
+import com.example.model.DrawStroke
 import com.example.model.EmojiSourceMode
+import com.example.model.ExportImageFormat
+import com.example.model.ExportResolutionPreset
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageCropRect
@@ -492,6 +497,138 @@ class PixelForgeEngineTest {
         val savedLayer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
         assertEquals(0x80FF4D4FL, savedLayer.colorArgb)
         assertEquals(0.6f, savedLayer.opacity, 0.001f)
+    }
+
+    @Test
+    fun anchoredOneSideStretchKeepsOppositeEdgePinned() {
+        val baseLayer = ShapeLayer(
+            id = "s_anchor",
+            offsetXNorm = 0f,
+            offsetYNorm = 0f,
+            scale = 1f,
+            stretchX = 1f,
+            stretchY = 1f,
+            rotationDeg = 0f
+        )
+        // Drag right edge (+1, 0) rightwards by +40px on a 100x100 box inside 400x400 canvas:
+        // Old left edge = 200 - 50 = 150px. New width = 140px, center shifts +20px -> 220px.
+        // New left edge = 220 - 70 = 150px (pinned!), new right edge = 220 + 70 = 290px.
+        val stretched = StudioViewModel.computeAnchoredStretchTransform(
+            layer = baseLayer,
+            signX = 1f,
+            signY = 0f,
+            screenLocalDeltaX = 40f,
+            screenLocalDeltaY = 0f,
+            boxWpx = 100f,
+            boxHpx = 100f,
+            canvasWpx = 400f,
+            canvasHpx = 400f
+        )
+        assertEquals(1.4f, stretched.stretchX, 0.001f)
+        assertEquals(1.0f, stretched.stretchY, 0.001f)
+        assertEquals(0.05f, stretched.offsetXNorm, 0.001f) // 20px / 400px
+        assertEquals(0f, stretched.offsetYNorm, 0.001f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun drawLayerRendersVectorStrokesAndJpgCompositeIsWhiteOpaque() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+
+            val drawLayer = DrawLayer(
+                strokes = listOf(
+                    DrawStroke(
+                        colorArgb = 0xFFFF0000L,
+                        strokeWidthNorm = 0.08f,
+                        points = listOf(DrawPoint(0.25f, 0.5f), DrawPoint(0.75f, 0.5f))
+                    )
+                )
+            )
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(
+                    activeTab = BackgroundTab.TRANSPARENT,
+                    checkerboardPreviewEnabled = false
+                ),
+                layers = listOf(drawLayer)
+            )
+
+            // Verify 4K & 2K resolution targets
+            val res4k = MediaStorageManager.computeTargetResolution(
+                CanvasDimensions.fromRatioInput("16:9")!!,
+                ExportResolutionPreset.RES_4K,
+                1080,
+                1080
+            )
+            assertEquals(3840 to 2160, res4k)
+
+            val res2k = MediaStorageManager.computeTargetResolution(
+                CanvasDimensions.SQUARE_1_1,
+                ExportResolutionPreset.RES_2K,
+                1080,
+                1080
+            )
+            assertEquals(2048 to 2048, res2k)
+
+            val resCustom = MediaStorageManager.computeTargetResolution(
+                CanvasDimensions.SQUARE_1_1,
+                ExportResolutionPreset.CUSTOM,
+                1234,
+                777
+            )
+            assertEquals(1234 to 777, resCustom)
+
+            // Render DrawLayer stroke center red pixel
+            val pngBmp = mediaManager.renderProjectToBitmap(doc, renderEngine, 200, 200)
+            val centerPx = pngBmp.getPixel(100, 100)
+            val cornerPx = pngBmp.getPixel(5, 5)
+            assertTrue("Center stroke pixel must be bright red", Color.red(centerPx) > 200 && Color.alpha(centerPx) > 200)
+            assertEquals("Transparent PNG corner must keep zero alpha", 0, Color.alpha(cornerPx))
+            pngBmp.recycle()
+
+            // JPG export must composite white background on transparent canvas
+            val jpgResult = mediaManager.exportImageToAppAndGallery(
+                document = doc,
+                fontRenderEngine = renderEngine,
+                format = ExportImageFormat.JPG,
+                targetWidth = 200,
+                targetHeight = 200
+            )
+            assertTrue(jpgResult.isSuccess)
+            val jpgFile = jpgResult.getOrThrow().first
+            assertTrue(jpgFile.extension.equals("jpg", ignoreCase = true))
+            val decodedJpg = android.graphics.BitmapFactory.decodeFile(jpgFile.absolutePath)
+            assertNotNull(decodedJpg)
+            val jpgCorner = decodedJpg!!.getPixel(5, 5)
+            assertTrue("JPG corner must be white", Color.red(jpgCorner) > 240 && Color.green(jpgCorner) > 240 && Color.blue(jpgCorner) > 240)
+            decodedJpg.recycle()
+            jpgFile.delete()
+        }
+    }
+
+    @Test
+    fun editingExistingTextAutoDeselectsOnCheckAndFirstHoldEntersMultiSelect() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val id1 = vm.addTextLayer("Hello")!!
+        val id2 = vm.addTextLayer("World")!!
+
+        // Tapping existing text opens Text tool drawer; confirming edits deselects it
+        vm.onCanvasLayerTapped(id1)
+        assertEquals(id1, vm.document.value.selectedLayerId)
+        assertEquals(ToolDrawerTab.TEXT, vm.activeToolDrawer.value)
+        vm.confirmTextBox()
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        assertEquals(null, vm.document.value.selectedLayerId)
+
+        // Holding first layer immediately enters multi-select mode cleanly
+        vm.enterMultiSelectWithLayer(id1)
+        assertTrue(vm.isMultiSelectMode.value)
+        assertEquals(listOf(id1), vm.document.value.selectionOrder)
+        vm.selectLayer(id2)
+        assertEquals(listOf(id1, id2), vm.document.value.selectionOrder)
     }
 
     private fun buildMinimalSfnt(tags: List<String>): ByteArray {

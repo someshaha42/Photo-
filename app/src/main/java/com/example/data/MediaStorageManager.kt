@@ -22,8 +22,12 @@ import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
+import com.example.model.CanvasDimensions
+import com.example.model.DrawLayer
 import com.example.model.EditorBlendMode
 import com.example.model.EditorLayer
+import com.example.model.ExportImageFormat
+import com.example.model.ExportResolutionPreset
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageLayer
@@ -364,8 +368,57 @@ class MediaStorageManager(private val context: Context) {
                     appEmojiFontId = document.appEmojiFontId
                 )
             }
+            is DrawLayer -> {
+                drawVectorStrokesOnCanvas(
+                    canvas = canvas,
+                    layer = layer.copy(opacity = effectiveOpacity),
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight
+                )
+            }
         }
         canvas.restore()
+    }
+
+    private fun drawVectorStrokesOnCanvas(
+        canvas: Canvas,
+        layer: DrawLayer,
+        targetWidth: Int,
+        targetHeight: Int
+    ) {
+        val minDim = min(targetWidth, targetHeight).toFloat().coerceAtLeast(1f)
+        for (stroke in layer.strokes) {
+            if (stroke.points.isEmpty()) continue
+            val strokeInt = stroke.colorArgb.toInt()
+            val paintAlpha = ((android.graphics.Color.alpha(strokeInt) / 255f) * layer.opacity * 255f)
+                .roundToInt().coerceIn(0, 255)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+                color = strokeInt
+                alpha = paintAlpha
+                strokeWidth = (stroke.strokeWidthNorm * minDim).coerceAtLeast(1f)
+            }
+            if (stroke.points.size == 1) {
+                val pt = stroke.points.first()
+                paint.style = Paint.Style.FILL
+                canvas.drawCircle(
+                    (pt.xNorm - 0.5f) * targetWidth,
+                    (pt.yNorm - 0.5f) * targetHeight,
+                    paint.strokeWidth / 2f,
+                    paint
+                )
+            } else {
+                val path = android.graphics.Path()
+                stroke.points.forEachIndexed { idx, pt ->
+                    val px = (pt.xNorm - 0.5f) * targetWidth
+                    val py = (pt.yNorm - 0.5f) * targetHeight
+                    if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                }
+                canvas.drawPath(path, paint)
+            }
+        }
     }
 
     suspend fun saveProjectThumbnail(
@@ -388,28 +441,61 @@ class MediaStorageManager(private val context: Context) {
     suspend fun exportPngToAppAndGallery(
         document: ProjectDocument,
         fontRenderEngine: FontRenderEngine
+    ): Result<Pair<File, Uri?>> = exportImageToAppAndGallery(
+        document = document,
+        fontRenderEngine = fontRenderEngine,
+        format = ExportImageFormat.PNG,
+        targetWidth = document.canvas.exportWidth,
+        targetHeight = document.canvas.exportHeight
+    )
+
+    suspend fun exportImageToAppAndGallery(
+        document: ProjectDocument,
+        fontRenderEngine: FontRenderEngine,
+        format: ExportImageFormat,
+        targetWidth: Int,
+        targetHeight: Int
     ): Result<Pair<File, Uri?>> = withContext(Dispatchers.IO) {
         runCatching {
+            val safeW = targetWidth.coerceIn(64, 8192)
+            val safeH = targetHeight.coerceIn(64, 8192)
             val exportsDir = File(context.filesDir, "exports")
             if (!exportsDir.exists()) exportsDir.mkdirs()
-            val fileName = "PixelForge_${System.currentTimeMillis()}.png"
+            val fileName = "PixelForge_${System.currentTimeMillis()}.${format.ext}"
             val outFile = File(exportsDir, fileName)
-            val bitmap = renderProjectToBitmap(document, fontRenderEngine)
-            FileOutputStream(outFile).use { stream ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-            }
-            bitmap.recycle()
 
-            val galleryUri = savePngToMediaStore(outFile, fileName)
+            val rendered = renderProjectToBitmap(document, fontRenderEngine, safeW, safeH)
+            val finalBitmap = if (format == ExportImageFormat.JPG) {
+                val opaque = Bitmap.createBitmap(safeW, safeH, Bitmap.Config.ARGB_8888)
+                val c = Canvas(opaque)
+                c.drawColor(android.graphics.Color.WHITE)
+                c.drawBitmap(rendered, 0f, 0f, null)
+                rendered.recycle()
+                opaque
+            } else {
+                rendered
+            }
+
+            FileOutputStream(outFile).use { stream ->
+                val compressFmt = if (format == ExportImageFormat.JPG) {
+                    Bitmap.CompressFormat.JPEG
+                } else {
+                    Bitmap.CompressFormat.PNG
+                }
+                finalBitmap.compress(compressFmt, 96, stream)
+            }
+            finalBitmap.recycle()
+
+            val galleryUri = saveImageToMediaStore(outFile, fileName, format.mimeType)
             outFile to galleryUri
         }
     }
 
-    private fun savePngToMediaStore(file: File, displayName: String): Uri? {
+    private fun saveImageToMediaStore(file: File, displayName: String, mimeType: String): Uri? {
         return runCatching {
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/PixelForge")
                     put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -746,6 +832,30 @@ class MediaStorageManager(private val context: Context) {
             }
 
             return result
+        }
+
+        fun computeTargetResolution(
+            canvas: CanvasDimensions,
+            preset: ExportResolutionPreset,
+            customWidth: Int,
+            customHeight: Int
+        ): Pair<Int, Int> {
+            return when (preset) {
+                ExportResolutionPreset.RES_4K -> scaleToLongEdge(canvas.ratioFloat, 3840)
+                ExportResolutionPreset.RES_2K -> scaleToLongEdge(canvas.ratioFloat, 2048)
+                ExportResolutionPreset.CUSTOM -> {
+                    customWidth.coerceIn(64, 8192) to customHeight.coerceIn(64, 8192)
+                }
+            }
+        }
+
+        private fun scaleToLongEdge(ratio: Float, longEdge: Int): Pair<Int, Int> {
+            val safeRatio = ratio.coerceIn(0.05f, 20f)
+            return if (safeRatio >= 1f) {
+                longEdge to (longEdge / safeRatio).roundToInt().coerceAtLeast(64)
+            } else {
+                (longEdge * safeRatio).roundToInt().coerceAtLeast(64) to longEdge
+            }
         }
     }
 }

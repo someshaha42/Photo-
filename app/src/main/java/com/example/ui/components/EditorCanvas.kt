@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -20,7 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -28,6 +31,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -45,6 +50,8 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -62,9 +69,13 @@ import androidx.compose.ui.unit.dp
 import com.example.data.MediaStorageManager
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
+import com.example.model.DrawLayer
+import com.example.model.DrawPoint
+import com.example.model.DrawStroke
 import com.example.model.EditorBlendMode
 import com.example.model.EditorLayer
 import com.example.model.GroupLayer
+import com.example.model.ImageCropRect
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
@@ -74,6 +85,7 @@ import com.example.ui.theme.CheckerDark1
 import com.example.ui.theme.CheckerDark2
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
+import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
 import kotlin.math.cos
 import kotlin.math.min
@@ -87,6 +99,10 @@ fun EditorCanvasViewport(
     blurredPreview: Bitmap?,
     fontRenderEngine: FontRenderEngine,
     isZoomMode: Boolean,
+    isCropMode: Boolean = false,
+    isDrawMode: Boolean = false,
+    drawColorArgb: Long = 0xFFFF4D4FL,
+    drawBrushSizeNorm: Float = 0.012f,
     canvasZoom: Float,
     canvasPan: Pair<Float, Float>,
     isEyedropperActive: Boolean,
@@ -94,6 +110,7 @@ fun EditorCanvasViewport(
     onSelectLayer: (String?) -> Unit,
     onLayerTapped: (String) -> Unit = onSelectLayer,
     onEmptyCanvasTap: () -> Unit = { onSelectLayer(null) },
+    onDeleteLayer: (String) -> Unit = {},
     onTransformLayer: (
         layerId: String,
         dxNorm: Float,
@@ -103,6 +120,20 @@ fun EditorCanvasViewport(
         stretchX: Float,
         stretchY: Float
     ) -> Unit,
+    onAnchoredStretch: (
+        layerId: String,
+        signX: Float,
+        signY: Float,
+        screenLocalDeltaX: Float,
+        screenLocalDeltaY: Float,
+        boxWpx: Float,
+        boxHpx: Float,
+        canvasWpx: Float,
+        canvasHpx: Float
+    ) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
+    onUpdateCropTransient: ((ImageCropRect) -> ImageCropRect) -> Unit = {},
+    onCommitCrop: ((ImageCropRect) -> ImageCropRect) -> Unit = {},
+    onAddDrawStroke: (DrawStroke) -> Unit = {},
     onEyedropperTap: (normX: Float, normY: Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -122,8 +153,8 @@ fun EditorCanvasViewport(
                             onCanvasViewportTransform(zoom, pan.x, pan.y)
                         }
                     }
-                } else if (!isEyedropperActive) {
-                    Modifier.pointerInput(isZoomMode, isEyedropperActive) {
+                } else if (!isEyedropperActive && !isDrawMode && !isCropMode) {
+                    Modifier.pointerInput(isZoomMode, isEyedropperActive, isDrawMode, isCropMode) {
                         detectTapGestures { onEmptyCanvasTap() }
                     }
                 } else Modifier
@@ -156,24 +187,29 @@ fun EditorCanvasViewport(
                     width = 1.5.dp,
                     color = when {
                         isEyedropperActive -> StudioAmber
+                        isDrawMode -> StudioCoral
+                        isCropMode -> StudioEmerald
                         isZoomMode -> StudioAzure
                         else -> MaterialTheme.colorScheme.outline
                     },
                     shape = RoundedCornerShape(4.dp)
                 )
                 .clipToBounds()
-                .pointerInput(isEyedropperActive, isZoomMode) {
-                    if (isZoomMode) return@pointerInput
-                    detectTapGestures { offset ->
-                        if (isEyedropperActive) {
-                            val nx = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                            val ny = (offset.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                            onEyedropperTap(nx, ny)
-                        } else {
-                            onEmptyCanvasTap()
+                .then(
+                    if (!isZoomMode && !isDrawMode && !isCropMode) {
+                        Modifier.pointerInput(isEyedropperActive, isZoomMode) {
+                            detectTapGestures { offset ->
+                                if (isEyedropperActive) {
+                                    val nx = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                    val ny = (offset.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                    onEyedropperTap(nx, ny)
+                                } else {
+                                    onEmptyCanvasTap()
+                                }
+                            }
                         }
-                    }
-                }
+                    } else Modifier
+                )
         ) {
             // 1. Non-exportable Dark Checkerboard Transparency Preview (#202020 & #303030)
             if (document.background.checkerboardPreviewEnabled) {
@@ -234,7 +270,7 @@ fun EditorCanvasViewport(
                 }
             }
 
-            // 3. Layers Stack (Photos, Shapes, Text/Color Emojis, Groups)
+            // 3. Layers Stack (Photos, Shapes, Text/Color Emojis, Draw, Groups)
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val canvasWpx = with(LocalDensity.current) { maxWidth.toPx() }
                 val canvasHpx = with(LocalDensity.current) { maxHeight.toPx() }
@@ -254,11 +290,96 @@ fun EditorCanvasViewport(
                         imageBitmaps = imageBitmaps,
                         fontRenderEngine = fontRenderEngine,
                         isZoomMode = isZoomMode,
+                        isCropMode = isCropMode,
+                        isDrawMode = isDrawMode,
                         isEyedropperActive = isEyedropperActive,
                         onSelectLayer = onSelectLayer,
                         onLayerTapped = onLayerTapped,
-                        onTransformLayer = onTransformLayer
+                        onDeleteLayer = onDeleteLayer,
+                        onTransformLayer = onTransformLayer,
+                        onAnchoredStretch = onAnchoredStretch,
+                        onUpdateCropTransient = onUpdateCropTransient,
+                        onCommitCrop = onCommitCrop
                     )
+                }
+
+                // 4. Interactive Freehand Draw Overlay
+                if (isDrawMode && !isZoomMode && !isEyedropperActive) {
+                    val livePoints = remember { mutableStateListOf<DrawPoint>() }
+                    val latestColor by rememberUpdatedState(drawColorArgb)
+                    val latestBrushNorm by rememberUpdatedState(drawBrushSizeNorm)
+
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDragStart = { start ->
+                                        livePoints.clear()
+                                        livePoints.add(
+                                            DrawPoint(
+                                                xNorm = (start.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                                                yNorm = (start.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                            )
+                                        )
+                                    },
+                                    onDragEnd = {
+                                        if (livePoints.isNotEmpty()) {
+                                            onAddDrawStroke(
+                                                DrawStroke(
+                                                    colorArgb = latestColor,
+                                                    strokeWidthNorm = latestBrushNorm,
+                                                    points = livePoints.toList()
+                                                )
+                                            )
+                                        }
+                                        livePoints.clear()
+                                    },
+                                    onDragCancel = {
+                                        livePoints.clear()
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        livePoints.add(
+                                            DrawPoint(
+                                                xNorm = (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                                                yNorm = (change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                            .testTag("canvas_draw_overlay")
+                    ) {
+                        if (livePoints.isNotEmpty()) {
+                            val strokePx = (latestBrushNorm * size.minDimension).coerceAtLeast(2f)
+                            val col = Color(latestColor.toInt())
+                            if (livePoints.size == 1) {
+                                val pt = livePoints.first()
+                                drawCircle(
+                                    color = col,
+                                    radius = strokePx / 2f,
+                                    center = Offset(pt.xNorm * size.width, pt.yNorm * size.height)
+                                )
+                            } else {
+                                val p = Path()
+                                livePoints.forEachIndexed { idx, pt ->
+                                    val x = pt.xNorm * size.width
+                                    val y = pt.yNorm * size.height
+                                    if (idx == 0) p.moveTo(x, y) else p.lineTo(x, y)
+                                }
+                                drawPath(
+                                    path = p,
+                                    color = col,
+                                    style = Stroke(
+                                        width = strokePx,
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -297,9 +418,12 @@ private fun RenderCanvasLayerNode(
     imageBitmaps: Map<String, Bitmap>,
     fontRenderEngine: FontRenderEngine,
     isZoomMode: Boolean,
+    isCropMode: Boolean,
+    isDrawMode: Boolean,
     isEyedropperActive: Boolean,
     onSelectLayer: (String?) -> Unit,
     onLayerTapped: (String) -> Unit,
+    onDeleteLayer: (String) -> Unit,
     onTransformLayer: (
         layerId: String,
         dxNorm: Float,
@@ -308,25 +432,42 @@ private fun RenderCanvasLayerNode(
         rotation: Float,
         stretchX: Float,
         stretchY: Float
-    ) -> Unit
+    ) -> Unit,
+    onAnchoredStretch: (
+        layerId: String,
+        signX: Float,
+        signY: Float,
+        screenLocalDeltaX: Float,
+        screenLocalDeltaY: Float,
+        boxWpx: Float,
+        boxHpx: Float,
+        canvasWpx: Float,
+        canvasHpx: Float
+    ) -> Unit,
+    onUpdateCropTransient: ((ImageCropRect) -> ImageCropRect) -> Unit,
+    onCommitCrop: ((ImageCropRect) -> ImageCropRect) -> Unit
 ) {
     if (!layer.visible) return
     val density = LocalDensity.current.density
     val interactiveTarget = parentGroup ?: layer
     val interactiveTargetId = interactiveTarget.id
     val effectiveLocked = parentLocked || layer.locked || (parentGroup?.locked == true)
-    val isPrimarySelected = (interactiveTargetId == primarySelectedId) && !isEyedropperActive && !isZoomMode
-    val isMultiSelected = (interactiveTargetId in selectedSet) && !isEyedropperActive && !isZoomMode
-    val showDots = isPrimarySelected || isMultiSelected
+    val isPrimarySelected = (interactiveTargetId == primarySelectedId) &&
+        !isEyedropperActive && !isZoomMode && !isDrawMode
+    val isMultiSelected = (interactiveTargetId in selectedSet) &&
+        !isEyedropperActive && !isZoomMode && !isDrawMode
+    val showDots = (isPrimarySelected || isMultiSelected) &&
+        !(isCropMode && layer is ImageLayer && isPrimarySelected)
     val dotAccent = if (isPrimarySelected) StudioAzure else StudioEmerald
 
     val liveTargetLayer by rememberUpdatedState(interactiveTarget)
     val liveChildLayer by rememberUpdatedState(layer)
 
-    // Compensates pointer pan from rotated+scaled local Box space back into canvas space so
-    // finger drag tracks 1:1 even when deeply zoomed in!
-    val bodyGestureModifier = if (!isZoomMode && !isEyedropperActive) {
-        if (layer is GroupLayer && layer.isExpanded && parentGroup == null) {
+    // Strictly move/pinch-zoom/rotate only — NEVER stretches during 1-finger move or 2-finger pinch!
+    val bodyGestureModifier = if (!isZoomMode && !isEyedropperActive && !isDrawMode) {
+        if ((layer is GroupLayer && layer.isExpanded && parentGroup == null) ||
+            (isCropMode && layer is ImageLayer && isPrimarySelected)
+        ) {
             Modifier
         } else {
             Modifier
@@ -394,24 +535,31 @@ private fun RenderCanvasLayerNode(
                             imageBitmaps = imageBitmaps,
                             fontRenderEngine = fontRenderEngine,
                             isZoomMode = isZoomMode,
+                            isCropMode = isCropMode,
+                            isDrawMode = isDrawMode,
                             isEyedropperActive = isEyedropperActive,
                             onSelectLayer = onSelectLayer,
                             onLayerTapped = onLayerTapped,
-                            onTransformLayer = onTransformLayer
+                            onDeleteLayer = onDeleteLayer,
+                            onTransformLayer = onTransformLayer,
+                            onAnchoredStretch = onAnchoredStretch,
+                            onUpdateCropTransient = onUpdateCropTransient,
+                            onCommitCrop = onCommitCrop
                         )
                     }
 
-                    // Show 4 corner dots around collapsed Group frame when group is selected
                     if (!layer.isExpanded && showDots && !effectiveLocked) {
                         SelectionDotHandlesOverlay(
                             boxModifier = Modifier.size(with(LocalDensity.current) { (baseUnitPx * 0.64f).toDp() }),
                             dotColor = dotAccent,
                             targetLayer = layer,
+                            showDeleteCross = isPrimarySelected,
+                            onDeleteClick = { onDeleteLayer(layer.id) },
                             onUniformZoom = { zoomFactor ->
                                 onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
                             },
-                            onStretch = { sxFactor, syFactor ->
-                                onTransformLayer(layer.id, 0f, 0f, 1f, 0f, sxFactor, syFactor)
+                            onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
+                                onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
                             }
                         )
                     }
@@ -422,109 +570,148 @@ private fun RenderCanvasLayerNode(
                 val bmp = imageBitmaps[layer.uriString]
                 if (bmp != null) {
                     val cropNorm = layer.crop.normalized()
-                    val srcW = ((cropNorm.right - cropNorm.left) * bmp.width).roundToInt().coerceAtLeast(1)
-                    val srcH = ((cropNorm.bottom - cropNorm.top) * bmp.height).roundToInt().coerceAtLeast(1)
-                    val imgRatio = srcW.toFloat() / srcH.toFloat()
-                    val fitModifier = if (imgRatio >= 1f) {
-                        Modifier.size(
-                            width = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() },
-                            height = with(LocalDensity.current) { (baseUnitPx * 0.85f / imgRatio).toDp() }
-                        )
-                    } else {
-                        Modifier.size(
-                            width = with(LocalDensity.current) { (baseUnitPx * 0.85f * imgRatio).toDp() },
-                            height = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() }
-                        )
-                    }
-                    val adjColorFilter = remember(layer.adjustments) {
-                        if (layer.adjustments.isIdentity()) null
-                        else {
-                            val androidMatrix = MediaStorageManager.buildColorMatrix(layer.adjustments)
-                            ColorFilter.colorMatrix(ColorMatrix(androidMatrix.array))
-                        }
-                    }
+                    val isBeingCroppedNow = isCropMode && isPrimarySelected && parentGroup == null
 
-                    Box(modifier = fitModifier.then(bodyGestureModifier)) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    compositingStrategy = if (layer.tintColorArgb != null) {
-                                        CompositingStrategy.Offscreen
-                                    } else {
-                                        CompositingStrategy.Auto
-                                    }
-                                }
-                        ) {
-                            if (cropNorm.isFull()) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = layer.name,
-                                    contentScale = ContentScale.Fit,
-                                    colorFilter = adjColorFilter,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                val imageBmp = remember(bmp) { bmp.asImageBitmap() }
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val srcOffset = IntOffset(
-                                        (cropNorm.left * bmp.width).roundToInt().coerceIn(0, (bmp.width - 1).coerceAtLeast(0)),
-                                        (cropNorm.top * bmp.height).roundToInt().coerceIn(0, (bmp.height - 1).coerceAtLeast(0))
-                                    )
-                                    drawImage(
-                                        image = imageBmp,
-                                        srcOffset = srcOffset,
-                                        srcSize = IntSize(srcW.coerceAtMost(bmp.width - srcOffset.x), srcH.coerceAtMost(bmp.height - srcOffset.y)),
-                                        dstOffset = IntOffset.Zero,
-                                        dstSize = IntSize(size.width.roundToInt().coerceAtLeast(1), size.height.roundToInt().coerceAtLeast(1)),
-                                        colorFilter = adjColorFilter
-                                    )
-                                }
-                            }
-
-                            layer.tintColorArgb?.let { tintLong ->
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    drawRect(
-                                        color = Color(tintLong.toInt()),
-                                        blendMode = BlendMode.SrcAtop
-                                    )
-                                }
-                            }
-                        }
-
-                        if (layer.adjustments.vignette > 0.01f) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val vAlpha = layer.adjustments.vignette.coerceIn(0f, 1f) * 0.8f
-                                drawRect(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color.Transparent,
-                                            Color.Black.copy(alpha = vAlpha * 0.35f),
-                                            Color.Black.copy(alpha = vAlpha)
-                                        ),
-                                        center = Offset(size.width / 2f, size.height / 2f),
-                                        radius = size.maxDimension * 0.72f
-                                    )
-                                )
-                            }
-                        }
-
-                        if (showDots && parentGroup == null) {
-                            SelectionDotHandlesOverlay(
-                                boxModifier = Modifier.fillMaxSize(),
-                                dotColor = dotAccent,
-                                targetLayer = layer,
-                                onUniformZoom = { zoomFactor ->
-                                    if (!effectiveLocked) {
-                                        onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
-                                    }
-                                },
-                                onStretch = { sxFactor, syFactor ->
-                                    if (!effectiveLocked) {
-                                        onTransformLayer(layer.id, 0f, 0f, 1f, 0f, sxFactor, syFactor)
-                                    }
-                                }
+                    if (isBeingCroppedNow) {
+                        // Interactive Crop Mode: display FULL uncropped image + real draggable crop frame
+                        val fullRatio = bmp.width.coerceAtLeast(1).toFloat() / bmp.height.coerceAtLeast(1)
+                        val fullModifier = if (fullRatio >= 1f) {
+                            Modifier.size(
+                                width = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() },
+                                height = with(LocalDensity.current) { (baseUnitPx * 0.85f / fullRatio).toDp() }
                             )
+                        } else {
+                            Modifier.size(
+                                width = with(LocalDensity.current) { (baseUnitPx * 0.85f * fullRatio).toDp() },
+                                height = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() }
+                            )
+                        }
+                        Box(modifier = fullModifier) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = layer.name,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            InteractiveCropOverlay(
+                                crop = cropNorm,
+                                onUpdateTransient = onUpdateCropTransient,
+                                onCommit = onCommitCrop
+                            )
+                        }
+                    } else {
+                        val srcW = ((cropNorm.right - cropNorm.left) * bmp.width).roundToInt().coerceAtLeast(1)
+                        val srcH = ((cropNorm.bottom - cropNorm.top) * bmp.height).roundToInt().coerceAtLeast(1)
+                        val imgRatio = srcW.toFloat() / srcH.toFloat()
+                        val fitModifier = if (imgRatio >= 1f) {
+                            Modifier.size(
+                                width = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() },
+                                height = with(LocalDensity.current) { (baseUnitPx * 0.85f / imgRatio).toDp() }
+                            )
+                        } else {
+                            Modifier.size(
+                                width = with(LocalDensity.current) { (baseUnitPx * 0.85f * imgRatio).toDp() },
+                                height = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() }
+                            )
+                        }
+                        val adjColorFilter = remember(layer.adjustments) {
+                            if (layer.adjustments.isIdentity()) null
+                            else {
+                                val androidMatrix = MediaStorageManager.buildColorMatrix(layer.adjustments)
+                                ColorFilter.colorMatrix(ColorMatrix(androidMatrix.array))
+                            }
+                        }
+
+                        Box(modifier = fitModifier.then(bodyGestureModifier)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        compositingStrategy = if (layer.tintColorArgb != null) {
+                                            CompositingStrategy.Offscreen
+                                        } else {
+                                            CompositingStrategy.Auto
+                                        }
+                                    }
+                            ) {
+                                if (cropNorm.isFull()) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = layer.name,
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = adjColorFilter,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    val imageBmp = remember(bmp) { bmp.asImageBitmap() }
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val srcOffset = IntOffset(
+                                            (cropNorm.left * bmp.width).roundToInt().coerceIn(0, (bmp.width - 1).coerceAtLeast(0)),
+                                            (cropNorm.top * bmp.height).roundToInt().coerceIn(0, (bmp.height - 1).coerceAtLeast(0))
+                                        )
+                                        drawImage(
+                                            image = imageBmp,
+                                            srcOffset = srcOffset,
+                                            srcSize = IntSize(
+                                                srcW.coerceAtMost(bmp.width - srcOffset.x),
+                                                srcH.coerceAtMost(bmp.height - srcOffset.y)
+                                            ),
+                                            dstOffset = IntOffset.Zero,
+                                            dstSize = IntSize(
+                                                size.width.roundToInt().coerceAtLeast(1),
+                                                size.height.roundToInt().coerceAtLeast(1)
+                                            ),
+                                            colorFilter = adjColorFilter
+                                        )
+                                    }
+                                }
+
+                                layer.tintColorArgb?.let { tintLong ->
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        drawRect(
+                                            color = Color(tintLong.toInt()),
+                                            blendMode = BlendMode.SrcAtop
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (layer.adjustments.vignette > 0.01f) {
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val vAlpha = layer.adjustments.vignette.coerceIn(0f, 1f) * 0.8f
+                                    drawRect(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(
+                                                Color.Transparent,
+                                                Color.Black.copy(alpha = vAlpha * 0.35f),
+                                                Color.Black.copy(alpha = vAlpha)
+                                            ),
+                                            center = Offset(size.width / 2f, size.height / 2f),
+                                            radius = size.maxDimension * 0.72f
+                                        )
+                                    )
+                                }
+                            }
+
+                            if (showDots && parentGroup == null) {
+                                SelectionDotHandlesOverlay(
+                                    boxModifier = Modifier.fillMaxSize(),
+                                    dotColor = dotAccent,
+                                    targetLayer = layer,
+                                    showDeleteCross = isPrimarySelected,
+                                    onDeleteClick = { onDeleteLayer(layer.id) },
+                                    onUniformZoom = { zoomFactor ->
+                                        if (!effectiveLocked) {
+                                            onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                                        }
+                                    },
+                                    onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
+                                        if (!effectiveLocked) {
+                                            onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -579,14 +766,16 @@ private fun RenderCanvasLayerNode(
                             boxModifier = Modifier.fillMaxSize(),
                             dotColor = dotAccent,
                             targetLayer = layer,
+                            showDeleteCross = isPrimarySelected,
+                            onDeleteClick = { onDeleteLayer(layer.id) },
                             onUniformZoom = { zoomFactor ->
                                 if (!effectiveLocked) {
                                     onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
                                 }
                             },
-                            onStretch = { sxFactor, syFactor ->
+                            onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
                                 if (!effectiveLocked) {
-                                    onTransformLayer(layer.id, 0f, 0f, 1f, 0f, sxFactor, syFactor)
+                                    onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
                                 }
                             }
                         )
@@ -646,14 +835,73 @@ private fun RenderCanvasLayerNode(
                             boxModifier = Modifier.fillMaxSize(),
                             dotColor = dotAccent,
                             targetLayer = layer,
+                            showDeleteCross = isPrimarySelected,
+                            onDeleteClick = { onDeleteLayer(layer.id) },
                             onUniformZoom = { zoomFactor ->
                                 if (!effectiveLocked) {
                                     onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
                                 }
                             },
-                            onStretch = { sxFactor, syFactor ->
+                            onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
                                 if (!effectiveLocked) {
-                                    onTransformLayer(layer.id, 0f, 0f, 1f, 0f, sxFactor, syFactor)
+                                    onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            is DrawLayer -> {
+                Box(modifier = Modifier.fillMaxSize().then(bodyGestureModifier)) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val minDim = size.minDimension.coerceAtLeast(1f)
+                        layer.strokes.forEach { stroke ->
+                            if (stroke.points.isEmpty()) return@forEach
+                            val strokePx = (stroke.strokeWidthNorm * minDim).coerceAtLeast(2f)
+                            val col = Color(stroke.colorArgb.toInt())
+                            if (stroke.points.size == 1) {
+                                val pt = stroke.points.first()
+                                drawCircle(
+                                    color = col,
+                                    radius = strokePx / 2f,
+                                    center = Offset(pt.xNorm * size.width, pt.yNorm * size.height)
+                                )
+                            } else {
+                                val path = Path()
+                                stroke.points.forEachIndexed { idx, pt ->
+                                    val px = pt.xNorm * size.width
+                                    val py = pt.yNorm * size.height
+                                    if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = col,
+                                    style = Stroke(
+                                        width = strokePx,
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    if (showDots && parentGroup == null) {
+                        SelectionDotHandlesOverlay(
+                            boxModifier = Modifier.fillMaxSize(),
+                            dotColor = dotAccent,
+                            targetLayer = layer,
+                            showDeleteCross = isPrimarySelected,
+                            onDeleteClick = { onDeleteLayer(layer.id) },
+                            onUniformZoom = { zoomFactor ->
+                                if (!effectiveLocked) {
+                                    onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                                }
+                            },
+                            onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
+                                if (!effectiveLocked) {
+                                    onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
                                 }
                             }
                         )
@@ -677,25 +925,247 @@ private fun RenderCanvasLayerNode(
 }
 
 /**
- * Renders 4 Corner Dots (uniform zoom) + 4 Edge Midpoint Handles (gentle horizontal & vertical stretch)
- * with NO solid rectangle border around the object.
+ * Interactive hand-gesture Crop Frame drawn directly over the selected Photo:
+ * - Dragging Top, Bottom, Left, or Right edge crops cleanly from that edge only!
+ * - Dragging 4 corners adjusts both adjacent edges smoothly.
+ */
+@Composable
+private fun InteractiveCropOverlay(
+    crop: ImageCropRect,
+    onUpdateTransient: ((ImageCropRect) -> ImageCropRect) -> Unit,
+    onCommit: ((ImageCropRect) -> ImageCropRect) -> Unit
+) {
+    val liveCrop by rememberUpdatedState(crop)
+    var boxW by remember { mutableFloatStateOf(200f) }
+    var boxH by remember { mutableFloatStateOf(200f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { sz ->
+                boxW = sz.width.toFloat().coerceAtLeast(1f)
+                boxH = sz.height.toFloat().coerceAtLeast(1f)
+            }
+            .testTag("interactive_crop_overlay")
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val l = liveCrop.left * size.width
+            val t = liveCrop.top * size.height
+            val r = liveCrop.right * size.width
+            val b = liveCrop.bottom * size.height
+            val mask = Color.Black.copy(alpha = 0.58f)
+
+            // Dim outside crop bounds
+            drawRect(mask, topLeft = Offset(0f, 0f), size = Size(size.width, t))
+            drawRect(mask, topLeft = Offset(0f, b), size = Size(size.width, size.height - b))
+            drawRect(mask, topLeft = Offset(0f, t), size = Size(l, b - t))
+            drawRect(mask, topLeft = Offset(r, t), size = Size(size.width - r, b - t))
+
+            // Crop outline + Rule-of-thirds grid
+            val cw = (r - l).coerceAtLeast(1f)
+            val ch = (b - t).coerceAtLeast(1f)
+            drawRect(
+                color = Color.White,
+                topLeft = Offset(l, t),
+                size = Size(cw, ch),
+                style = Stroke(width = 2.dp.toPx())
+            )
+            val gridColor = Color.White.copy(alpha = 0.45f)
+            for (step in 1..2) {
+                val gx = l + cw * (step / 3f)
+                drawLine(gridColor, Offset(gx, t), Offset(gx, b), strokeWidth = 1.dp.toPx())
+                val gy = t + ch * (step / 3f)
+                drawLine(gridColor, Offset(l, gy), Offset(r, gy), strokeWidth = 1.dp.toPx())
+            }
+        }
+
+        val lDp = with(LocalDensity.current) { (liveCrop.left * boxW).toDp() }
+        val tDp = with(LocalDensity.current) { (liveCrop.top * boxH).toDp() }
+        val rDp = with(LocalDensity.current) { (liveCrop.right * boxW).toDp() }
+        val bDp = with(LocalDensity.current) { (liveCrop.bottom * boxH).toDp() }
+        val centerXDp = with(LocalDensity.current) { (((liveCrop.left + liveCrop.right) * 0.5f) * boxW).toDp() }
+        val centerYDp = with(LocalDensity.current) { (((liveCrop.top + liveCrop.bottom) * 0.5f) * boxH).toDp() }
+
+        // Edge Crop Handles: Top, Bottom, Left, Right
+        CropEdgeHandle(
+            xDp = centerXDp,
+            yDp = tDp,
+            isHorizontalBar = true,
+            tag = "crop_edge_top",
+            onDrag = { _, dy ->
+                onUpdateTransient { cur -> cur.copy(top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.15f)) }
+            },
+            onDragEnd = { onCommit { it } }
+        )
+        CropEdgeHandle(
+            xDp = centerXDp,
+            yDp = bDp,
+            isHorizontalBar = true,
+            tag = "crop_edge_bottom",
+            onDrag = { _, dy ->
+                onUpdateTransient { cur -> cur.copy(bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.15f, 1f)) }
+            },
+            onDragEnd = { onCommit { it } }
+        )
+        CropEdgeHandle(
+            xDp = lDp,
+            yDp = centerYDp,
+            isHorizontalBar = false,
+            tag = "crop_edge_left",
+            onDrag = { dx, _ ->
+                onUpdateTransient { cur -> cur.copy(left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.15f)) }
+            },
+            onDragEnd = { onCommit { it } }
+        )
+        CropEdgeHandle(
+            xDp = rDp,
+            yDp = centerYDp,
+            isHorizontalBar = false,
+            tag = "crop_edge_right",
+            onDrag = { dx, _ ->
+                onUpdateTransient { cur -> cur.copy(right = (cur.right + dx / boxW).coerceIn(cur.left + 0.15f, 1f)) }
+            },
+            onDragEnd = { onCommit { it } }
+        )
+
+        // 4 Corner Crop Handles
+        CropCornerHandle(lDp, tDp, "crop_corner_tl", onDrag = { dx, dy ->
+            onUpdateTransient { cur ->
+                cur.copy(
+                    left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.15f),
+                    top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.15f)
+                )
+            }
+        }, onDragEnd = { onCommit { it } })
+        CropCornerHandle(rDp, tDp, "crop_corner_tr", onDrag = { dx, dy ->
+            onUpdateTransient { cur ->
+                cur.copy(
+                    right = (cur.right + dx / boxW).coerceIn(cur.left + 0.15f, 1f),
+                    top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.15f)
+                )
+            }
+        }, onDragEnd = { onCommit { it } })
+        CropCornerHandle(lDp, bDp, "crop_corner_bl", onDrag = { dx, dy ->
+            onUpdateTransient { cur ->
+                cur.copy(
+                    left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.15f),
+                    bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.15f, 1f)
+                )
+            }
+        }, onDragEnd = { onCommit { it } })
+        CropCornerHandle(rDp, bDp, "crop_corner_br", onDrag = { dx, dy ->
+            onUpdateTransient { cur ->
+                cur.copy(
+                    right = (cur.right + dx / boxW).coerceIn(cur.left + 0.15f, 1f),
+                    bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.15f, 1f)
+                )
+            }
+        }, onDragEnd = { onCommit { it } })
+    }
+}
+
+@Composable
+private fun CropEdgeHandle(
+    xDp: androidx.compose.ui.unit.Dp,
+    yDp: androidx.compose.ui.unit.Dp,
+    isHorizontalBar: Boolean,
+    tag: String,
+    onDrag: (dxPx: Float, dyPx: Float) -> Unit,
+    onDragEnd: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .offset(x = xDp - 18.dp, y = yDp - 18.dp)
+            .size(36.dp)
+            .pointerInput(tag) {
+                detectDragGestures(
+                    onDragEnd = onDragEnd,
+                    onDragCancel = onDragEnd
+                ) { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount.x, dragAmount.y)
+                }
+            }
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(
+                    width = if (isHorizontalBar) 24.dp else 6.dp,
+                    height = if (isHorizontalBar) 6.dp else 24.dp
+                )
+                .clip(RoundedCornerShape(999.dp))
+                .background(StudioEmerald)
+                .border(1.5.dp, Color.White, RoundedCornerShape(999.dp))
+        )
+    }
+}
+
+@Composable
+private fun CropCornerHandle(
+    xDp: androidx.compose.ui.unit.Dp,
+    yDp: androidx.compose.ui.unit.Dp,
+    tag: String,
+    onDrag: (dxPx: Float, dyPx: Float) -> Unit,
+    onDragEnd: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .offset(x = xDp - 16.dp, y = yDp - 16.dp)
+            .size(32.dp)
+            .pointerInput(tag) {
+                detectDragGestures(
+                    onDragEnd = onDragEnd,
+                    onDragCancel = onDragEnd
+                ) { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount.x, dragAmount.y)
+                }
+            }
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(14.dp)
+                .clip(CircleShape)
+                .background(StudioEmerald)
+                .border(2.dp, Color.White, CircleShape)
+        )
+    }
+}
+
+/**
+ * Selection Handle Layout:
+ * - Top-Left: Cross (✕) Delete icon button to immediately remove selected object.
+ * - Bottom-Right: Larger diagonal Zoom icon handle for easy finger zooming.
+ * - Top-Right & Bottom-Left: Corner zoom dots.
+ * - 4 Edge Midpoints: Small localized anchored-stretch dots (touching only the small dot stretches strictly from that side with opposite edge pinned).
  */
 @Composable
 private fun SelectionDotHandlesOverlay(
     boxModifier: Modifier,
     dotColor: Color,
     targetLayer: EditorLayer,
+    showDeleteCross: Boolean,
+    onDeleteClick: () -> Unit,
     onUniformZoom: (scaleFactor: Float) -> Unit,
-    onStretch: (stretchXFactor: Float, stretchYFactor: Float) -> Unit
+    onAnchoredEdgeStretch: (
+        signX: Float,
+        signY: Float,
+        screenLocalDeltaX: Float,
+        screenLocalDeltaY: Float,
+        boxWpx: Float,
+        boxHpx: Float
+    ) -> Unit
 ) {
     var boxW by remember { mutableFloatStateOf(160f) }
     var boxH by remember { mutableFloatStateOf(160f) }
     val liveLayer by rememberUpdatedState(targetLayer)
 
-    // Keep handle visual size reasonably consistent even when layer is scaled
-    val invScaleX = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.25f, 2.2f)
-    val invScaleY = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.25f, 2.2f)
-    val invUniform = ((invScaleX + invScaleY) * 0.5f).coerceIn(0.25f, 2.0f)
+    val invScaleX = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.15f, 2.5f)
+    val invScaleY = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.15f, 2.5f)
 
     Box(
         modifier = boxModifier.onSizeChanged { sz ->
@@ -703,22 +1173,49 @@ private fun SelectionDotHandlesOverlay(
             boxH = sz.height.toFloat().coerceAtLeast(48f)
         }
     ) {
-        // 4 Corner Dots: Uniform Zoom on drag
-        val corners = listOf(
-            Alignment.TopStart to (-1f to -1f),
+        // 1. Top-Left Cross (✕) Delete Button
+        if (showDeleteCross) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-10).dp, y = (-10).dp)
+                    .size(34.dp)
+                    .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
+                    .clickable(onClick = onDeleteClick)
+                    .testTag("selection_delete_cross_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(StudioCoral)
+                        .border(1.5.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Delete Layer",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+
+        // 2. Top-Right & Bottom-Left Corner Zoom Dots
+        listOf(
             Alignment.TopEnd to (1f to -1f),
-            Alignment.BottomStart to (-1f to 1f),
-            Alignment.BottomEnd to (1f to 1f)
-        )
-        corners.forEachIndexed { idx, (align, signs) ->
+            Alignment.BottomStart to (-1f to 1f)
+        ).forEachIndexed { idx, (align, signs) ->
             val (sxSign, sySign) = signs
             Box(
                 modifier = Modifier
                     .align(align)
                     .offset(x = (sxSign * 6).dp, y = (sySign * 6).dp)
-                    .size(28.dp)
+                    .size(26.dp)
                     .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
-                    .pointerInput(liveLayer.id, idx) {
+                    .pointerInput(liveLayer.id, "corner_$idx") {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
                             val radialDelta = (dragAmount.x * sxSign + dragAmount.y * sySign) * 0.5f
@@ -740,22 +1237,60 @@ private fun SelectionDotHandlesOverlay(
             }
         }
 
-        // Top & Bottom Edge Handles: Controlled Vertical Stretch (up/down)
+        // 3. Bottom-Right Corner: Larger Zoom Handle Icon for easy one-finger zoom in/out
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(x = 12.dp, y = 12.dp)
+                .size(40.dp)
+                .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
+                .pointerInput(liveLayer.id, "bottom_right_zoom") {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        val realDeltaX = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * invScaleX)
+                        val realDeltaY = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * invScaleY)
+                        val radialDelta = (realDeltaX + realDeltaY) * 0.55f
+                        val curSpan = min(
+                            boxW * liveLayer.scale * liveLayer.stretchX,
+                            boxH * liveLayer.scale * liveLayer.stretchY
+                        ).coerceAtLeast(40f)
+                        val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
+                        onUniformZoom(zoomFactor)
+                    }
+                }
+                .testTag("corner_zoom_icon_handle"),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+                    .border(2.dp, Color.White, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.OpenInFull,
+                    contentDescription = "Zoom Layer",
+                    tint = Color.White,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+
+        // 4. Small Localized Side Midpoint Dots for Anchored One-Side Stretch (opposite side pinned!)
         listOf(Alignment.TopCenter to -1f, Alignment.BottomCenter to 1f).forEachIndexed { idx, (align, signY) ->
             Box(
                 modifier = Modifier
                     .align(align)
                     .offset(y = (signY * 5).dp)
-                    .size(width = 32.dp, height = 22.dp)
+                    .size(width = 18.dp, height = 16.dp)
                     .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
-                    .pointerInput(liveLayer.id, "v_$idx") {
+                    .pointerInput(liveLayer.id, "anchored_v_$idx") {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            // Damped gentle speed so stretching never explodes to extreme sizes
-                            val deltaPx = dragAmount.y * signY
-                            val stretchFactor = (1f + (deltaPx / boxH.coerceAtLeast(64f)) * 0.55f)
-                                .coerceIn(0.95f, 1.06f)
-                            onStretch(1f, stretchFactor)
+                            val screenLocalDy = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * invScaleY)
+                            onAnchoredEdgeStretch(0f, signY, 0f, screenLocalDy, boxW, boxH)
                         }
                     }
                     .testTag("vertical_stretch_handle_$idx"),
@@ -763,7 +1298,7 @@ private fun SelectionDotHandlesOverlay(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(width = 16.dp, height = 5.dp)
+                        .size(width = 10.dp, height = 5.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .background(Color.White)
                         .border(1.2.dp, dotColor, RoundedCornerShape(999.dp))
@@ -771,21 +1306,18 @@ private fun SelectionDotHandlesOverlay(
             }
         }
 
-        // Left & Right Edge Handles: Controlled Horizontal Stretch (left/right)
         listOf(Alignment.CenterStart to -1f, Alignment.CenterEnd to 1f).forEachIndexed { idx, (align, signX) ->
             Box(
                 modifier = Modifier
                     .align(align)
                     .offset(x = (signX * 5).dp)
-                    .size(width = 22.dp, height = 32.dp)
+                    .size(width = 16.dp, height = 18.dp)
                     .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
-                    .pointerInput(liveLayer.id, "h_$idx") {
+                    .pointerInput(liveLayer.id, "anchored_h_$idx") {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            val deltaPx = dragAmount.x * signX
-                            val stretchFactor = (1f + (deltaPx / boxW.coerceAtLeast(64f)) * 0.55f)
-                                .coerceIn(0.95f, 1.06f)
-                            onStretch(stretchFactor, 1f)
+                            val screenLocalDx = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * invScaleX)
+                            onAnchoredEdgeStretch(signX, 0f, screenLocalDx, 0f, boxW, boxH)
                         }
                     }
                     .testTag("horizontal_stretch_handle_$idx"),
@@ -793,7 +1325,7 @@ private fun SelectionDotHandlesOverlay(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(width = 5.dp, height = 16.dp)
+                        .size(width = 5.dp, height = 10.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .background(Color.White)
                         .border(1.2.dp, dotColor, RoundedCornerShape(999.dp))
