@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import android.graphics.Bitmap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,12 +20,19 @@ import com.example.fonts.FontImportProgress
 import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
 import com.example.fonts.FontSource
+import com.example.model.ImageCropRect
+import com.example.model.ImageCropShape
 import com.example.model.TextLayer
+import com.example.ui.PendingImportPhoto
+import com.example.ui.StudioViewModel
 import com.example.ui.components.FontLibrarySheet
+import com.example.ui.components.PendingPhotoCropOverlay
 import com.example.ui.components.TextToolPanel
+import com.example.ui.screens.EditorScreen
 import com.example.ui.theme.PixelForgeTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -57,7 +65,6 @@ class ComposeRegressionTest {
                     activeFont = null,
                     onTextChangeLive = { textState = it },
                     onConfirmText = { confirmed = true },
-                    onStartNewText = {},
                     onCycleTextCase = {},
                     onOpenFontLibrary = {},
                     onUpdateTextLayer = {},
@@ -135,5 +142,107 @@ class ComposeRegressionTest {
         composeRule.onNodeWithText("1600%").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Zoom: 1600%").assertIsDisplayed()
+    }
+
+    @Test
+    fun editorScreenTopPagerLocksAndContextSensitiveBottomBarsWorkCorrectly() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        var directPhotoPickCount = 0
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = { directPhotoPickCount++ },
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // Unselected main screen: Rotate is hidden; Photo opens gallery directly
+        composeRule.onNodeWithTag("bottom_tool_photo").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_text_plus").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_shapes").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_draw").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_rotate").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("bottom_tool_photo").performClick()
+        assertEquals(1, directPhotoPickCount)
+
+        // Top pager Page 0 -> switch to Page 1 -> verify S/Z/R/P locks & defaults
+        composeRule.onNodeWithTag("top_delete_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_pager_dot_1").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue(vm.transformLocks.value.stretchLocked)
+        assertFalse(vm.transformLocks.value.zoomLocked)
+        composeRule.onNodeWithTag("top_lock_stretch_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_lock_zoom_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_lock_rotation_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_lock_position_button").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("top_lock_stretch_button").performClick()
+        assertFalse(vm.transformLocks.value.stretchLocked)
+
+        // Enter Text mode -> + New is gone inside panel, main workspace tools hidden, text tools + Rotate shown
+        composeRule.onNodeWithTag("bottom_tool_text_plus").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("text_new_layer_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("bottom_tool_edit_text").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_color").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_font").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_rotate").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_photo").assertDoesNotExist()
+        composeRule.onNodeWithTag("bottom_tool_shapes").assertDoesNotExist()
+        composeRule.onNodeWithTag("bottom_tool_draw").assertDoesNotExist()
+    }
+
+    @Test
+    fun pendingPhotoCropOverlaySupportsFreeCircleAnd916Modes() {
+        val bmp = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
+        val pending = PendingImportPhoto(
+            uriString = "/tmp/sample.png",
+            displayName = "sample",
+            originalWidth = 200,
+            originalHeight = 200,
+            previewBitmap = bmp
+        )
+        var committedCrop: ImageCropRect? = null
+        var committedShape: ImageCropShape? = null
+        var deleted = false
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                PendingPhotoCropOverlay(
+                    pendingPhoto = pending,
+                    onDelete = { deleted = true },
+                    onDone = { c, s ->
+                        committedCrop = c
+                        committedShape = s
+                    }
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("import_crop_mode_circle").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("import_crop_done_button").performClick()
+        assertEquals(ImageCropShape.CIRCLE, committedShape)
+        assertTrue((committedCrop?.right ?: 0f) > (committedCrop?.left ?: 1f))
+
+        composeRule.onNodeWithTag("import_crop_mode_9_16").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("import_crop_done_button").performClick()
+        assertEquals(ImageCropShape.RECTANGLE, committedShape)
+
+        composeRule.onNodeWithTag("import_crop_delete_button").performClick()
+        assertTrue(deleted)
+        bmp.recycle()
     }
 }

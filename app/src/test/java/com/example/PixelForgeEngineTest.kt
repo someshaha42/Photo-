@@ -22,6 +22,7 @@ import com.example.model.ExportResolutionPreset
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageCropRect
+import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
@@ -30,6 +31,7 @@ import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
+import com.example.ui.TransformLockState
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -783,6 +785,118 @@ class PixelForgeEngineTest {
             }
             specBmp.recycle()
             assertTrue("1600% vector specimen draw must render crisp glyph pixels", specOpaque > 100)
+        }
+    }
+
+    @Test
+    fun transformLocksDefaultAndEnforcementWorkCorrectly() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val id = vm.addTextLayer("Lock Test")!!
+
+        // Defaults: S=locked (true), Z/R/P=unlocked (false)
+        assertEquals(
+            TransformLockState(stretchLocked = true, zoomLocked = false, rotationLocked = false, positionLocked = false),
+            vm.transformLocks.value
+        )
+
+        // While Stretch is locked, anchored stretch must be ignored
+        vm.transformLayerAnchoredStretch(id, 1f, 0f, 50f, 0f, 100f, 100f, 400f, 400f)
+        var layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(1f, layer.stretchX, 0.0001f)
+
+        // Unlock Stretch -> anchored stretch works cleanly
+        vm.toggleStretchLock()
+        assertFalse(vm.transformLocks.value.stretchLocked)
+        vm.transformLayerAnchoredStretch(id, 1f, 0f, 40f, 0f, 100f, 100f, 400f, 400f)
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(1.4f, layer.stretchX, 0.001f)
+
+        // Lock Zoom, Rotation, Position -> transient transform must ignore them
+        vm.toggleZoomLock()
+        vm.toggleRotationLock()
+        vm.togglePositionLock()
+        assertTrue(vm.transformLocks.value.zoomLocked)
+        assertTrue(vm.transformLocks.value.rotationLocked)
+        assertTrue(vm.transformLocks.value.positionLocked)
+
+        val beforeScale = layer.scale
+        val beforeRot = layer.rotationDeg
+        val beforeX = layer.offsetXNorm
+        vm.transformLayerTransient(id, deltaXNorm = 0.25f, deltaYNorm = 0.25f, scaleFactor = 2f, rotationDelta = 45f)
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(beforeScale, layer.scale, 0.0001f)
+        assertEquals(beforeRot, layer.rotationDeg, 0.0001f)
+        assertEquals(beforeX, layer.offsetXNorm, 0.0001f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun drawStrokeAfterTransformedDrawLayerCreatesFreshUntransformedLayer() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+
+        val stroke1 = DrawStroke(
+            colorArgb = 0xFFFF0000L,
+            strokeWidthNorm = 0.02f,
+            points = listOf(DrawPoint(0.1f, 0.1f), DrawPoint(0.3f, 0.3f))
+        )
+        vm.addDrawStroke(stroke1)
+        assertEquals(1, vm.document.value.layers.size)
+        val firstDrawId = vm.document.value.layers.first().id
+
+        // Move first draw layer away from identity
+        vm.transformLayerTransient(firstDrawId, deltaXNorm = 0.2f, deltaYNorm = 0.1f, scaleFactor = 1f, rotationDelta = 0f)
+
+        // Adding another stroke must create a fresh identity DrawLayer instead of distorting into the moved layer
+        val stroke2 = DrawStroke(
+            colorArgb = 0xFF00FF00L,
+            strokeWidthNorm = 0.02f,
+            points = listOf(DrawPoint(0.6f, 0.6f), DrawPoint(0.8f, 0.8f))
+        )
+        vm.addDrawStroke(stroke2)
+        assertEquals(2, vm.document.value.layers.size)
+        val secondDraw = vm.document.value.layers[1] as DrawLayer
+        assertEquals(0f, secondDraw.offsetXNorm, 0.0001f)
+        assertEquals(0f, secondDraw.offsetYNorm, 0.0001f)
+        assertEquals(1, secondDraw.strokes.size)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun circleCropShapeMasksExportedImageCornersToTransparent() {
+        runBlocking {
+            val sourceFile = File(context.cacheDir, "circle_crop_src.png")
+            val srcBmp = android.graphics.Bitmap.createBitmap(100, 100, android.graphics.Bitmap.Config.ARGB_8888)
+            srcBmp.eraseColor(Color.RED)
+            FileOutputStream(sourceFile).use { out ->
+                srcBmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            srcBmp.recycle()
+
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                layers = listOf(
+                    ImageLayer(
+                        uriString = sourceFile.absolutePath,
+                        originalWidth = 100,
+                        originalHeight = 100,
+                        cropShape = ImageCropShape.CIRCLE,
+                        scale = 1.15f
+                    )
+                )
+            )
+            val rendered = mediaManager.renderProjectToBitmap(doc, renderEngine, 200, 200)
+            // Center must be opaque red, corner of circle bounding box must remain transparent!
+            val centerPx = rendered.getPixel(100, 100)
+            val cornerPx = rendered.getPixel(12, 12)
+            assertTrue("Circle crop center must be red", Color.red(centerPx) > 200 && Color.alpha(centerPx) > 200)
+            assertEquals("Circle crop outside corner must be transparent", 0, Color.alpha(cornerPx))
+            rendered.recycle()
+            sourceFile.delete()
         }
     }
 

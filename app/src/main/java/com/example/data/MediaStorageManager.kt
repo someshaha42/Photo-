@@ -30,6 +30,7 @@ import com.example.model.ExportImageFormat
 import com.example.model.ExportResolutionPreset
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
+import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
@@ -326,6 +327,15 @@ class MediaStorageManager(private val context: Context) {
                     val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
                     val layerAlpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
                     val tintArgb = layer.tintColorArgb
+                    val shapeClipSave = if (layer.cropShape == ImageCropShape.CIRCLE) {
+                        val c = canvas.save()
+                        val ovalPath = android.graphics.Path().apply {
+                            addOval(dst, android.graphics.Path.Direction.CW)
+                        }
+                        canvas.clipPath(ovalPath)
+                        c
+                    } else null
+
                     if (tintArgb != null) {
                         val saveCount = canvas.saveLayerAlpha(dst, layerAlpha)
                         canvas.drawBitmap(bmp, srcRect, dst, paint)
@@ -344,6 +354,10 @@ class MediaStorageManager(private val context: Context) {
                         if (layer.adjustments.vignette > 0.01f) {
                             drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
                         }
+                    }
+
+                    if (shapeClipSave != null) {
+                        canvas.restoreToCount(shapeClipSave)
                     }
 
                     if (bmp !== rawBmp) bmp.recycle()

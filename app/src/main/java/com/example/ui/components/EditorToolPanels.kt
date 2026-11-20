@@ -115,7 +115,6 @@ import com.example.model.EditorLayer
 import com.example.model.EmojiSourceMode
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
-import com.example.model.ImageCropRect
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ShapeLayer
@@ -784,8 +783,6 @@ private fun DrawerLayerRow(
 @Composable
 fun CropToolPanel(
     selectedImageLayer: ImageLayer?,
-    onUpdateCrop: ((ImageCropRect) -> ImageCropRect) -> Unit,
-    onResetCrop: () -> Unit,
     onDone: () -> Unit = {}
 ) {
     Column(
@@ -801,106 +798,25 @@ fun CropToolPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            val crop = selectedImageLayer.crop.normalized()
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Drag crop edges directly on canvas",
+                    text = "Drag crop edges on canvas",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
                 )
-                Text(
-                    text = "${((crop.right - crop.left) * 100).roundToInt()}% × ${((crop.bottom - crop.top) * 100).roundToInt()}%",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = StudioEmerald
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    onClick = onResetCrop,
-                    modifier = Modifier.testTag("crop_ratio_free")
-                ) {
-                    Text("Free")
-                }
-
-                OutlinedButton(
-                    onClick = {
-                        val imgRatio = selectedImageLayer.originalWidth.coerceAtLeast(1).toFloat() /
-                            selectedImageLayer.originalHeight.coerceAtLeast(1)
-                        val target = if (imgRatio > 1f) {
-                            val span = 1f / imgRatio
-                            val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
-                            ImageCropRect(left = margin, top = 0f, right = 1f - margin, bottom = 1f)
-                        } else {
-                            val span = imgRatio
-                            val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
-                            ImageCropRect(left = 0f, top = margin, right = 1f, bottom = 1f - margin)
-                        }
-                        onUpdateCrop { target }
-                    }
-                ) { Text("1:1") }
-
-                OutlinedButton(onClick = {
-                    val imgRatio = selectedImageLayer.originalWidth.coerceAtLeast(1).toFloat() /
-                        selectedImageLayer.originalHeight.coerceAtLeast(1)
-                    val targetRatio = 16f / 9f
-                    val target = if (imgRatio > targetRatio) {
-                        val span = targetRatio / imgRatio
-                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
-                        ImageCropRect(left = margin, top = 0f, right = 1f - margin, bottom = 1f)
-                    } else {
-                        val span = imgRatio / targetRatio
-                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
-                        ImageCropRect(left = 0f, top = margin, right = 1f, bottom = 1f - margin)
-                    }
-                    onUpdateCrop { target }
-                }) {
-                    Text("16:9")
-                }
-
-                OutlinedButton(onClick = {
-                    val imgRatio = selectedImageLayer.originalWidth.coerceAtLeast(1).toFloat() /
-                        selectedImageLayer.originalHeight.coerceAtLeast(1)
-                    val targetRatio = 9f / 16f
-                    val target = if (imgRatio > targetRatio) {
-                        val span = targetRatio / imgRatio
-                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
-                        ImageCropRect(left = margin, top = 0f, right = 1f - margin, bottom = 1f)
-                    } else {
-                        val span = imgRatio / targetRatio
-                        val margin = ((1f - span) / 2f).coerceIn(0f, 0.42f)
-                        ImageCropRect(left = 0f, top = margin, right = 1f, bottom = 1f - margin)
-                    }
-                    onUpdateCrop { target }
-                }) {
-                    Text("9:16")
-                }
-
-                TextButton(onClick = onResetCrop) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Reset")
-                }
-
                 Button(
                     onClick = onDone,
                     colors = ButtonDefaults.buttonColors(containerColor = StudioEmerald),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     modifier = Modifier.testTag("crop_done_button")
                 ) {
-                    Icon(Icons.Rounded.Check, contentDescription = "Done", modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Rounded.Check, contentDescription = "Done", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text("Done", fontWeight = FontWeight.Bold)
                 }
             }
@@ -922,7 +838,6 @@ fun TextToolPanel(
     activeFont: FontMetadata?,
     onTextChangeLive: (String) -> Unit,
     onConfirmText: () -> Unit,
-    onStartNewText: () -> Unit,
     onCycleTextCase: () -> Unit,
     onOpenFontLibrary: () -> Unit,
     onUpdateTextLayer: ((TextLayer) -> TextLayer) -> Unit,
@@ -1051,18 +966,6 @@ fun TextToolPanel(
                 onClick = { onUpdateTextLayer { it.copy(bgPillEnabled = !it.bgPillEnabled) } },
                 label = { Text("Pill") }
             )
-
-            if (selectedTextLayer != null) {
-                OutlinedButton(
-                    onClick = onStartNewText,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.testTag("text_new_layer_button")
-                ) {
-                    Icon(Icons.Rounded.Add, contentDescription = "New Text", modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("New")
-                }
-            }
         }
 
         // Contextual Slider when Shadow or Stroke is active

@@ -65,7 +65,7 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
     val photosPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = PickMultipleVisualMedia()
     ) { uris ->
-        if (uris.isNotEmpty()) viewModel.addImagesFromPicker(uris)
+        if (uris.isNotEmpty()) viewModel.stagePickedPhotosForCrop(uris)
     }
 
     // Direct Android Photo Picker for Background Image

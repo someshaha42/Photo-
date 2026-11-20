@@ -30,6 +30,7 @@ import com.example.model.ExportResolutionPreset
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageCropRect
+import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
@@ -75,6 +76,28 @@ enum class EyedropperTarget {
     BACKGROUND,
     SELECTED_LAYER
 }
+
+/**
+ * Lock flags where ON (true) disables that transform on canvas touch/handles,
+ * and OFF (false) keeps that transform active.
+ * Stretch is ON (locked) by default so accidental dragging/zooming never stretches;
+ * Zoom, Rotation, and Position are OFF (unlocked) by default.
+ */
+data class TransformLockState(
+    val stretchLocked: Boolean = true,
+    val zoomLocked: Boolean = false,
+    val rotationLocked: Boolean = false,
+    val positionLocked: Boolean = false
+)
+
+data class PendingImportPhoto(
+    val id: String = UUID.randomUUID().toString(),
+    val uriString: String,
+    val displayName: String,
+    val originalWidth: Int,
+    val originalHeight: Int,
+    val previewBitmap: Bitmap
+)
 
 class StudioViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
@@ -171,6 +194,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _drawBrushSizeNorm = MutableStateFlow(0.012f)
     val drawBrushSizeNorm: StateFlow<Float> = _drawBrushSizeNorm.asStateFlow()
 
+    private val _transformLocks = MutableStateFlow(TransformLockState())
+    val transformLocks: StateFlow<TransformLockState> = _transformLocks.asStateFlow()
+
+    private val _pendingCropQueue = MutableStateFlow<List<PendingImportPhoto>>(emptyList())
+    val pendingCropQueue: StateFlow<List<PendingImportPhoto>> = _pendingCropQueue.asStateFlow()
+
     init {
         viewModelScope.launch {
             fontRepository.initialize()
@@ -252,6 +281,26 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setZoomMode(enabled: Boolean) {
         _isZoomMode.value = enabled
+    }
+
+    fun toggleStretchLock() {
+        val cur = _transformLocks.value
+        _transformLocks.value = cur.copy(stretchLocked = !cur.stretchLocked)
+    }
+
+    fun toggleZoomLock() {
+        val cur = _transformLocks.value
+        _transformLocks.value = cur.copy(zoomLocked = !cur.zoomLocked)
+    }
+
+    fun toggleRotationLock() {
+        val cur = _transformLocks.value
+        _transformLocks.value = cur.copy(rotationLocked = !cur.rotationLocked)
+    }
+
+    fun togglePositionLock() {
+        val cur = _transformLocks.value
+        _transformLocks.value = cur.copy(positionLocked = !cur.positionLocked)
     }
 
     fun updateCanvasViewportTransform(zoomDelta: Float, panDx: Float, panDy: Float) {
@@ -544,6 +593,77 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         if (layer is TextLayer) {
             fontRepository.selectFont(layer.fontId)
             _draftTextStyle.value = layer
+        }
+    }
+
+    fun stagePickedPhotosForCrop(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (!canAddLayer(1)) return
+        viewModelScope.launch {
+            val doc = _document.value
+            val staged = mutableListOf<PendingImportPhoto>()
+            for (uri in uris) {
+                if (!settings.value.unlimitedLayers && doc.layers.size + _pendingCropQueue.value.size + staged.size >= 5) {
+                    _statusBanner.value = "Layer limit (5) reached."
+                    break
+                }
+                val meta = mediaManager.importImage(
+                    sourceUri = uri,
+                    projectId = doc.id,
+                    keepLocalCopy = settings.value.keepLocalMediaCopy
+                )
+                val bmp = mediaManager.decodeRgba8888Bitmap(meta.uriString, maxDimension = null)
+                if (bmp != null) {
+                    staged.add(
+                        PendingImportPhoto(
+                            uriString = meta.uriString,
+                            displayName = meta.displayName.substringBeforeLast('.').take(18).ifBlank { "Photo" },
+                            originalWidth = meta.width,
+                            originalHeight = meta.height,
+                            previewBitmap = bmp
+                        )
+                    )
+                }
+            }
+            if (staged.isNotEmpty()) {
+                _pendingCropQueue.value = _pendingCropQueue.value + staged
+            }
+        }
+    }
+
+    fun discardCurrentPendingCrop() {
+        val queue = _pendingCropQueue.value
+        if (queue.isEmpty()) return
+        _pendingCropQueue.value = queue.drop(1)
+    }
+
+    fun commitCurrentPendingCrop(crop: ImageCropRect, cropShape: ImageCropShape) {
+        val queue = _pendingCropQueue.value
+        val current = queue.firstOrNull() ?: return
+        _pendingCropQueue.value = queue.drop(1)
+        if (!canAddLayer(1)) return
+
+        val decodedMap = _imageBitmaps.value.toMutableMap()
+        decodedMap[current.uriString] = current.previewBitmap
+        _imageBitmaps.value = decodedMap
+
+        val layer = ImageLayer(
+            name = current.displayName,
+            uriString = current.uriString,
+            originalWidth = current.originalWidth,
+            originalHeight = current.originalHeight,
+            crop = crop.normalized(),
+            cropShape = cropShape
+        )
+        commitChange { doc ->
+            doc.copy(
+                layers = doc.layers + layer,
+                selectedLayerId = layer.id,
+                selectionOrder = listOf(layer.id)
+            )
+        }
+        if (_document.value.background.activeTab == BackgroundTab.BLUR) {
+            viewModelScope.launch { regenerateBlurPreview(_document.value) }
         }
     }
 
@@ -876,7 +996,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val doc = _document.value
         val selectedDraw = findLayerRecursive(doc.layers, doc.selectedLayerId) as? DrawLayer
         val existingDraw = selectedDraw ?: doc.layers.filterIsInstance<DrawLayer>().lastOrNull()
-        if (existingDraw != null) {
+        val isIdentityDraw = existingDraw != null &&
+            existingDraw.offsetXNorm == 0f &&
+            existingDraw.offsetYNorm == 0f &&
+            existingDraw.scale == 1f &&
+            existingDraw.stretchX == 1f &&
+            existingDraw.stretchY == 1f &&
+            existingDraw.rotationDeg == 0f
+        if (isIdentityDraw && existingDraw != null) {
             commitChange { d ->
                 d.copy(
                     layers = mapLayerRecursive(d.layers, existingDraw.id) { l ->
@@ -1022,16 +1149,24 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         stretchXFactor: Float = 1f,
         stretchYFactor: Float = 1f
     ) {
+        val locks = _transformLocks.value
+        val effDx = if (locks.positionLocked) 0f else deltaXNorm
+        val effDy = if (locks.positionLocked) 0f else deltaYNorm
+        val effScaleFactor = if (locks.zoomLocked) 1f else scaleFactor
+        val effRotDelta = if (locks.rotationLocked) 0f else rotationDelta
+        val effStretchX = if (locks.stretchLocked) 1f else stretchXFactor
+        val effStretchY = if (locks.stretchLocked) 1f else stretchYFactor
+
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
                 if (!layer.locked) {
                     layer.withBaseTransform(
-                        offsetXNorm = (layer.offsetXNorm + deltaXNorm).coerceIn(-0.98f, 0.98f),
-                        offsetYNorm = (layer.offsetYNorm + deltaYNorm).coerceIn(-0.98f, 0.98f),
-                        scale = (layer.scale * scaleFactor).coerceIn(0.05f, 100f),
-                        stretchX = (layer.stretchX * stretchXFactor).coerceIn(0.15f, 8f),
-                        stretchY = (layer.stretchY * stretchYFactor).coerceIn(0.15f, 8f),
-                        rotationDeg = (layer.rotationDeg + rotationDelta) % 360f
+                        offsetXNorm = (layer.offsetXNorm + effDx).coerceIn(-0.98f, 0.98f),
+                        offsetYNorm = (layer.offsetYNorm + effDy).coerceIn(-0.98f, 0.98f),
+                        scale = (layer.scale * effScaleFactor).coerceIn(0.05f, 100f),
+                        stretchX = (layer.stretchX * effStretchX).coerceIn(0.15f, 8f),
+                        stretchY = (layer.stretchY * effStretchY).coerceIn(0.15f, 8f),
+                        rotationDeg = (layer.rotationDeg + effRotDelta) % 360f
                     )
                 } else layer
             }
@@ -1049,6 +1184,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         canvasWpx: Float,
         canvasHpx: Float
     ) {
+        if (_transformLocks.value.stretchLocked) return
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
                 if (layer.locked) return@mapLayerRecursive layer

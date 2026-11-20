@@ -6,6 +6,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -50,6 +56,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
@@ -57,7 +64,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -76,18 +87,24 @@ import com.example.model.EditorBlendMode
 import com.example.model.EditorLayer
 import com.example.model.GroupLayer
 import com.example.model.ImageCropRect
+import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
 import com.example.model.TextLayer
+import com.example.ui.StudioViewModel
+import com.example.ui.TransformLockState
 import com.example.ui.theme.CheckerDark1
 import com.example.ui.theme.CheckerDark2
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -101,6 +118,7 @@ fun EditorCanvasViewport(
     isZoomMode: Boolean,
     isCropMode: Boolean = false,
     isDrawMode: Boolean = false,
+    transformLocks: TransformLockState = TransformLockState(),
     drawColorArgb: Long = 0xFFFF4D4FL,
     drawBrushSizeNorm: Float = 0.012f,
     canvasZoom: Float,
@@ -141,6 +159,14 @@ fun EditorCanvasViewport(
     val selectedSet = remember(document.selectionOrder, document.selectedLayerId) {
         document.effectiveSelectionOrder.toSet()
     }
+    var canvasBoxWpx by remember { mutableFloatStateOf(300f) }
+    var canvasBoxHpx by remember { mutableFloatStateOf(300f) }
+    val liveSelectedId by rememberUpdatedState(document.selectedLayerId)
+    val liveSelectedLayer by rememberUpdatedState(
+        StudioViewModel.findLayerRecursive(document.layers, document.selectedLayerId)
+    )
+    val liveCanvasZoom by rememberUpdatedState(canvasZoom)
+    val liveLocks by rememberUpdatedState(transformLocks)
 
     BoxWithConstraints(
         modifier = modifier
@@ -154,9 +180,47 @@ fun EditorCanvasViewport(
                         }
                     }
                 } else if (!isEyedropperActive && !isDrawMode && !isCropMode) {
-                    Modifier.pointerInput(isZoomMode, isEyedropperActive, isDrawMode, isCropMode) {
-                        detectTapGestures { onEmptyCanvasTap() }
-                    }
+                    Modifier
+                        // Viewport-wide 2-finger pinch/rotate/move assist so tiny or heavily zoomed Text/Photos transform effortlessly!
+                        .pointerInput(isZoomMode, isEyedropperActive, isDrawMode, isCropMode) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                var twoFingerActive = false
+                                do {
+                                    val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                    val pressedCount = event.changes.count { it.pressed }
+                                    val targetId = liveSelectedId
+                                    val targetLayer = liveSelectedLayer
+                                    if (pressedCount >= 2 && targetId != null && targetLayer != null && !targetLayer.locked) {
+                                        twoFingerActive = true
+                                        val zoom = event.calculateZoom()
+                                        val pan = event.calculatePan()
+                                        val rot = event.calculateRotation()
+                                        val safeCanvasZ = liveCanvasZoom.coerceAtLeast(0.25f)
+                                        val safeW = canvasBoxWpx.coerceAtLeast(1f)
+                                        val safeH = canvasBoxHpx.coerceAtLeast(1f)
+                                        val locks = liveLocks
+                                        if (zoom != 1f || rot != 0f || pan != Offset.Zero) {
+                                            onTransformLayer(
+                                                targetId,
+                                                if (locks.positionLocked) 0f else (pan.x / safeCanvasZ) / safeW,
+                                                if (locks.positionLocked) 0f else (pan.y / safeCanvasZ) / safeH,
+                                                if (locks.zoomLocked) 1f else zoom,
+                                                if (locks.rotationLocked) 0f else rot,
+                                                1f,
+                                                1f
+                                            )
+                                            event.changes.forEach { it.consume() }
+                                        }
+                                    } else if (twoFingerActive && pressedCount < 2) {
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                } while (event.changes.any { it.pressed })
+                            }
+                        }
+                        .pointerInput(isZoomMode, isEyedropperActive, isDrawMode, isCropMode) {
+                            detectTapGestures { onEmptyCanvasTap() }
+                        }
                 } else Modifier
             )
             .padding(8.dp),
@@ -176,6 +240,10 @@ fun EditorCanvasViewport(
 
         Box(
             modifier = boxModifier
+                .onSizeChanged { sz ->
+                    canvasBoxWpx = sz.width.toFloat().coerceAtLeast(1f)
+                    canvasBoxHpx = sz.height.toFloat().coerceAtLeast(1f)
+                }
                 .graphicsLayer {
                     scaleX = canvasZoom
                     scaleY = canvasZoom
@@ -294,6 +362,7 @@ fun EditorCanvasViewport(
                         isZoomMode = isZoomMode,
                         isCropMode = isCropMode,
                         isDrawMode = isDrawMode,
+                        transformLocks = transformLocks,
                         isEyedropperActive = isEyedropperActive,
                         onSelectLayer = onSelectLayer,
                         onLayerTapped = onLayerTapped,
@@ -305,7 +374,7 @@ fun EditorCanvasViewport(
                     )
                 }
 
-                // 4. Interactive Freehand Draw Overlay
+                // 4. Interactive Freehand Draw Overlay (instant pointer capture with zero touch-slop jump)
                 if (isDrawMode && !isZoomMode && !isEyedropperActive) {
                     val livePoints = remember { mutableStateListOf<DrawPoint>() }
                     val latestColor by rememberUpdatedState(drawColorArgb)
@@ -315,41 +384,45 @@ fun EditorCanvasViewport(
                         modifier = Modifier
                             .fillMaxSize()
                             .pointerInput(Unit) {
-                                detectDragGestures(
-                                    onDragStart = { start ->
-                                        livePoints.clear()
-                                        livePoints.add(
-                                            DrawPoint(
-                                                xNorm = (start.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                                                yNorm = (start.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                            )
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = true)
+                                    down.consume()
+                                    val w = size.width.coerceAtLeast(1)
+                                    val h = size.height.coerceAtLeast(1)
+                                    livePoints.clear()
+                                    livePoints.add(
+                                        DrawPoint(
+                                            xNorm = (down.position.x / w).coerceIn(0f, 1f),
+                                            yNorm = (down.position.y / h).coerceIn(0f, 1f)
                                         )
-                                    },
-                                    onDragEnd = {
-                                        if (livePoints.isNotEmpty()) {
-                                            onAddDrawStroke(
-                                                DrawStroke(
-                                                    colorArgb = latestColor,
-                                                    strokeWidthNorm = latestBrushNorm,
-                                                    points = livePoints.toList()
+                                    )
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.firstOrNull()
+                                        if (change == null || !change.pressed) {
+                                            break
+                                        }
+                                        if (change.positionChanged()) {
+                                            change.consume()
+                                            livePoints.add(
+                                                DrawPoint(
+                                                    xNorm = (change.position.x / w).coerceIn(0f, 1f),
+                                                    yNorm = (change.position.y / h).coerceIn(0f, 1f)
                                                 )
                                             )
                                         }
-                                        livePoints.clear()
-                                    },
-                                    onDragCancel = {
-                                        livePoints.clear()
-                                    },
-                                    onDrag = { change, _ ->
-                                        change.consume()
-                                        livePoints.add(
-                                            DrawPoint(
-                                                xNorm = (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                                                yNorm = (change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                    }
+                                    if (livePoints.isNotEmpty()) {
+                                        onAddDrawStroke(
+                                            DrawStroke(
+                                                colorArgb = latestColor,
+                                                strokeWidthNorm = latestBrushNorm,
+                                                points = livePoints.toList()
                                             )
                                         )
                                     }
-                                )
+                                    livePoints.clear()
+                                }
                             }
                             .testTag("canvas_draw_overlay")
                     ) {
@@ -424,6 +497,7 @@ private fun RenderCanvasLayerNode(
     isZoomMode: Boolean,
     isCropMode: Boolean,
     isDrawMode: Boolean,
+    transformLocks: TransformLockState,
     isEyedropperActive: Boolean,
     onSelectLayer: (String?) -> Unit,
     onLayerTapped: (String) -> Unit,
@@ -466,8 +540,11 @@ private fun RenderCanvasLayerNode(
 
     val liveTargetLayer by rememberUpdatedState(interactiveTarget)
     val liveChildLayer by rememberUpdatedState(layer)
+    val liveLocks by rememberUpdatedState(transformLocks)
+    val liveCanvasZoom by rememberUpdatedState(canvasZoom)
+    val liveParentScale by rememberUpdatedState(parentScale)
 
-    // Strictly move/pinch-zoom/rotate only — NEVER stretches during 1-finger move or 2-finger pinch!
+    // Scale-aware gesture handler: touchSlop is inversely scaled by zoom so high-zoom dragging/zooming/rotating responds immediately!
     val bodyGestureModifier = if (!isZoomMode && !isEyedropperActive && !isDrawMode) {
         if ((layer is GroupLayer && layer.isExpanded && parentGroup == null) ||
             (isCropMode && layer is ImageLayer && isPrimarySelected)
@@ -480,10 +557,19 @@ private fun RenderCanvasLayerNode(
                 }
                 .pointerInput(interactiveTargetId, effectiveLocked, canvasWpx, canvasHpx) {
                     if (effectiveLocked) return@pointerInput
-                    detectTransformGestures { _, pan, zoom, rotation ->
+                    detectScaleAwareTransformGestures(
+                        effectiveScaleProvider = {
+                            val t = liveTargetLayer
+                            val c = liveChildLayer
+                            val sx = t.scale * t.stretchX * if (parentGroup != null) c.scale * c.stretchX else 1f
+                            val sy = t.scale * t.stretchY * if (parentGroup != null) c.scale * c.stretchY else 1f
+                            max(sx, sy) * liveParentScale * liveCanvasZoom
+                        }
+                    ) { _, pan, zoom, rotation ->
                         onSelectLayer(interactiveTargetId)
                         val t = liveTargetLayer
                         val c = liveChildLayer
+                        val locks = liveLocks
                         val sx = t.scale * t.stretchX * if (parentGroup != null) c.scale * c.stretchX else 1f
                         val sy = t.scale * t.stretchY * if (parentGroup != null) c.scale * c.stretchY else 1f
                         val totalRotDeg = t.rotationDeg + if (parentGroup != null) c.rotationDeg else 0f
@@ -494,10 +580,10 @@ private fun RenderCanvasLayerNode(
                         val dyCanvasPx = (unscaledX * sin(rad) + unscaledY * cos(rad)).toFloat()
                         onTransformLayer(
                             interactiveTargetId,
-                            dxCanvasPx / canvasWpx.coerceAtLeast(1f),
-                            dyCanvasPx / canvasHpx.coerceAtLeast(1f),
-                            zoom,
-                            rotation,
+                            if (locks.positionLocked) 0f else dxCanvasPx / canvasWpx.coerceAtLeast(1f),
+                            if (locks.positionLocked) 0f else dyCanvasPx / canvasHpx.coerceAtLeast(1f),
+                            if (locks.zoomLocked) 1f else zoom,
+                            if (locks.rotationLocked) 0f else rotation,
                             1f,
                             1f
                         )
@@ -543,6 +629,7 @@ private fun RenderCanvasLayerNode(
                             isZoomMode = isZoomMode,
                             isCropMode = isCropMode,
                             isDrawMode = isDrawMode,
+                            transformLocks = transformLocks,
                             isEyedropperActive = isEyedropperActive,
                             onSelectLayer = onSelectLayer,
                             onLayerTapped = onLayerTapped,
@@ -559,10 +646,22 @@ private fun RenderCanvasLayerNode(
                             boxModifier = Modifier.size(with(LocalDensity.current) { (baseUnitPx * 0.64f).toDp() }),
                             dotColor = dotAccent,
                             targetLayer = layer,
+                            canvasZoom = canvasZoom,
+                            locks = transformLocks,
                             showDeleteCross = isPrimarySelected,
                             onDeleteClick = { onDeleteLayer(layer.id) },
                             onUniformZoom = { zoomFactor ->
                                 onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                            },
+                            onEdgePan = { localDx, localDy ->
+                                val sx = layer.scale * layer.stretchX
+                                val sy = layer.scale * layer.stretchY
+                                val rad = Math.toRadians(layer.rotationDeg.toDouble())
+                                val ux = localDx * sx
+                                val uy = localDy * sy
+                                val dxPx = (ux * cos(rad) - uy * sin(rad)).toFloat()
+                                val dyPx = (ux * sin(rad) + uy * cos(rad)).toFloat()
+                                onTransformLayer(layer.id, dxPx / canvasWpx.coerceAtLeast(1f), dyPx / canvasHpx.coerceAtLeast(1f), 1f, 0f, 1f, 1f)
                             },
                             onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
                                 onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
@@ -632,6 +731,7 @@ private fun RenderCanvasLayerNode(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .clip(if (layer.cropShape == ImageCropShape.CIRCLE) CircleShape else RectangleShape)
                                     .graphicsLayer {
                                         compositingStrategy = if (layer.tintColorArgb != null) {
                                             CompositingStrategy.Offscreen
@@ -704,11 +804,25 @@ private fun RenderCanvasLayerNode(
                                     boxModifier = Modifier.fillMaxSize(),
                                     dotColor = dotAccent,
                                     targetLayer = layer,
+                                    canvasZoom = canvasZoom,
+                                    locks = transformLocks,
                                     showDeleteCross = isPrimarySelected,
                                     onDeleteClick = { onDeleteLayer(layer.id) },
                                     onUniformZoom = { zoomFactor ->
                                         if (!effectiveLocked) {
                                             onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                                        }
+                                    },
+                                    onEdgePan = { localDx, localDy ->
+                                        if (!effectiveLocked) {
+                                            val sx = layer.scale * layer.stretchX
+                                            val sy = layer.scale * layer.stretchY
+                                            val rad = Math.toRadians(layer.rotationDeg.toDouble())
+                                            val ux = localDx * sx
+                                            val uy = localDy * sy
+                                            val dxPx = (ux * cos(rad) - uy * sin(rad)).toFloat()
+                                            val dyPx = (ux * sin(rad) + uy * cos(rad)).toFloat()
+                                            onTransformLayer(layer.id, dxPx / canvasWpx.coerceAtLeast(1f), dyPx / canvasHpx.coerceAtLeast(1f), 1f, 0f, 1f, 1f)
                                         }
                                     },
                                     onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
@@ -772,11 +886,25 @@ private fun RenderCanvasLayerNode(
                             boxModifier = Modifier.fillMaxSize(),
                             dotColor = dotAccent,
                             targetLayer = layer,
+                            canvasZoom = canvasZoom,
+                            locks = transformLocks,
                             showDeleteCross = isPrimarySelected,
                             onDeleteClick = { onDeleteLayer(layer.id) },
                             onUniformZoom = { zoomFactor ->
                                 if (!effectiveLocked) {
                                     onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                                }
+                            },
+                            onEdgePan = { localDx, localDy ->
+                                if (!effectiveLocked) {
+                                    val sx = layer.scale * layer.stretchX
+                                    val sy = layer.scale * layer.stretchY
+                                    val rad = Math.toRadians(layer.rotationDeg.toDouble())
+                                    val ux = localDx * sx
+                                    val uy = localDy * sy
+                                    val dxPx = (ux * cos(rad) - uy * sin(rad)).toFloat()
+                                    val dyPx = (ux * sin(rad) + uy * cos(rad)).toFloat()
+                                    onTransformLayer(layer.id, dxPx / canvasWpx.coerceAtLeast(1f), dyPx / canvasHpx.coerceAtLeast(1f), 1f, 0f, 1f, 1f)
                                 }
                             },
                             onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
@@ -847,11 +975,25 @@ private fun RenderCanvasLayerNode(
                             boxModifier = Modifier.fillMaxSize(),
                             dotColor = dotAccent,
                             targetLayer = layer,
+                            canvasZoom = canvasZoom,
+                            locks = transformLocks,
                             showDeleteCross = isPrimarySelected,
                             onDeleteClick = { onDeleteLayer(layer.id) },
                             onUniformZoom = { zoomFactor ->
                                 if (!effectiveLocked) {
                                     onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                                }
+                            },
+                            onEdgePan = { localDx, localDy ->
+                                if (!effectiveLocked) {
+                                    val sx = layer.scale * layer.stretchX
+                                    val sy = layer.scale * layer.stretchY
+                                    val rad = Math.toRadians(layer.rotationDeg.toDouble())
+                                    val ux = localDx * sx
+                                    val uy = localDy * sy
+                                    val dxPx = (ux * cos(rad) - uy * sin(rad)).toFloat()
+                                    val dyPx = (ux * sin(rad) + uy * cos(rad)).toFloat()
+                                    onTransformLayer(layer.id, dxPx / canvasWpx.coerceAtLeast(1f), dyPx / canvasHpx.coerceAtLeast(1f), 1f, 0f, 1f, 1f)
                                 }
                             },
                             onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
@@ -865,7 +1007,19 @@ private fun RenderCanvasLayerNode(
             }
 
             is DrawLayer -> {
-                Box(modifier = Modifier.fillMaxSize().then(bodyGestureModifier)) {
+                // Compute tight stroke bounding box so selection handles & gestures fit ONLY the drawn area (not whole canvas)
+                val allPts = remember(layer.strokes) { layer.strokes.flatMap { it.points } }
+                val minXNorm = (allPts.minOfOrNull { it.xNorm } ?: 0.25f).let { (it - 0.04f).coerceIn(0f, 0.92f) }
+                val minYNorm = (allPts.minOfOrNull { it.yNorm } ?: 0.25f).let { (it - 0.04f).coerceIn(0f, 0.92f) }
+                val maxXNorm = (allPts.maxOfOrNull { it.xNorm } ?: 0.75f).let { (it + 0.04f).coerceIn((minXNorm + 0.08f).coerceAtMost(1f), 1f) }
+                val maxYNorm = (allPts.maxOfOrNull { it.yNorm } ?: 0.75f).let { (it + 0.04f).coerceIn((minYNorm + 0.08f).coerceAtMost(1f), 1f) }
+
+                val boxLeftDp = with(LocalDensity.current) { (minXNorm * canvasWpx).toDp() }
+                val boxTopDp = with(LocalDensity.current) { (minYNorm * canvasHpx).toDp() }
+                val boxWidthDp = with(LocalDensity.current) { ((maxXNorm - minXNorm) * canvasWpx).coerceAtLeast(48f).toDp() }
+                val boxHeightDp = with(LocalDensity.current) { ((maxYNorm - minYNorm) * canvasHpx).coerceAtLeast(48f).toDp() }
+
+                Box(modifier = Modifier.fillMaxSize()) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val minDim = size.minDimension.coerceAtLeast(1f)
                         layer.strokes.forEach { stroke ->
@@ -899,24 +1053,46 @@ private fun RenderCanvasLayerNode(
                         }
                     }
 
-                    if (showDots && parentGroup == null) {
-                        SelectionDotHandlesOverlay(
-                            boxModifier = Modifier.fillMaxSize(),
-                            dotColor = dotAccent,
-                            targetLayer = layer,
-                            showDeleteCross = isPrimarySelected,
-                            onDeleteClick = { onDeleteLayer(layer.id) },
-                            onUniformZoom = { zoomFactor ->
-                                if (!effectiveLocked) {
-                                    onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                    // Interactive hit-box + handles tightly wrapping ONLY the drawn strokes!
+                    Box(
+                        modifier = Modifier
+                            .offset(x = boxLeftDp, y = boxTopDp)
+                            .size(width = boxWidthDp, height = boxHeightDp)
+                            .then(bodyGestureModifier)
+                    ) {
+                        if (showDots && parentGroup == null) {
+                            SelectionDotHandlesOverlay(
+                                boxModifier = Modifier.fillMaxSize(),
+                                dotColor = dotAccent,
+                                targetLayer = layer,
+                                canvasZoom = canvasZoom,
+                                locks = transformLocks,
+                                showDeleteCross = isPrimarySelected,
+                                onDeleteClick = { onDeleteLayer(layer.id) },
+                                onUniformZoom = { zoomFactor ->
+                                    if (!effectiveLocked) {
+                                        onTransformLayer(layer.id, 0f, 0f, zoomFactor, 0f, 1f, 1f)
+                                    }
+                                },
+                                onEdgePan = { localDx, localDy ->
+                                    if (!effectiveLocked) {
+                                        val sx = layer.scale * layer.stretchX
+                                        val sy = layer.scale * layer.stretchY
+                                        val rad = Math.toRadians(layer.rotationDeg.toDouble())
+                                        val ux = localDx * sx
+                                        val uy = localDy * sy
+                                        val dxPx = (ux * cos(rad) - uy * sin(rad)).toFloat()
+                                        val dyPx = (ux * sin(rad) + uy * cos(rad)).toFloat()
+                                        onTransformLayer(layer.id, dxPx / canvasWpx.coerceAtLeast(1f), dyPx / canvasHpx.coerceAtLeast(1f), 1f, 0f, 1f, 1f)
+                                    }
+                                },
+                                onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
+                                    if (!effectiveLocked) {
+                                        onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
+                                    }
                                 }
-                            },
-                            onAnchoredEdgeStretch = { sx, sy, sdx, sdy, bw, bh ->
-                                if (!effectiveLocked) {
-                                    onAnchoredStretch(layer.id, sx, sy, sdx, sdy, bw, bh, canvasWpx, canvasHpx)
-                                }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
@@ -1160,9 +1336,12 @@ private fun SelectionDotHandlesOverlay(
     boxModifier: Modifier,
     dotColor: Color,
     targetLayer: EditorLayer,
+    canvasZoom: Float,
+    locks: TransformLockState,
     showDeleteCross: Boolean,
     onDeleteClick: () -> Unit,
     onUniformZoom: (scaleFactor: Float) -> Unit,
+    onEdgePan: (localDx: Float, localDy: Float) -> Unit,
     onAnchoredEdgeStretch: (
         signX: Float,
         signY: Float,
@@ -1175,15 +1354,19 @@ private fun SelectionDotHandlesOverlay(
     var boxW by remember { mutableFloatStateOf(160f) }
     var boxH by remember { mutableFloatStateOf(160f) }
     val liveLayer by rememberUpdatedState(targetLayer)
+    val liveLocks by rememberUpdatedState(locks)
+    val liveCanvasZoom by rememberUpdatedState(canvasZoom)
 
     val invScaleX = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
     val invScaleY = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
 
     Box(
-        modifier = boxModifier.onSizeChanged { sz ->
-            boxW = sz.width.toFloat().coerceAtLeast(48f)
-            boxH = sz.height.toFloat().coerceAtLeast(48f)
-        }
+        modifier = boxModifier
+            .border(1.dp, dotColor.copy(alpha = 0.55f), RoundedCornerShape(2.dp))
+            .onSizeChanged { sz ->
+                boxW = sz.width.toFloat().coerceAtLeast(48f)
+                boxH = sz.height.toFloat().coerceAtLeast(48f)
+            }
     ) {
         // 1. Top-Left Cross (✕) Delete Button
         if (showDeleteCross) {
@@ -1215,7 +1398,7 @@ private fun SelectionDotHandlesOverlay(
             }
         }
 
-        // 2. Top-Right & Bottom-Left Corner Zoom Dots
+        // 2. Top-Right & Bottom-Left Corner Zoom Dots (respects Zoom / Position locks)
         listOf(
             Alignment.TopEnd to (1f to -1f),
             Alignment.BottomStart to (-1f to 1f)
@@ -1228,17 +1411,30 @@ private fun SelectionDotHandlesOverlay(
                     .size(26.dp)
                     .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
                     .pointerInput(liveLayer.id, "corner_$idx") {
-                        detectDragGestures { change, dragAmount ->
+                        detectScaleAwareDragGestures(
+                            effectiveScaleProvider = {
+                                val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                                val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                                liveCanvasZoom * max(liveLayer.scale * liveLayer.stretchX * lx, liveLayer.scale * liveLayer.stretchY * ly)
+                            }
+                        ) { change, dragAmount ->
                             change.consume()
-                            val realDeltaX = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * invScaleX)
-                            val realDeltaY = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * invScaleY)
-                            val radialDelta = (realDeltaX * sxSign + realDeltaY * sySign) * 0.55f
-                            val curSpan = min(
-                                boxW * liveLayer.scale * liveLayer.stretchX,
-                                boxH * liveLayer.scale * liveLayer.stretchY
-                            ).coerceAtLeast(40f)
-                            val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
-                            onUniformZoom(zoomFactor)
+                            val curLocks = liveLocks
+                            val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                            val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                            val realDeltaX = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * lx)
+                            val realDeltaY = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * ly)
+                            if (!curLocks.zoomLocked) {
+                                val radialDelta = (realDeltaX * sxSign + realDeltaY * sySign) * 0.55f
+                                val curSpan = min(
+                                    boxW * liveLayer.scale * liveLayer.stretchX,
+                                    boxH * liveLayer.scale * liveLayer.stretchY
+                                ).coerceAtLeast(40f)
+                                val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
+                                onUniformZoom(zoomFactor)
+                            } else if (!curLocks.positionLocked) {
+                                onEdgePan(realDeltaX / (liveLayer.scale * liveLayer.stretchX), realDeltaY / (liveLayer.scale * liveLayer.stretchY))
+                            }
                         }
                     }
                     .testTag("corner_zoom_dot_$idx"),
@@ -1254,7 +1450,7 @@ private fun SelectionDotHandlesOverlay(
             }
         }
 
-        // 3. Bottom-Right Corner: Larger Zoom Handle Icon for easy one-finger zoom in/out
+        // 3. Bottom-Right Corner: Larger Zoom Handle Icon
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -1262,17 +1458,30 @@ private fun SelectionDotHandlesOverlay(
                 .size(40.dp)
                 .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
                 .pointerInput(liveLayer.id, "bottom_right_zoom") {
-                    detectDragGestures { change, dragAmount ->
+                    detectScaleAwareDragGestures(
+                        effectiveScaleProvider = {
+                            val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                            val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                            liveCanvasZoom * max(liveLayer.scale * liveLayer.stretchX * lx, liveLayer.scale * liveLayer.stretchY * ly)
+                        }
+                    ) { change, dragAmount ->
                         change.consume()
-                        val realDeltaX = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * invScaleX)
-                        val realDeltaY = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * invScaleY)
-                        val radialDelta = (realDeltaX + realDeltaY) * 0.55f
-                        val curSpan = min(
-                            boxW * liveLayer.scale * liveLayer.stretchX,
-                            boxH * liveLayer.scale * liveLayer.stretchY
-                        ).coerceAtLeast(40f)
-                        val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
-                        onUniformZoom(zoomFactor)
+                        val curLocks = liveLocks
+                        val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                        val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                        val realDeltaX = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * lx)
+                        val realDeltaY = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * ly)
+                        if (!curLocks.zoomLocked) {
+                            val radialDelta = (realDeltaX + realDeltaY) * 0.55f
+                            val curSpan = min(
+                                boxW * liveLayer.scale * liveLayer.stretchX,
+                                boxH * liveLayer.scale * liveLayer.stretchY
+                            ).coerceAtLeast(40f)
+                            val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
+                            onUniformZoom(zoomFactor)
+                        } else if (!curLocks.positionLocked) {
+                            onEdgePan(realDeltaX / (liveLayer.scale * liveLayer.stretchX), realDeltaY / (liveLayer.scale * liveLayer.stretchY))
+                        }
                     }
                 }
                 .testTag("corner_zoom_icon_handle"),
@@ -1295,31 +1504,62 @@ private fun SelectionDotHandlesOverlay(
             }
         }
 
-        // 4. Small Localized Side Midpoint Dots for Anchored One-Side Stretch (opposite side pinned!)
+        // 4. Side Midpoint Handles:
+        // - When Stretch Lock (S) is OFF (unlocked): Anchored one-side stretch ONLY (opposite side pinned, no zoom/rotate/pan).
+        // - When Stretch Lock (S) is ON (default): Loses stretch ability and instead performs Uniform Zoom (if Zoom unlocked) or Position Move (if Zoom locked & Position unlocked).
         listOf(Alignment.TopCenter to -1f, Alignment.BottomCenter to 1f).forEachIndexed { idx, (align, signY) ->
             Box(
                 modifier = Modifier
                     .align(align)
                     .offset(y = (signY * 5).dp)
-                    .size(width = 18.dp, height = 16.dp)
+                    .size(width = 22.dp, height = 20.dp)
                     .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
                     .pointerInput(liveLayer.id, "anchored_v_$idx") {
-                        detectDragGestures { change, dragAmount ->
+                        detectScaleAwareDragGestures(
+                            effectiveScaleProvider = {
+                                val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                                liveCanvasZoom * liveLayer.scale * liveLayer.stretchY * ly
+                            }
+                        ) { change, dragAmount ->
                             change.consume()
-                            val screenLocalDy = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * invScaleY)
-                            onAnchoredEdgeStretch(0f, signY, 0f, screenLocalDy, boxW, boxH)
+                            val curLocks = liveLocks
+                            val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                            val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                            val screenLocalDx = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * lx)
+                            val screenLocalDy = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * ly)
+                            if (!curLocks.stretchLocked) {
+                                // Stretch unlocked -> Pure anchored stretch only!
+                                onAnchoredEdgeStretch(0f, signY, 0f, screenLocalDy, boxW, boxH)
+                            } else if (!curLocks.zoomLocked) {
+                                val radialDelta = screenLocalDy * signY
+                                val curSpan = (boxH * liveLayer.scale * liveLayer.stretchY).coerceAtLeast(40f)
+                                val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
+                                onUniformZoom(zoomFactor)
+                            } else if (!curLocks.positionLocked) {
+                                onEdgePan(screenLocalDx / (liveLayer.scale * liveLayer.stretchX), screenLocalDy / (liveLayer.scale * liveLayer.stretchY))
+                            }
                         }
                     }
                     .testTag("vertical_stretch_handle_$idx"),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 10.dp, height = 5.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.White)
-                        .border(1.2.dp, dotColor, RoundedCornerShape(999.dp))
-                )
+                if (!locks.stretchLocked) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 14.dp, height = 6.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(StudioAmber)
+                            .border(1.2.dp, Color.White, RoundedCornerShape(999.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(1.5.dp, dotColor, CircleShape)
+                    )
+                }
             }
         }
 
@@ -1328,27 +1568,148 @@ private fun SelectionDotHandlesOverlay(
                 modifier = Modifier
                     .align(align)
                     .offset(x = (signX * 5).dp)
-                    .size(width = 16.dp, height = 18.dp)
+                    .size(width = 20.dp, height = 22.dp)
                     .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
                     .pointerInput(liveLayer.id, "anchored_h_$idx") {
-                        detectDragGestures { change, dragAmount ->
+                        detectScaleAwareDragGestures(
+                            effectiveScaleProvider = {
+                                val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                                liveCanvasZoom * liveLayer.scale * liveLayer.stretchX * lx
+                            }
+                        ) { change, dragAmount ->
                             change.consume()
-                            val screenLocalDx = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * invScaleX)
-                            onAnchoredEdgeStretch(signX, 0f, screenLocalDx, 0f, boxW, boxH)
+                            val curLocks = liveLocks
+                            val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                            val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                            val screenLocalDx = dragAmount.x * (liveLayer.scale * liveLayer.stretchX * lx)
+                            val screenLocalDy = dragAmount.y * (liveLayer.scale * liveLayer.stretchY * ly)
+                            if (!curLocks.stretchLocked) {
+                                // Stretch unlocked -> Pure anchored stretch only!
+                                onAnchoredEdgeStretch(signX, 0f, screenLocalDx, 0f, boxW, boxH)
+                            } else if (!curLocks.zoomLocked) {
+                                val radialDelta = screenLocalDx * signX
+                                val curSpan = (boxW * liveLayer.scale * liveLayer.stretchX).coerceAtLeast(40f)
+                                val zoomFactor = (1f + radialDelta / curSpan).coerceIn(0.88f, 1.14f)
+                                onUniformZoom(zoomFactor)
+                            } else if (!curLocks.positionLocked) {
+                                onEdgePan(screenLocalDx / (liveLayer.scale * liveLayer.stretchX), screenLocalDy / (liveLayer.scale * liveLayer.stretchY))
+                            }
                         }
                     }
                     .testTag("horizontal_stretch_handle_$idx"),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 5.dp, height = 10.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.White)
-                        .border(1.2.dp, dotColor, RoundedCornerShape(999.dp))
-                )
+                if (!locks.stretchLocked) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 6.dp, height = 14.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(StudioAmber)
+                            .border(1.2.dp, Color.White, RoundedCornerShape(999.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(1.5.dp, dotColor, CircleShape)
+                    )
+                }
             }
         }
+    }
+}
+
+/**
+ * Scale-aware drag gesture detector:
+ * Divides Compose's viewConfiguration.touchSlop by effective zoom scale so handles & zoomed layers
+ * respond immediately to 1-2px screen movements even at 50x-100x magnification.
+ */
+private suspend fun PointerInputScope.detectScaleAwareDragGestures(
+    effectiveScaleProvider: () -> Float,
+    onDrag: (change: PointerInputChange, dragAmount: Offset) -> Unit
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var overSlop = Offset.Zero
+        var pastTouchSlop = false
+        var activeId = down.id
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == activeId } ?: event.changes.firstOrNull()
+            if (change == null || !change.pressed) break
+            val delta = change.position - change.previousPosition
+            if (!pastTouchSlop) {
+                overSlop += delta
+                val scale = effectiveScaleProvider().coerceAtLeast(1f)
+                val slop = (viewConfiguration.touchSlop / scale).coerceIn(0.25f, viewConfiguration.touchSlop)
+                if (overSlop.getDistance() >= slop) {
+                    pastTouchSlop = true
+                    change.consume()
+                    onDrag(change, overSlop)
+                }
+            } else if (delta != Offset.Zero) {
+                change.consume()
+                onDrag(change, delta)
+            }
+        }
+    }
+}
+
+/**
+ * Scale-aware transform gesture detector (pan, pinch-zoom, 2-finger rotate):
+ * Compensates touchSlop by effective visual scale so layers zoomed up to 100x never stall on touchSlop.
+ */
+private suspend fun PointerInputScope.detectScaleAwareTransformGestures(
+    effectiveScaleProvider: () -> Float,
+    onGesture: (centroid: Offset, pan: Offset, zoom: Float, rotation: Float) -> Unit
+) {
+    awaitEachGesture {
+        var rotation = 0f
+        var zoom = 1f
+        var pan = Offset.Zero
+        var pastTouchSlop = false
+        awaitFirstDown(requireUnconsumed = false)
+        do {
+            val event = awaitPointerEvent()
+            val canceled = event.changes.any { it.isConsumed }
+            if (!canceled) {
+                val zoomChange = event.calculateZoom()
+                val rotationChange = event.calculateRotation()
+                val panChange = event.calculatePan()
+
+                if (!pastTouchSlop) {
+                    zoom *= zoomChange
+                    rotation += rotationChange
+                    pan += panChange
+
+                    val centroidSize = event.calculateCentroid(useCurrent = false).let { c ->
+                        if (c == Offset.Unspecified) 0f
+                        else event.changes.filter { it.pressed }.maxOfOrNull { (it.position - c).getDistance() } ?: 0f
+                    }
+                    val zoomMotion = abs(1 - zoom) * centroidSize
+                    val rotationMotion = abs(rotation * PI.toFloat() * centroidSize / 180f)
+                    val panMotion = pan.getDistance()
+                    val scale = effectiveScaleProvider().coerceAtLeast(1f)
+                    val touchSlop = (viewConfiguration.touchSlop / scale).coerceIn(0.25f, viewConfiguration.touchSlop)
+
+                    if (zoomMotion > touchSlop || rotationMotion > touchSlop || panMotion > touchSlop) {
+                        pastTouchSlop = true
+                    }
+                }
+
+                if (pastTouchSlop) {
+                    val centroid = event.calculateCentroid(useCurrent = true)
+                    if (rotationChange != 0f || zoomChange != 1f || panChange != Offset.Zero) {
+                        onGesture(centroid, panChange, zoomChange, rotationChange)
+                    }
+                    event.changes.forEach {
+                        if (it.positionChanged()) it.consume()
+                    }
+                }
+            }
+        } while (!canceled && event.changes.any { it.pressed })
     }
 }
 

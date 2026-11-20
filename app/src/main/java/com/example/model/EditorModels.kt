@@ -218,6 +218,12 @@ data class ImageCropRect(
 }
 
 @Serializable
+enum class ImageCropShape {
+    RECTANGLE,
+    CIRCLE
+}
+
+@Serializable
 enum class BackgroundTab(val title: String) {
     TRANSPARENT("Transparent"),
     BLUR("Blur"),
@@ -302,6 +308,7 @@ data class ImageLayer(
     val originalHeight: Int,
     val adjustments: ImageAdjustments = ImageAdjustments(),
     val crop: ImageCropRect = ImageCropRect(),
+    val cropShape: ImageCropShape = ImageCropShape.RECTANGLE,
     val tintColorArgb: Long? = null,
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
