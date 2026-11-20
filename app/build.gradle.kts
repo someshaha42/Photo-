@@ -129,12 +129,12 @@ dependencies {
   // implementation(libs.play.services.location)
   // implementation(libs.retrofit)
 
-  // Media3 ExoPlayer & Transformer for Video Editing
-  implementation(libs.androidx.media3.exoplayer)
-  implementation(libs.androidx.media3.ui)
-  implementation(libs.androidx.media3.transformer)
-  implementation(libs.androidx.media3.effect)
-  implementation(libs.androidx.media3.common)
+  // Media3 dependencies commented out (offline photo-only editor)
+  // implementation(libs.androidx.media3.exoplayer)
+  // implementation(libs.androidx.media3.ui)
+  // implementation(libs.androidx.media3.transformer)
+  // implementation(libs.androidx.media3.effect)
+  // implementation(libs.androidx.media3.common)
 
   // Archive Extraction (ZIP, 7Z, TAR, GZIP, BZIP2, XZ, RAR) & WOFF2 Brotli
   implementation(libs.commons.compress)

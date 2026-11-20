@@ -5,13 +5,6 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ai.AiChatMessage
-import com.example.ai.AiChatModel
-import com.example.ai.AiGeneratedImageResult
-import com.example.ai.AiImageSize
-import com.example.ai.AiRepository
-import com.example.ai.AiSystemRole
-import com.example.ai.PlaceholderAiRepository
 import com.example.data.AppSettings
 import com.example.data.MediaStorageManager
 import com.example.data.ProjectDatabase
@@ -23,53 +16,42 @@ import com.example.fonts.FontImportProgress
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
+import com.example.fonts.FontSource
 import com.example.fonts.ImportHistoryEntry
 import com.example.model.BackgroundConfig
 import com.example.model.BackgroundTab
-import com.example.model.CanvasAspectRatio
-import com.example.model.EditorBlendMode
+import com.example.model.CanvasDimensions
 import com.example.model.EditorLayer
+import com.example.model.EmojiSourceMode
+import com.example.model.ImageAdjustments
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
-import com.example.model.TextAlignOption
 import com.example.model.TextLayer
-import com.example.model.VideoLayer
-import com.example.video.VideoEditorEngine
-import com.example.video.VideoExportState
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.util.UUID
-
-sealed interface AiImageUiState {
-    data object Idle : AiImageUiState
-    data object Loading : AiImageUiState
-    data class Success(val result: AiGeneratedImageResult) : AiImageUiState
-    data class Error(val message: String) : AiImageUiState
-}
 
 sealed interface ExportFeedbackState {
     data object Idle : ExportFeedbackState
     data object Exporting : ExportFeedbackState
-    data class Success(val file: File, val message: String) : ExportFeedbackState
+    data class Success(val file: File, val message: String, val shareImmediately: Boolean = false) : ExportFeedbackState
     data class Error(val message: String) : ExportFeedbackState
 }
 
-enum class EditorBottomTab(val label: String) {
-    CANVAS("Canvas"),
+enum class ToolDrawerTab(val label: String) {
+    NONE(""),
     TEXT("Text"),
-    MEDIA("Media"),
-    BACKGROUND("Background"),
-    LAYERS("Layers")
+    ADJUST("Adjust"),
+    SHAPES("Shapes"),
+    ROTATE("Rotate")
 }
 
 class StudioViewModel(application: Application) : AndroidViewModel(application) {
@@ -80,8 +62,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     val mediaManager = MediaStorageManager(context)
     val fontRenderEngine = FontRenderEngine(context)
     val fontRepository = FontRepository(context, fontRenderEngine)
-    val videoEditorEngine = VideoEditorEngine(context)
-    val aiRepository: AiRepository = PlaceholderAiRepository()
 
     val settings: StateFlow<AppSettings> = settingsRepository.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
@@ -90,10 +70,18 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val fonts: StateFlow<List<FontMetadata>> = fontRepository.fonts
+    val fontsRecentToOld: StateFlow<List<FontMetadata>> = fontRepository.fonts
+        .map { list ->
+            val imported = list.filter { it.source == FontSource.IMPORTED }
+                .sortedByDescending { it.importedAtMillis }
+            val bundled = list.filter { it.source == FontSource.BUNDLED }
+            imported + bundled
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val selectedFontId: StateFlow<String> = fontRepository.selectedFontId
     val fontImportProgress: StateFlow<FontImportProgress> = fontRepository.importProgress
     val fontImportHistory: StateFlow<List<ImportHistoryEntry>> = fontRepository.importHistory
-    val videoExportState: StateFlow<VideoExportState> = videoEditorEngine.exportState
 
     private val _document = MutableStateFlow(ProjectDocument())
     val document: StateFlow<ProjectDocument> = _document.asStateFlow()
@@ -107,14 +95,20 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _canRedo = MutableStateFlow(false)
     val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
 
-    private val _activeBottomTab = MutableStateFlow(EditorBottomTab.TEXT)
-    val activeBottomTab: StateFlow<EditorBottomTab> = _activeBottomTab.asStateFlow()
+    private val _activeToolDrawer = MutableStateFlow(ToolDrawerTab.NONE)
+    val activeToolDrawer: StateFlow<ToolDrawerTab> = _activeToolDrawer.asStateFlow()
+
+    private val _showLayersStrip = MutableStateFlow(false)
+    val showLayersStrip: StateFlow<Boolean> = _showLayersStrip.asStateFlow()
+
+    private val _isZoomMode = MutableStateFlow(false)
+    val isZoomMode: StateFlow<Boolean> = _isZoomMode.asStateFlow()
 
     private val _canvasZoom = MutableStateFlow(1f)
     val canvasZoom: StateFlow<Float> = _canvasZoom.asStateFlow()
 
-    private val _showGrid = MutableStateFlow(false)
-    val showGrid: StateFlow<Boolean> = _showGrid.asStateFlow()
+    private val _canvasPan = MutableStateFlow(0f to 0f)
+    val canvasPan: StateFlow<Pair<Float, Float>> = _canvasPan.asStateFlow()
 
     private val _isEyedropperActive = MutableStateFlow(false)
     val isEyedropperActive: StateFlow<Boolean> = _isEyedropperActive.asStateFlow()
@@ -128,22 +122,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _blurredBgPreview = MutableStateFlow<Bitmap?>(null)
     val blurredBgPreview: StateFlow<Bitmap?> = _blurredBgPreview.asStateFlow()
 
-    // Cached decoded RGBA8888 bitmaps for fast live canvas rendering
     private val _imageBitmaps = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
     val imageBitmaps: StateFlow<Map<String, Bitmap>> = _imageBitmaps.asStateFlow()
 
     private val _diagnostics = MutableStateFlow(FontDiagnosticsSnapshot())
     val diagnostics: StateFlow<FontDiagnosticsSnapshot> = _diagnostics.asStateFlow()
-
-    // AI Studio State
-    private val _aiImageState = MutableStateFlow<AiImageUiState>(AiImageUiState.Idle)
-    val aiImageState: StateFlow<AiImageUiState> = _aiImageState.asStateFlow()
-
-    private val _chatMessages = MutableStateFlow<List<AiChatMessage>>(emptyList())
-    val chatMessages: StateFlow<List<AiChatMessage>> = _chatMessages.asStateFlow()
-
-    private val _isChatSending = MutableStateFlow(false)
-    val isChatSending: StateFlow<Boolean> = _isChatSending.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -160,16 +143,35 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _statusBanner.value = null
     }
 
-    fun setBottomTab(tab: EditorBottomTab) {
-        _activeBottomTab.value = tab
+    fun openToolDrawer(tab: ToolDrawerTab) {
+        _activeToolDrawer.value = if (_activeToolDrawer.value == tab) ToolDrawerTab.NONE else tab
     }
 
-    fun setCanvasZoom(zoom: Float) {
-        _canvasZoom.value = zoom.coerceIn(0.5f, 8f)
+    fun closeToolDrawer() {
+        _activeToolDrawer.value = ToolDrawerTab.NONE
     }
 
-    fun toggleGrid() {
-        _showGrid.value = !_showGrid.value
+    fun toggleLayersStrip() {
+        _showLayersStrip.value = !_showLayersStrip.value
+    }
+
+    fun toggleZoomMode() {
+        _isZoomMode.value = !_isZoomMode.value
+    }
+
+    fun setZoomMode(enabled: Boolean) {
+        _isZoomMode.value = enabled
+    }
+
+    fun updateCanvasViewportTransform(zoomDelta: Float, panDx: Float, panDy: Float) {
+        _canvasZoom.value = (_canvasZoom.value * zoomDelta).coerceIn(0.5f, 8f)
+        val (px, py) = _canvasPan.value
+        _canvasPan.value = (px + panDx) to (py + panDy)
+    }
+
+    fun resetCanvasViewport() {
+        _canvasZoom.value = 1f
+        _canvasPan.value = 0f to 0f
     }
 
     fun setEyedropperActive(active: Boolean) {
@@ -188,26 +190,28 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { settingsRepository.setUnlimitedLayers(enabled) }
     }
 
-    /**
-     * Opens a fresh blank transparent checkerboard canvas (no automatic image picker!).
-     */
     fun createNewProject() {
         undoStack.clear()
         redoStack.clear()
         _canUndo.value = false
         _canRedo.value = false
         _canvasZoom.value = 1f
+        _canvasPan.value = 0f to 0f
+        _isZoomMode.value = false
+        _showLayersStrip.value = false
+        _activeToolDrawer.value = ToolDrawerTab.NONE
         _isEyedropperActive.value = false
         _blurredBgPreview.value = null
+        val s = settings.value
         val fresh = ProjectDocument(
             id = UUID.randomUUID().toString(),
             title = "Project ${projectHistory.value.size + 1}",
-            aspectRatio = CanvasAspectRatio.RATIO_1_1,
-            autoImageDetectionEnabled = true,
-            manualAspectOverride = false,
+            canvas = CanvasDimensions.SQUARE_1_1,
             background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT),
             layers = emptyList(),
-            selectedLayerId = null
+            selectedLayerId = null,
+            emojiSourceMode = s.emojiSourceMode,
+            appEmojiFontId = s.appEmojiFontId
         )
         _document.value = fresh
     }
@@ -219,6 +223,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = false
         _canRedo.value = false
         _canvasZoom.value = 1f
+        _canvasPan.value = 0f to 0f
+        _isZoomMode.value = false
+        _showLayersStrip.value = false
+        _activeToolDrawer.value = ToolDrawerTab.NONE
         _isEyedropperActive.value = false
         _document.value = loaded
         preloadProjectAssets(loaded)
@@ -293,15 +301,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun canAddLayer(): Boolean {
+    private fun canAddLayer(extraCount: Int = 1): Boolean {
         if (settings.value.unlimitedLayers) return true
-        if (_document.value.layers.size < 5) return true
+        if (_document.value.layers.size + extraCount <= 5) return true
         _statusBanner.value = "Layer limit (5) reached. Enable Unlimited Layers in Settings."
         return false
-    }
-
-    fun setProjectTitle(title: String) {
-        commitChange { it.copy(title = title) }
     }
 
     fun selectLayer(layerId: String?) {
@@ -312,89 +316,80 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun addImageFromPicker(uri: Uri) {
-        if (!canAddLayer()) return
+    /**
+     * Imports single or multiple photos from Android Photo Picker.
+     * STRICT BUG FIX: Never alters the current canvas aspect ratio!
+     */
+    fun addImagesFromPicker(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (!canAddLayer(1)) return
         viewModelScope.launch {
             val doc = _document.value
-            val meta = mediaManager.importImage(
-                sourceUri = uri,
-                projectId = doc.id,
-                keepLocalCopy = settings.value.keepLocalMediaCopy
-            )
-            val bmp = mediaManager.decodeRgba8888Bitmap(meta.uriString, maxDimension = 1600)
-            if (bmp != null) {
-                _imageBitmaps.value = _imageBitmaps.value + (meta.uriString to bmp)
-            }
-            val newLayer = ImageLayer(
-                name = meta.displayName.substringBeforeLast('.').take(18).ifBlank { "Image" },
-                uriString = meta.uriString,
-                originalWidth = meta.width,
-                originalHeight = meta.height
-            )
-            val autoRatio = if (doc.autoImageDetectionEnabled && !doc.manualAspectOverride) {
-                CanvasAspectRatio.closestForDimensions(meta.width, meta.height)
-            } else {
-                doc.aspectRatio
-            }
-            commitChange { current ->
-                current.copy(
-                    aspectRatio = autoRatio,
-                    layers = current.layers + newLayer,
-                    selectedLayerId = newLayer.id
+            val importedLayers = mutableListOf<ImageLayer>()
+            val decodedMap = _imageBitmaps.value.toMutableMap()
+
+            for (uri in uris) {
+                if (!settings.value.unlimitedLayers && doc.layers.size + importedLayers.size >= 5) {
+                    _statusBanner.value = "Layer limit (5) reached."
+                    break
+                }
+                val meta = mediaManager.importImage(
+                    sourceUri = uri,
+                    projectId = doc.id,
+                    keepLocalCopy = settings.value.keepLocalMediaCopy
+                )
+                val bmp = mediaManager.decodeRgba8888Bitmap(meta.uriString, maxDimension = 1600)
+                if (bmp != null) {
+                    decodedMap[meta.uriString] = bmp
+                }
+                val stagger = importedLayers.size * 0.04f
+                importedLayers.add(
+                    ImageLayer(
+                        name = meta.displayName.substringBeforeLast('.').take(18).ifBlank { "Photo" },
+                        uriString = meta.uriString,
+                        originalWidth = meta.width,
+                        originalHeight = meta.height,
+                        offsetXNorm = stagger,
+                        offsetYNorm = stagger
+                    )
                 )
             }
-            if (_document.value.background.activeTab == BackgroundTab.BLUR) {
-                regenerateBlurPreview(_document.value)
+
+            if (importedLayers.isNotEmpty()) {
+                _imageBitmaps.value = decodedMap
+                commitChange { current ->
+                    // Canvas aspect ratio stays strictly untouched!
+                    current.copy(
+                        layers = current.layers + importedLayers,
+                        selectedLayerId = importedLayers.last().id
+                    )
+                }
+                if (_document.value.background.activeTab == BackgroundTab.BLUR) {
+                    regenerateBlurPreview(_document.value)
+                }
             }
-            _statusBanner.value = "Imported ${meta.width}×${meta.height} image (RGBA8888 preserved)"
         }
     }
 
-    fun addVideoFromPicker(uri: Uri) {
-        if (!canAddLayer()) return
-        viewModelScope.launch {
-            val doc = _document.value
-            val meta = mediaManager.importVideo(
-                sourceUri = uri,
-                projectId = doc.id,
-                keepLocalCopy = settings.value.keepLocalMediaCopy
-            )
-            val newLayer = VideoLayer(
-                name = meta.displayName.substringBeforeLast('.').take(18).ifBlank { "Video" },
-                uriString = meta.uriString,
-                originalWidth = meta.width,
-                originalHeight = meta.height,
-                durationMs = meta.durationMs,
-                trimStartMs = 0L,
-                trimEndMs = meta.durationMs
-            )
-            val autoRatio = if (doc.autoImageDetectionEnabled && !doc.manualAspectOverride) {
-                CanvasAspectRatio.closestForDimensions(meta.width, meta.height)
-            } else {
-                doc.aspectRatio
-            }
-            commitChange { current ->
-                current.copy(
-                    aspectRatio = autoRatio,
-                    layers = current.layers + newLayer,
-                    selectedLayerId = newLayer.id
-                )
-            }
-            _activeBottomTab.value = EditorBottomTab.MEDIA
-            _statusBanner.value = "Added video (${meta.width}×${meta.height}, ${meta.durationMs / 1000}s)"
+    fun ensureTextLayerAndOpenDrawer() {
+        val current = _document.value
+        val selected = current.layers.firstOrNull { it.id == current.selectedLayerId }
+        if (selected !is TextLayer) {
+            addTextLayer("New Text")
         }
+        _activeToolDrawer.value = ToolDrawerTab.TEXT
     }
 
-    fun addTextLayer(initialText: String = "Double tap or edit text") {
-        if (!canAddLayer()) return
+    fun addTextLayer(initialText: String = "New Text"): String? {
+        if (!canAddLayer()) return null
         val fontId = fontRepository.selectedFontId.value
         val isEmojiFont = fontRenderEngine.getMetadata(fontId)?.classification?.name?.contains("EMOJI") == true
-        val defaultText = if (isEmojiFont && initialText == "Double tap or edit text") "😀🚀🌈🎨✨" else initialText
+        val textValue = if (isEmojiFont && initialText == "New Text") "😀🚀🌈✨" else initialText
         val newLayer = TextLayer(
-            name = defaultText.take(14).ifBlank { "Text" },
-            text = defaultText,
+            name = textValue.take(14).ifBlank { "Text" },
+            text = textValue,
             fontId = fontId,
-            fontSizeSp = if (isEmojiFont) 56f else 38f
+            fontSizeSp = if (isEmojiFont) 52f else 38f
         )
         commitChange { current ->
             current.copy(
@@ -402,7 +397,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 selectedLayerId = newLayer.id
             )
         }
-        _activeBottomTab.value = EditorBottomTab.TEXT
+        return newLayer.id
     }
 
     fun addShapeLayer(shapeType: LayerShapeType) {
@@ -433,12 +428,58 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun updateSelectedVideoLayer(transform: (VideoLayer) -> VideoLayer) {
+    fun updateSelectedTextTransient(text: String) {
+        val selId = _document.value.selectedLayerId ?: return
+        _document.value = _document.value.copy(
+            layers = _document.value.layers.map { layer ->
+                if (layer.id == selId && layer is TextLayer) {
+                    layer.copy(text = text, name = text.take(14).ifBlank { "Text" })
+                } else layer
+            }
+        )
+    }
+
+    fun updateSelectedShapeLayer(transform: (ShapeLayer) -> ShapeLayer) {
         val selId = _document.value.selectedLayerId ?: return
         commitChange { doc ->
             doc.copy(
                 layers = doc.layers.map { layer ->
-                    if (layer.id == selId && layer is VideoLayer) transform(layer) else layer
+                    if (layer.id == selId && layer is ShapeLayer) transform(layer) else layer
+                }
+            )
+        }
+    }
+
+    fun ensureImageLayerSelectedForAdjust(): ImageLayer? {
+        val doc = _document.value
+        val current = doc.layers.firstOrNull { it.id == doc.selectedLayerId } as? ImageLayer
+        if (current != null) return current
+        val lastPhoto = doc.layers.filterIsInstance<ImageLayer>().lastOrNull()
+        if (lastPhoto != null) {
+            _document.value = doc.copy(selectedLayerId = lastPhoto.id)
+        }
+        return lastPhoto
+    }
+
+    fun updateSelectedImageAdjustments(transform: (ImageAdjustments) -> ImageAdjustments) {
+        val target = ensureImageLayerSelectedForAdjust() ?: return
+        _document.value = _document.value.copy(
+            layers = _document.value.layers.map { layer ->
+                if (layer.id == target.id && layer is ImageLayer) {
+                    layer.copy(adjustments = transform(layer.adjustments))
+                } else layer
+            }
+        )
+    }
+
+    fun resetSelectedImageAdjustments() {
+        val target = ensureImageLayerSelectedForAdjust() ?: return
+        commitChange { doc ->
+            doc.copy(
+                layers = doc.layers.map { layer ->
+                    if (layer.id == target.id && layer is ImageLayer) {
+                        layer.copy(adjustments = ImageAdjustments())
+                    } else layer
                 }
             )
         }
@@ -462,6 +503,33 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         refreshDiagnostics()
     }
 
+    fun setEmojiSourceMode(mode: EmojiSourceMode) {
+        val appFontId = _document.value.appEmojiFontId
+            ?: settings.value.appEmojiFontId
+            ?: fontsRecentToOld.value.firstOrNull()?.id
+        commitChange { doc ->
+            doc.copy(
+                emojiSourceMode = mode,
+                appEmojiFontId = appFontId
+            )
+        }
+        viewModelScope.launch {
+            settingsRepository.setEmojiSource(mode, appFontId)
+        }
+    }
+
+    fun setAppEmojiFont(fontId: String) {
+        commitChange { doc ->
+            doc.copy(
+                emojiSourceMode = EmojiSourceMode.APPLICATION,
+                appEmojiFontId = fontId
+            )
+        }
+        viewModelScope.launch {
+            settingsRepository.setEmojiSource(EmojiSourceMode.APPLICATION, fontId)
+        }
+    }
+
     fun transformLayerTransient(
         layerId: String,
         deltaXNorm: Float,
@@ -483,14 +551,49 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun setLayerOpacity(layerId: String, opacity: Float) {
+    fun setSelectedLayerRotation(deg: Float) {
+        val selId = _document.value.selectedLayerId ?: return
+        _document.value = _document.value.copy(
+            layers = _document.value.layers.map { layer ->
+                if (layer.id == selId && !layer.locked) {
+                    layer.withBaseTransform(rotationDeg = deg)
+                } else layer
+            }
+        )
+    }
+
+    fun rotateSelectedLayerBy(deltaDeg: Float) {
+        val selId = _document.value.selectedLayerId ?: return
         commitChange { doc ->
             doc.copy(
-                layers = doc.layers.map {
-                    if (it.id == layerId) it.withBaseTransform(opacity = opacity.coerceIn(0f, 1f)) else it
+                layers = doc.layers.map { layer ->
+                    if (layer.id == selId && !layer.locked) {
+                        layer.withBaseTransform(rotationDeg = (layer.rotationDeg + deltaDeg) % 360f)
+                    } else layer
                 }
             )
         }
+    }
+
+    fun setSelectedLayerScale(scale: Float) {
+        val selId = _document.value.selectedLayerId ?: return
+        _document.value = _document.value.copy(
+            layers = _document.value.layers.map { layer ->
+                if (layer.id == selId && !layer.locked) {
+                    layer.withBaseTransform(scale = scale.coerceIn(0.2f, 6f))
+                } else layer
+            }
+        )
+    }
+
+    fun setSelectedLayerOpacity(opacity: Float) {
+        val selId = _document.value.selectedLayerId ?: return
+        _document.value = _document.value.copy(
+            layers = _document.value.layers.map { layer ->
+                if (layer.id == selId) layer.withBaseTransform(opacity = opacity.coerceIn(0f, 1f))
+                else layer
+            }
+        )
     }
 
     fun toggleLayerVisibility(layerId: String) {
@@ -532,7 +635,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val copyId = UUID.randomUUID().toString()
         val copied: EditorLayer = when (target) {
             is ImageLayer -> target.copy(id = copyId, offsetXNorm = target.offsetXNorm + 0.05f, offsetYNorm = target.offsetYNorm + 0.05f)
-            is VideoLayer -> target.copy(id = copyId, offsetXNorm = target.offsetXNorm + 0.05f, offsetYNorm = target.offsetYNorm + 0.05f)
             is TextLayer -> target.copy(id = copyId, offsetXNorm = target.offsetXNorm + 0.05f, offsetYNorm = target.offsetYNorm + 0.05f)
             is ShapeLayer -> target.copy(id = copyId, offsetXNorm = target.offsetXNorm + 0.05f, offsetYNorm = target.offsetYNorm + 0.05f)
         }
@@ -551,29 +653,26 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun selectAspectRatioManually(ratio: CanvasAspectRatio) {
+    fun selectSquareCanvas() {
         commitChange { doc ->
-            doc.copy(
-                aspectRatio = ratio,
-                manualAspectOverride = true
-            )
+            doc.copy(canvas = CanvasDimensions.SQUARE_1_1)
         }
     }
 
-    fun toggleAutoImageDetection() {
-        commitChange { doc ->
-            val nextEnabled = !doc.autoImageDetectionEnabled
-            val nextRatio = if (nextEnabled) {
-                val img = doc.layers.filterIsInstance<ImageLayer>().firstOrNull()
-                if (img != null) CanvasAspectRatio.closestForDimensions(img.originalWidth, img.originalHeight)
-                else doc.aspectRatio
-            } else doc.aspectRatio
-            doc.copy(
-                autoImageDetectionEnabled = nextEnabled,
-                manualAspectOverride = if (nextEnabled) false else doc.manualAspectOverride,
-                aspectRatio = nextRatio
-            )
+    fun applyCustomCanvas(ratioInput: String, pixelInput: String, preferPixels: Boolean): Boolean {
+        val parsed = if (preferPixels) {
+            CanvasDimensions.fromPixelInput(pixelInput) ?: CanvasDimensions.fromRatioInput(ratioInput)
+        } else {
+            CanvasDimensions.fromRatioInput(ratioInput) ?: CanvasDimensions.fromPixelInput(pixelInput)
         }
+        if (parsed == null) {
+            _statusBanner.value = "Invalid format. Use e.g. 9:16 or 1080x1920"
+            return false
+        }
+        commitChange { doc ->
+            doc.copy(canvas = parsed.copy(isCustom = true))
+        }
+        return true
     }
 
     fun updateBackground(transform: (BackgroundConfig) -> BackgroundConfig) {
@@ -624,12 +723,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             val thumbPath = mediaManager.saveProjectThumbnail(doc, fontRenderEngine)
             projectRepository.saveDocument(doc, thumbPath)
             if (!silent) {
-                _statusBanner.value = "Project saved to History."
+                _statusBanner.value = "Saved"
             }
         }
     }
 
-    fun exportProjectPng() {
+    fun exportProjectPng(shareImmediately: Boolean = false) {
         viewModelScope.launch {
             _exportFeedback.value = ExportFeedbackState.Exporting
             val doc = _document.value
@@ -638,39 +737,23 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
             val res = mediaManager.exportPngToAppAndGallery(doc, fontRenderEngine)
             res.onSuccess { (file, galleryUri) ->
-                val destText = if (galleryUri != null) "Saved to Pictures/PixelForge" else "Saved to app exports"
+                val destText = if (galleryUri != null) "Pictures/PixelForge" else "App Exports"
                 _exportFeedback.value = ExportFeedbackState.Success(
                     file = file,
-                    message = "RGBA8888 PNG exported ($destText, checkerboard excluded)."
+                    message = "Saved PNG ($destText)",
+                    shareImmediately = shareImmediately
                 )
             }.onFailure { err ->
-                _exportFeedback.value = ExportFeedbackState.Error(err.localizedMessage ?: "Export failed.")
+                _exportFeedback.value = ExportFeedbackState.Error(err.localizedMessage ?: "Export failed")
             }
             refreshDiagnostics()
         }
     }
 
-    fun exportActiveVideo() {
-        val videoLayer = _document.value.layers.firstOrNull { it.id == _document.value.selectedLayerId && it is VideoLayer } as? VideoLayer
-            ?: _document.value.layers.filterIsInstance<VideoLayer>().firstOrNull()
-        if (videoLayer == null) {
-            _statusBanner.value = "Add a Video layer first to export MP4."
-            return
-        }
-        viewModelScope.launch {
-            val doc = _document.value
-            val thumbPath = mediaManager.saveProjectThumbnail(doc, fontRenderEngine)
-            projectRepository.saveDocument(doc, thumbPath)
-            videoEditorEngine.exportVideo(doc, videoLayer, fontRenderEngine)
-        }
-    }
-
     fun clearExportFeedback() {
         _exportFeedback.value = ExportFeedbackState.Idle
-        videoEditorEngine.resetExportState()
     }
 
-    // Font Import wrappers
     fun importFontFiles(uris: List<Uri>) {
         viewModelScope.launch {
             fontRepository.importFontUris(uris)
@@ -690,69 +773,5 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             fontRepository.deleteImportedFont(fontId)
             refreshDiagnostics()
         }
-    }
-
-    // AI Studio functions
-    fun generateAiImage(prompt: String, size: AiImageSize) {
-        viewModelScope.launch {
-            _aiImageState.value = AiImageUiState.Loading
-            try {
-                val result = aiRepository.generateImage(prompt, size)
-                _aiImageState.value = AiImageUiState.Success(result)
-            } catch (e: Exception) {
-                _aiImageState.value = AiImageUiState.Error(e.localizedMessage ?: "AI image generation failed.")
-            }
-        }
-    }
-
-    fun addGeneratedAiBitmapToCanvas(bitmap: Bitmap, label: String) {
-        if (!canAddLayer()) return
-        viewModelScope.launch {
-            val doc = _document.value
-            val storedPath = withContext(Dispatchers.IO) {
-                val dir = File(context.filesDir, "projects_media/${doc.id}")
-                dir.mkdirs()
-                val file = File(dir, "ai_gen_${System.currentTimeMillis()}.png")
-                FileOutputStream(file).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
-                file.absolutePath
-            }
-            _imageBitmaps.value = _imageBitmaps.value + (storedPath to bitmap)
-            val newLayer = ImageLayer(
-                name = label.take(18).ifBlank { "AI Art" },
-                uriString = storedPath,
-                originalWidth = bitmap.width,
-                originalHeight = bitmap.height
-            )
-            commitChange { current ->
-                current.copy(
-                    layers = current.layers + newLayer,
-                    selectedLayerId = newLayer.id
-                )
-            }
-            _statusBanner.value = "Added generated ${bitmap.width}×${bitmap.height} image to canvas."
-        }
-    }
-
-    fun sendChatMessage(model: AiChatModel, role: AiSystemRole, text: String) {
-        if (text.isBlank() || _isChatSending.value) return
-        val userMsg = AiChatMessage(isUser = true, text = text.trim())
-        val updated = _chatMessages.value + userMsg
-        _chatMessages.value = updated
-        _isChatSending.value = true
-
-        viewModelScope.launch {
-            try {
-                val reply = aiRepository.sendChatMessage(model, role, updated, text)
-                _chatMessages.value = _chatMessages.value + reply
-            } finally {
-                _isChatSending.value = false
-            }
-        }
-    }
-
-    fun clearChatHistory() {
-        _chatMessages.value = emptyList()
     }
 }

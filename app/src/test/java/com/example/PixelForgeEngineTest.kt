@@ -12,7 +12,10 @@ import com.example.fonts.FontRepository
 import com.example.fonts.TrueTypeTableParser
 import com.example.model.BackgroundConfig
 import com.example.model.BackgroundTab
-import com.example.model.CanvasAspectRatio
+import com.example.model.CanvasDimensions
+import com.example.model.EmojiSourceMode
+import com.example.model.ImageAdjustments
+import com.example.model.ImageLayer
 import com.example.model.ProjectDocument
 import com.example.model.TextLayer
 import kotlinx.coroutines.runBlocking
@@ -95,42 +98,112 @@ class PixelForgeEngineTest {
     }
 
     @Test
-    fun glyphCacheDoesNotUpscaleLowResolutionEntries() = runBlocking {
-        val renderEngine = FontRenderEngine(context)
-        val repo = FontRepository(context, renderEngine)
-        repo.initialize()
+    fun glyphCacheDoesNotUpscaleLowResolutionEntries() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
 
-        val fontId = repo.selectedFontId.value
-        val bmp100 = renderEngine.getOrRenderGlyphBitmap(fontId, "Aa", targetFontPx = 36)
-        val bmp400 = renderEngine.getOrRenderGlyphBitmap(fontId, "Aa", targetFontPx = 144)
-        assertTrue(
-            "400% zoom glyph bitmap (${bmp400.width}px) must exceed 100% zoom (${bmp100.width}px)",
-            bmp400.width > bmp100.width
-        )
+            val fontId = repo.selectedFontId.value
+            val bmp100 = renderEngine.getOrRenderGlyphBitmap(fontId, "Aa", targetFontPx = 36)
+            val bmp400 = renderEngine.getOrRenderGlyphBitmap(fontId, "Aa", targetFontPx = 144)
+            assertTrue(
+                "400% zoom glyph bitmap (${bmp400.width}px) must exceed 100% zoom (${bmp100.width}px)",
+                bmp400.width > bmp100.width
+            )
+        }
     }
 
     @Test
-    fun transparentPngExportPreservesAlphaAndExcludesCheckerboard() = runBlocking {
-        val renderEngine = FontRenderEngine(context)
-        val repo = FontRepository(context, renderEngine)
-        repo.initialize()
+    fun transparentPngExportPreservesAlphaAndExcludesCheckerboard() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
 
-        val mediaManager = MediaStorageManager(context)
-        val doc = ProjectDocument(
-            aspectRatio = CanvasAspectRatio.RATIO_1_1,
-            background = BackgroundConfig(
-                activeTab = BackgroundTab.TRANSPARENT,
-                checkerboardPreviewEnabled = true
-            ),
-            layers = listOf(
-                TextLayer(text = "Hi", fontId = repo.selectedFontId.value, fontSizeSp = 24f)
+            val mediaManager = MediaStorageManager(context)
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(
+                    activeTab = BackgroundTab.TRANSPARENT,
+                    checkerboardPreviewEnabled = true
+                ),
+                layers = listOf(
+                    TextLayer(text = "Hi", fontId = repo.selectedFontId.value, fontSizeSp = 24f)
+                )
             )
+            val exported = mediaManager.renderProjectToBitmap(doc, renderEngine, 200, 200)
+            val cornerPixel = exported.getPixel(0, 0)
+            assertEquals(0, Color.alpha(cornerPixel))
+            exported.recycle()
+        }
+    }
+
+    @Test
+    fun customRatioAndPixelDimensionsSyncBidirectionally() {
+        val fromRatio = CanvasDimensions.fromRatioInput("9:16")
+        assertNotNull(fromRatio)
+        assertEquals(9, fromRatio!!.ratioWidth)
+        assertEquals(16, fromRatio.ratioHeight)
+        assertEquals(1080, fromRatio.exportWidth)
+        assertEquals(1920, fromRatio.exportHeight)
+        assertTrue(fromRatio.isCustom)
+
+        val fromPixels = CanvasDimensions.fromPixelInput("1920x1080")
+        assertNotNull(fromPixels)
+        assertEquals("16:9", fromPixels!!.label)
+        assertEquals(1920, fromPixels.exportWidth)
+        assertEquals(1080, fromPixels.exportHeight)
+    }
+
+    @Test
+    fun addingImageLayerDoesNotChangeDefaultSquareCanvas() {
+        val initial = ProjectDocument(canvas = CanvasDimensions.SQUARE_1_1)
+        val widePhoto = ImageLayer(
+            uriString = "/tmp/wide.jpg",
+            originalWidth = 1920,
+            originalHeight = 1080
         )
-        val exported = mediaManager.renderProjectToBitmap(doc, renderEngine, 200, 200)
-        // Corner pixel (0, 0) must remain completely transparent (alpha == 0), never #202020 or #303030!
-        val cornerPixel = exported.getPixel(0, 0)
-        assertEquals(0, Color.alpha(cornerPixel))
-        exported.recycle()
+        val updated = initial.copy(layers = initial.layers + widePhoto)
+        assertEquals("1:1", updated.canvas.label)
+        assertEquals(1080, updated.canvas.exportWidth)
+        assertEquals(1080, updated.canvas.exportHeight)
+    }
+
+    @Test
+    fun emojiRunSegmentationSeparatesTextAndEmojiInDualFontMode() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+
+            val sample = "Hello 😀🚀 World"
+            val segments = FontRenderEngine.segmentEmojiRuns(sample)
+            assertEquals(3, segments.size)
+            assertFalse(segments[0].isEmoji)
+            assertTrue(segments[1].isEmoji)
+            assertFalse(segments[2].isEmoji)
+
+            val spanSystem = renderEngine.buildStyledSpannable(
+                text = sample,
+                layerFontId = "bundled:Roboto.ttf",
+                emojiSourceMode = EmojiSourceMode.SYSTEM
+            )
+            val spans = spanSystem.getSpans(0, sample.length, Any::class.java)
+            assertEquals(1, spans.size)
+            assertEquals(segments[1].start, spanSystem.getSpanStart(spans[0]))
+            assertEquals(segments[1].end, spanSystem.getSpanEnd(spans[0]))
+        }
+    }
+
+    @Test
+    fun imageAdjustmentsIdentityAndColorMatrixCheck() {
+        val identity = ImageAdjustments()
+        assertTrue(identity.isIdentity())
+        val adjusted = identity.copy(exposure = 0.4f, contrast = 0.2f, saturation = -0.3f, hue = 25f)
+        assertFalse(adjusted.isIdentity())
+        val cm = MediaStorageManager.buildColorMatrix(adjusted)
+        assertEquals(20, cm.array.size)
     }
 
     private fun buildMinimalSfnt(tags: List<String>): ByteArray {
@@ -153,7 +226,6 @@ class PixelForgeEngineTest {
             buf.putInt(16)
             offset += 16
         }
-        // Fill maxp numGlyphs = 42
         val maxpIdx = tags.indexOf("maxp")
         if (maxpIdx >= 0) {
             val maxpOff = headerSize + maxpIdx * 16

@@ -1,12 +1,8 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
-import android.net.Uri
-import android.view.ViewGroup
-import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -20,26 +16,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -48,18 +42,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
+import com.example.data.MediaStorageManager
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
 import com.example.model.EditorBlendMode
@@ -68,12 +54,10 @@ import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
 import com.example.model.TextLayer
-import com.example.model.VideoLayer
 import com.example.ui.theme.CheckerDark1
 import com.example.ui.theme.CheckerDark2
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
-import java.io.File
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -84,22 +68,33 @@ fun EditorCanvasViewport(
     imageBitmaps: Map<String, Bitmap>,
     blurredPreview: Bitmap?,
     fontRenderEngine: FontRenderEngine,
+    isZoomMode: Boolean,
     canvasZoom: Float,
-    showGrid: Boolean,
+    canvasPan: Pair<Float, Float>,
     isEyedropperActive: Boolean,
-    isVideoPlaying: Boolean,
+    onCanvasViewportTransform: (zoomDelta: Float, panDx: Float, panDy: Float) -> Unit,
     onSelectLayer: (String?) -> Unit,
     onTransformLayer: (layerId: String, dxNorm: Float, dyNorm: Float, scale: Float, rotation: Float) -> Unit,
     onEyedropperTap: (normX: Float, normY: Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val ratio = document.aspectRatio.ratioFloat
+    val ratio = document.canvas.ratioFloat
     val density = LocalDensity.current.density
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .padding(12.dp),
+            .clipToBounds()
+            .then(
+                if (isZoomMode) {
+                    Modifier.pointerInput(isZoomMode) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            onCanvasViewportTransform(zoom, pan.x, pan.y)
+                        }
+                    }
+                } else Modifier
+            )
+            .padding(8.dp),
         contentAlignment = Alignment.Center
     ) {
         val availW = maxWidth
@@ -119,15 +114,22 @@ fun EditorCanvasViewport(
                 .graphicsLayer {
                     scaleX = canvasZoom
                     scaleY = canvasZoom
+                    translationX = canvasPan.first
+                    translationY = canvasPan.second
                 }
                 .clip(RoundedCornerShape(4.dp))
                 .border(
                     width = 1.5.dp,
-                    color = if (isEyedropperActive) StudioAmber else MaterialTheme.colorScheme.outline,
+                    color = when {
+                        isEyedropperActive -> StudioAmber
+                        isZoomMode -> StudioAzure
+                        else -> MaterialTheme.colorScheme.outline
+                    },
                     shape = RoundedCornerShape(4.dp)
                 )
                 .clipToBounds()
-                .pointerInput(isEyedropperActive) {
+                .pointerInput(isEyedropperActive, isZoomMode) {
+                    if (isZoomMode) return@pointerInput
                     detectTapGestures { offset ->
                         if (isEyedropperActive) {
                             val nx = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
@@ -159,7 +161,7 @@ fun EditorCanvasViewport(
                 }
             }
 
-            // 2. Background Layer (Blend Mode applies ONLY to background layer)
+            // 2. Background Layer
             val bg = document.background
             val composeBlend = remember(bg.blendMode) { mapComposeBlendMode(bg.blendMode) }
             when (bg.activeTab) {
@@ -177,7 +179,7 @@ fun EditorCanvasViewport(
                     if (blurBmp != null) {
                         Image(
                             bitmap = blurBmp.asImageBitmap(),
-                            contentDescription = "Blurred background",
+                            contentDescription = "Blurred Background",
                             contentScale = ContentScale.Crop,
                             alpha = bg.blurBackgroundOpacity,
                             modifier = Modifier.fillMaxSize()
@@ -189,7 +191,7 @@ fun EditorCanvasViewport(
                     if (bgBmp != null) {
                         Image(
                             bitmap = bgBmp.asImageBitmap(),
-                            contentDescription = "Background image",
+                            contentDescription = "Background Photo",
                             contentScale = ContentScale.Crop,
                             alpha = bg.backgroundImageOpacity,
                             modifier = Modifier.fillMaxSize()
@@ -198,7 +200,7 @@ fun EditorCanvasViewport(
                 }
             }
 
-            // 3. Layers Stack (Images, Videos, Shapes, Text/Color Emojis)
+            // 3. Layers Stack (Photos, Shapes, Text/Color Emojis)
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val canvasWpx = with(LocalDensity.current) { maxWidth.toPx() }
                 val canvasHpx = with(LocalDensity.current) { maxHeight.toPx() }
@@ -206,7 +208,7 @@ fun EditorCanvasViewport(
 
                 document.layers.forEach { layer ->
                     if (!layer.visible) return@forEach
-                    val isSelected = layer.id == document.selectedLayerId && !isEyedropperActive
+                    val isSelected = layer.id == document.selectedLayerId && !isEyedropperActive && !isZoomMode
 
                     Box(
                         modifier = Modifier
@@ -219,32 +221,34 @@ fun EditorCanvasViewport(
                                 scaleY = layer.scale
                                 alpha = layer.opacity
                             }
-                            .pointerInput(layer.id, layer.locked, isEyedropperActive) {
-                                if (isEyedropperActive) return@pointerInput
-                                detectTapGestures(
-                                    onTap = { onSelectLayer(layer.id) }
-                                )
-                            }
-                            .pointerInput(layer.id, layer.locked, isEyedropperActive, canvasWpx, canvasHpx) {
-                                if (isEyedropperActive || layer.locked) return@pointerInput
-                                detectTransformGestures { _, pan, zoom, rotation ->
-                                    onSelectLayer(layer.id)
-                                    onTransformLayer(
-                                        layer.id,
-                                        pan.x / canvasWpx.coerceAtLeast(1f),
-                                        pan.y / canvasHpx.coerceAtLeast(1f),
-                                        zoom,
-                                        rotation
-                                    )
-                                }
-                            },
+                            .then(
+                                if (!isZoomMode) {
+                                    Modifier
+                                        .pointerInput(layer.id, isEyedropperActive) {
+                                            if (isEyedropperActive) return@pointerInput
+                                            detectTapGestures(onTap = { onSelectLayer(layer.id) })
+                                        }
+                                        .pointerInput(layer.id, layer.locked, isEyedropperActive, canvasWpx, canvasHpx) {
+                                            if (isEyedropperActive || layer.locked) return@pointerInput
+                                            detectTransformGestures { _, pan, zoom, rotation ->
+                                                onSelectLayer(layer.id)
+                                                onTransformLayer(
+                                                    layer.id,
+                                                    pan.x / canvasWpx.coerceAtLeast(1f),
+                                                    pan.y / canvasHpx.coerceAtLeast(1f),
+                                                    zoom,
+                                                    rotation
+                                                )
+                                            }
+                                        }
+                                } else Modifier
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         when (layer) {
                             is ImageLayer -> {
                                 val bmp = imageBitmaps[layer.uriString]
                                 if (bmp != null) {
-                                    // Preserve original image proportions & resolution; changing canvas aspect ratio never stretches/crops!
                                     val imgRatio = bmp.width.toFloat() / bmp.height.coerceAtLeast(1)
                                     val fitModifier = if (imgRatio >= 1f) {
                                         Modifier.size(
@@ -257,6 +261,13 @@ fun EditorCanvasViewport(
                                             height = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() }
                                         )
                                     }
+                                    val adjColorFilter = remember(layer.adjustments) {
+                                        if (layer.adjustments.isIdentity()) null
+                                        else {
+                                            val androidMatrix = MediaStorageManager.buildColorMatrix(layer.adjustments)
+                                            ColorFilter.colorMatrix(ColorMatrix(androidMatrix.array))
+                                        }
+                                    }
                                     Box(
                                         modifier = fitModifier
                                             .then(
@@ -268,32 +279,26 @@ fun EditorCanvasViewport(
                                             bitmap = bmp.asImageBitmap(),
                                             contentDescription = layer.name,
                                             contentScale = ContentScale.Fit,
+                                            colorFilter = adjColorFilter,
                                             modifier = Modifier.fillMaxSize()
                                         )
+                                        if (layer.adjustments.vignette > 0.01f) {
+                                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                                val vAlpha = layer.adjustments.vignette.coerceIn(0f, 1f) * 0.8f
+                                                drawRect(
+                                                    brush = Brush.radialGradient(
+                                                        colors = listOf(
+                                                            Color.Transparent,
+                                                            Color.Black.copy(alpha = vAlpha * 0.35f),
+                                                            Color.Black.copy(alpha = vAlpha)
+                                                        ),
+                                                        center = Offset(size.width / 2f, size.height / 2f),
+                                                        radius = size.maxDimension * 0.72f
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
-                                }
-                            }
-
-                            is VideoLayer -> {
-                                val vidRatio = layer.originalWidth.toFloat() / layer.originalHeight.coerceAtLeast(1)
-                                val fitW = if (vidRatio >= 1f) baseUnitPx * 0.85f else baseUnitPx * 0.85f * vidRatio
-                                val fitH = if (vidRatio >= 1f) baseUnitPx * 0.85f / vidRatio else baseUnitPx * 0.85f
-                                Box(
-                                    modifier = Modifier
-                                        .size(
-                                            width = with(LocalDensity.current) { fitW.toDp() },
-                                            height = with(LocalDensity.current) { fitH.toDp() }
-                                        )
-                                        .then(
-                                            if (isSelected) Modifier.border(2.dp, StudioAzure, RoundedCornerShape(4.dp))
-                                            else Modifier
-                                        )
-                                ) {
-                                    VideoLayerPlayer(
-                                        layer = layer,
-                                        isPlaying = isVideoPlaying,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
                                 }
                             }
 
@@ -349,8 +354,6 @@ fun EditorCanvasViewport(
                             }
 
                             is TextLayer -> {
-                                // Render Text & Color Emoji directly from original Typeface onto nativeCanvas
-                                // at high effective resolution so zoom/scale never pixelates vector emojis!
                                 Canvas(
                                     modifier = Modifier
                                         .size(
@@ -369,7 +372,9 @@ fun EditorCanvasViewport(
                                             canvas = canvas.nativeCanvas,
                                             layer = layer,
                                             effectiveFontSizePx = layer.fontSizeSp * density,
-                                            maxWidthPx = size.width
+                                            maxWidthPx = size.width,
+                                            emojiSourceMode = document.emojiSourceMode,
+                                            appEmojiFontId = document.appEmojiFontId
                                         )
                                         canvas.nativeCanvas.restore()
                                     }
@@ -392,21 +397,6 @@ fun EditorCanvasViewport(
                 }
             }
 
-            // 4. Optional Alignment Grid Overlay
-            if (showGrid) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val stroke = 1.dp.toPx()
-                    val gridColor = Color.White.copy(alpha = 0.25f)
-                    for (i in 1..2) {
-                        val x = size.width * (i / 3f)
-                        val y = size.height * (i / 3f)
-                        drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
-                        drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = stroke)
-                    }
-                }
-            }
-
-            // 5. Eyedropper Badge
             if (isEyedropperActive) {
                 Surface(
                     shape = RoundedCornerShape(999.dp),
@@ -416,7 +406,7 @@ fun EditorCanvasViewport(
                         .padding(8.dp)
                 ) {
                     Text(
-                        text = "Tap canvas to sample color",
+                        text = "Tap color",
                         style = MaterialTheme.typography.labelLarge,
                         color = Color.Black,
                         fontWeight = FontWeight.Bold,
@@ -426,70 +416,6 @@ fun EditorCanvasViewport(
             }
         }
     }
-}
-
-@OptIn(UnstableApi::class)
-@Composable
-private fun VideoLayerPlayer(
-    layer: VideoLayer,
-    isPlaying: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val player = remember(layer.id) {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ONE
-        }
-    }
-
-    LaunchedEffect(layer.uriString, layer.trimStartMs, layer.trimEndMs) {
-        val uri = if (layer.uriString.startsWith("/")) {
-            Uri.fromFile(File(layer.uriString))
-        } else {
-            Uri.parse(layer.uriString)
-        }
-        val mediaItem = MediaItem.Builder()
-            .setUri(uri)
-            .setClippingConfiguration(
-                MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(layer.trimStartMs.coerceAtLeast(0L))
-                    .setEndPositionMs(layer.trimEndMs.coerceAtLeast(layer.trimStartMs + 200L))
-                    .build()
-            )
-            .build()
-        player.setMediaItem(mediaItem)
-        player.prepare()
-    }
-
-    LaunchedEffect(layer.speed, layer.isMuted, isPlaying) {
-        player.playbackParameters = PlaybackParameters(layer.speed.coerceIn(0.5f, 2f))
-        player.volume = if (layer.isMuted) 0f else 1f
-        player.playWhenReady = isPlaying
-    }
-
-    DisposableEffect(player) {
-        onDispose {
-            player.release()
-        }
-    }
-
-    AndroidView(
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                useController = false
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                this.player = player
-            }
-        },
-        update = { pv ->
-            if (pv.player !== player) pv.player = player
-        },
-        modifier = modifier
-    )
 }
 
 private fun mapComposeBlendMode(mode: EditorBlendMode): BlendMode {

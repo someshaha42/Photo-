@@ -1,6 +1,6 @@
 {
   "name": "PixelForge",
-  "description": "PixelLab-inspired photo and video editor with advanced font management, color emoji rendering, aspect ratio control, transparent checkerboard canvas, background tools, AI image generation, and Gemini assistant.",
+  "description": "Offline PixelLab-inspired photo editor with custom aspect ratio & pixel dimensions, RGBA8888 transparency, background & color adjustments, layer management, and advanced font/color-emoji engine.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

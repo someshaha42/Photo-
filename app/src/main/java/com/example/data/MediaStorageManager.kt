@@ -6,11 +6,14 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
-import android.media.MediaMetadataRetriever
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -20,33 +23,27 @@ import androidx.core.content.FileProvider
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
 import com.example.model.EditorBlendMode
+import com.example.model.ImageAdjustments
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
-import com.example.model.TextAlignOption
 import com.example.model.TextLayer
-import com.example.model.VideoLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 data class ImportedImageMeta(
     val uriString: String,
     val width: Int,
     val height: Int,
-    val displayName: String
-)
-
-data class ImportedVideoMeta(
-    val uriString: String,
-    val width: Int,
-    val height: Int,
-    val durationMs: Long,
     val displayName: String
 )
 
@@ -57,7 +54,7 @@ class MediaStorageManager(private val context: Context) {
         projectId: String,
         keepLocalCopy: Boolean
     ): ImportedImageMeta = withContext(Dispatchers.IO) {
-        val displayName = queryDisplayName(sourceUri) ?: "image_${System.currentTimeMillis()}.png"
+        val displayName = queryDisplayName(sourceUri) ?: "photo_${System.currentTimeMillis()}.png"
         val resolvedUriString = if (keepLocalCopy) {
             copyUriToAppStorage(sourceUri, projectId, displayName)
         } else {
@@ -75,54 +72,6 @@ class MediaStorageManager(private val context: Context) {
             uriString = resolvedUriString,
             width = width.coerceAtLeast(1),
             height = height.coerceAtLeast(1),
-            displayName = displayName
-        )
-    }
-
-    suspend fun importVideo(
-        sourceUri: Uri,
-        projectId: String,
-        keepLocalCopy: Boolean
-    ): ImportedVideoMeta = withContext(Dispatchers.IO) {
-        val displayName = queryDisplayName(sourceUri) ?: "video_${System.currentTimeMillis()}.mp4"
-        val resolvedUriString = if (keepLocalCopy) {
-            copyUriToAppStorage(sourceUri, projectId, displayName)
-        } else {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    sourceUri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-            sourceUri.toString()
-        }
-
-        var width = 1080
-        var height = 1920
-        var durationMs = 5000L
-        val retriever = MediaMetadataRetriever()
-        try {
-            if (resolvedUriString.startsWith("/")) {
-                retriever.setDataSource(resolvedUriString)
-            } else {
-                retriever.setDataSource(context, Uri.parse(resolvedUriString))
-            }
-            width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-                ?.toIntOrNull() ?: 1080
-            height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-                ?.toIntOrNull() ?: 1920
-            durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull()?.coerceAtLeast(500L) ?: 5000L
-        } catch (_: Exception) {
-        } finally {
-            runCatching { retriever.release() }
-        }
-
-        ImportedVideoMeta(
-            uriString = resolvedUriString,
-            width = width,
-            height = height,
-            durationMs = durationMs,
             displayName = displayName
         )
     }
@@ -197,27 +146,6 @@ class MediaStorageManager(private val context: Context) {
         }.getOrNull()
     }
 
-    suspend fun extractVideoThumbnail(uriOrPath: String, timeUs: Long = 0L): Bitmap? =
-        withContext(Dispatchers.IO) {
-            val retriever = MediaMetadataRetriever()
-            try {
-                if (uriOrPath.startsWith("/")) {
-                    retriever.setDataSource(uriOrPath)
-                } else {
-                    retriever.setDataSource(context, Uri.parse(uriOrPath))
-                }
-                retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?.copy(Bitmap.Config.ARGB_8888, false)
-            } catch (_: Exception) {
-                null
-            } finally {
-                runCatching { retriever.release() }
-            }
-        }
-
-    /**
-     * Fast in-memory StackBlur preserving ARGB_8888 channels.
-     */
     suspend fun createBlurredBitmap(source: Bitmap, blurFraction: Float): Bitmap =
         withContext(Dispatchers.Default) {
             val clamped = blurFraction.coerceIn(0f, 1f)
@@ -234,12 +162,11 @@ class MediaStorageManager(private val context: Context) {
     suspend fun renderProjectToBitmap(
         document: ProjectDocument,
         fontRenderEngine: FontRenderEngine,
-        targetWidth: Int = document.aspectRatio.exportWidth,
-        targetHeight: Int = document.aspectRatio.exportHeight
+        targetWidth: Int = document.canvas.exportWidth,
+        targetHeight: Int = document.canvas.exportHeight
     ): Bitmap = withContext(Dispatchers.IO) {
         val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
-        // Start with pure transparent RGBA8888 buffer (never export checkerboard)
         canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
         val bg = document.background
@@ -247,7 +174,6 @@ class MediaStorageManager(private val context: Context) {
             xfermode = blendModeToPorterDuff(bg.blendMode)
         }
 
-        // 1. Background Layer (Transparent tab exports transparent!)
         when (bg.activeTab) {
             BackgroundTab.TRANSPARENT -> Unit
             BackgroundTab.COLORS -> {
@@ -296,7 +222,6 @@ class MediaStorageManager(private val context: Context) {
             }
         }
 
-        // 2. Render all visible layers non-destructively at full target export resolution
         for (layer in document.layers) {
             if (!layer.visible) continue
             val cx = targetWidth * (0.5f + layer.offsetXNorm)
@@ -308,7 +233,12 @@ class MediaStorageManager(private val context: Context) {
 
             when (layer) {
                 is ImageLayer -> {
-                    decodeRgba8888Bitmap(layer.uriString, maxDimension = null)?.let { bmp ->
+                    decodeRgba8888Bitmap(layer.uriString, maxDimension = null)?.let { rawBmp ->
+                        val bmp = if (layer.adjustments.sharpness > 0.01f) {
+                            applySharpenBitmap(rawBmp, layer.adjustments.sharpness)
+                        } else {
+                            rawBmp
+                        }
                         val fitScale = min(
                             (targetWidth * 0.85f) / bmp.width.coerceAtLeast(1),
                             (targetHeight * 0.85f) / bmp.height.coerceAtLeast(1)
@@ -317,39 +247,33 @@ class MediaStorageManager(private val context: Context) {
                         val drawH = bmp.height * fitScale
                         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
                             alpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
+                            if (!layer.adjustments.isIdentity()) {
+                                colorFilter = ColorMatrixColorFilter(buildColorMatrix(layer.adjustments))
+                            }
                         }
                         val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
                         canvas.drawBitmap(bmp, null, dst, paint)
-                        bmp.recycle()
-                    }
-                }
-                is VideoLayer -> {
-                    extractVideoThumbnail(layer.uriString, layer.trimStartMs * 1000L)?.let { frame ->
-                        val fitScale = min(
-                            (targetWidth * 0.85f) / frame.width.coerceAtLeast(1),
-                            (targetHeight * 0.85f) / frame.height.coerceAtLeast(1)
-                        )
-                        val drawW = frame.width * fitScale
-                        val drawH = frame.height * fitScale
-                        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                            alpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
+
+                        if (layer.adjustments.vignette > 0.01f) {
+                            drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, layer.opacity)
                         }
-                        val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
-                        canvas.drawBitmap(frame, null, dst, paint)
-                        frame.recycle()
+
+                        if (bmp !== rawBmp) bmp.recycle()
+                        rawBmp.recycle()
                     }
                 }
                 is ShapeLayer -> {
                     drawShapeOnCanvas(canvas, layer, targetWidth)
                 }
                 is TextLayer -> {
-                    // Render text and Color Emojis at actual export resolution from original Typeface!
                     val resolutionFactor = targetWidth / 360f
                     fontRenderEngine.drawTextLayerOnCanvas(
                         canvas = canvas,
                         layer = layer,
                         effectiveFontSizePx = layer.fontSizeSp * resolutionFactor,
-                        maxWidthPx = targetWidth * 0.9f
+                        maxWidthPx = targetWidth * 0.9f,
+                        emojiSourceMode = document.emojiSourceMode,
+                        appEmojiFontId = document.appEmojiFontId
                     )
                 }
             }
@@ -367,7 +291,7 @@ class MediaStorageManager(private val context: Context) {
         if (!dir.exists()) dir.mkdirs()
         val thumbFile = File(dir, "${document.id}.png")
         val thumbW = 360
-        val thumbH = (thumbW / document.aspectRatio.ratioFloat).roundToInt().coerceIn(180, 640)
+        val thumbH = (thumbW / document.canvas.ratioFloat).roundToInt().coerceIn(180, 640)
         val bmp = renderProjectToBitmap(document, fontRenderEngine, thumbW, thumbH)
         FileOutputStream(thumbFile).use { out ->
             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -387,7 +311,6 @@ class MediaStorageManager(private val context: Context) {
             val outFile = File(exportsDir, fileName)
             val bitmap = renderProjectToBitmap(document, fontRenderEngine)
             FileOutputStream(outFile).use { stream ->
-                // Lossless PNG preserving full RGBA8888 8-bit alpha transparency
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
             }
             bitmap.recycle()
@@ -485,8 +408,8 @@ class MediaStorageManager(private val context: Context) {
                 for (i in 0 until total) {
                     val radius = if (i % 2 == 0) half else half * innerRatio
                     val angle = Math.toRadians((i * 360.0 / total) - 90.0)
-                    val x = (radius * kotlin.math.cos(angle)).toFloat()
-                    val y = (radius * kotlin.math.sin(angle)).toFloat()
+                    val x = (radius * cos(angle)).toFloat()
+                    val y = (radius * sin(angle)).toFloat()
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
                 path.close()
@@ -494,6 +417,67 @@ class MediaStorageManager(private val context: Context) {
                 if (layer.strokeWidth > 0f) canvas.drawPath(path, strokePaint)
             }
         }
+    }
+
+    private fun drawVignetteOnRect(
+        canvas: Canvas,
+        rect: android.graphics.RectF,
+        vignette: Float,
+        layerOpacity: Float
+    ) {
+        val radius = maxOf(rect.width(), rect.height()) * 0.72f
+        if (radius <= 1f) return
+        val edgeAlpha = (vignette.coerceIn(0f, 1f) * 0.82f * layerOpacity * 255f).roundToInt().coerceIn(0, 255)
+        val gradient = RadialGradient(
+            rect.centerX(),
+            rect.centerY(),
+            radius,
+            intArrayOf(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.argb(edgeAlpha / 3, 0, 0, 0),
+                android.graphics.Color.argb(edgeAlpha, 0, 0, 0)
+            ),
+            floatArrayOf(0.45f, 0.76f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient }
+        canvas.drawRect(rect, p)
+    }
+
+    private fun applySharpenBitmap(src: Bitmap, strength: Float): Bitmap {
+        val amount = strength.coerceIn(0f, 1f) * 1.4f
+        if (amount <= 0.01f) return src
+        val w = src.width
+        val h = src.height
+        val pixels = IntArray(w * h)
+        val out = IntArray(w * h)
+        src.getPixels(pixels, 0, w, 0, 0, w, h)
+        System.arraycopy(pixels, 0, out, 0, pixels.size)
+        for (y in 1 until h - 1) {
+            val row = y * w
+            for (x in 1 until w - 1) {
+                val c = pixels[row + x]
+                val t = pixels[row - w + x]
+                val b = pixels[row + w + x]
+                val l = pixels[row + x - 1]
+                val r = pixels[row + x + 1]
+
+                val a = (c ushr 24) and 0xFF
+                val cr = (c ushr 16) and 0xFF
+                val cg = (c ushr 8) and 0xFF
+                val cb = c and 0xFF
+
+                val avgR = (((t ushr 16) and 0xFF) + ((b ushr 16) and 0xFF) + ((l ushr 16) and 0xFF) + ((r ushr 16) and 0xFF)) / 4f
+                val avgG = (((t ushr 8) and 0xFF) + ((b ushr 8) and 0xFF) + ((l ushr 8) and 0xFF) + ((r ushr 8) and 0xFF)) / 4f
+                val avgB = ((t and 0xFF) + (b and 0xFF) + (l and 0xFF) + (r and 0xFF)) / 4f
+
+                val nr = (cr + (cr - avgR) * amount).roundToInt().coerceIn(0, 255)
+                val ng = (cg + (cg - avgG) * amount).roundToInt().coerceIn(0, 255)
+                val nb = (cb + (cb - avgB) * amount).roundToInt().coerceIn(0, 255)
+                out[row + x] = (a shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
+        }
+        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
     }
 
     private fun stackBlurInPlace(bitmap: Bitmap, radius: Int) {
@@ -509,39 +493,20 @@ class MediaStorageManager(private val context: Context) {
         val g = IntArray(wh)
         val b = IntArray(wh)
         val a = IntArray(wh)
-        var rsum: Int
-        var gsum: Int
-        var bsum: Int
-        var asum: Int
-        var x: Int
-        var y: Int
-        var i: Int
-        var p: Int
-        var yp: Int
-        var yi: Int
-        var yw: Int
+        var rsum: Int; var gsum: Int; var bsum: Int; var asum: Int
+        var x: Int; var y: Int; var i: Int; var p: Int; var yp: Int; var yi: Int; var yw: Int
         val vmin = IntArray(maxOf(w, h))
         var divsum = (div + 1) shr 1
         divsum *= divsum
         val dv = IntArray(256 * divsum)
         for (idx in dv.indices) dv[idx] = idx / divsum
 
-        yw = 0
-        yi = 0
+        yw = 0; yi = 0
         val stack = Array(div) { IntArray(4) }
-        var stackpointer: Int
-        var stackstart: Int
-        var sir: IntArray
-        var rbs: Int
+        var stackpointer: Int; var stackstart: Int; var sir: IntArray; var rbs: Int
         val r1 = radius + 1
-        var routsum: Int
-        var goutsum: Int
-        var boutsum: Int
-        var aoutsum: Int
-        var rinsum: Int
-        var ginsum: Int
-        var binsum: Int
-        var ainsum: Int
+        var routsum: Int; var goutsum: Int; var boutsum: Int; var aoutsum: Int
+        var rinsum: Int; var ginsum: Int; var binsum: Int; var ainsum: Int
 
         y = 0
         while (y < h) {
@@ -636,5 +601,65 @@ class MediaStorageManager(private val context: Context) {
             x++
         }
         bitmap.setPixels(pix, 0, w, 0, 0, w, h)
+    }
+
+    companion object {
+        fun buildColorMatrix(adj: ImageAdjustments): ColorMatrix {
+            val result = ColorMatrix()
+
+            // Exposure + Contrast
+            val expFactor = 2.0.pow(adj.exposure.toDouble()).toFloat()
+            val contrast = 1f + adj.contrast.coerceIn(-0.85f, 1.5f)
+            val translate = 128f * (1f - contrast) + adj.brightness * 90f
+            val expContrast = ColorMatrix(
+                floatArrayOf(
+                    expFactor * contrast, 0f, 0f, 0f, translate,
+                    0f, expFactor * contrast, 0f, 0f, translate,
+                    0f, 0f, expFactor * contrast, 0f, translate,
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
+            result.postConcat(expContrast)
+
+            // Saturation + Vibrance
+            val satValue = (1f + adj.saturation + adj.vibrance * 0.55f).coerceIn(0f, 2.5f)
+            val satMatrix = ColorMatrix().apply { setSaturation(satValue) }
+            result.postConcat(satMatrix)
+
+            // Warmth (red/blue balance)
+            if (adj.warmth != 0f) {
+                val w = adj.warmth * 36f
+                val warmMatrix = ColorMatrix(
+                    floatArrayOf(
+                        1f, 0f, 0f, 0f, w,
+                        0f, 1f, 0f, 0f, w * 0.25f,
+                        0f, 0f, 1f, 0f, -w,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                result.postConcat(warmMatrix)
+            }
+
+            // Hue rotation (-180..180 deg)
+            if (adj.hue != 0f) {
+                val angle = Math.toRadians(adj.hue.toDouble())
+                val cosVal = cos(angle).toFloat()
+                val sinVal = sin(angle).toFloat()
+                val lumR = 0.213f
+                val lumG = 0.715f
+                val lumB = 0.072f
+                val hueMatrix = ColorMatrix(
+                    floatArrayOf(
+                        lumR + cosVal * (1f - lumR) + sinVal * (-lumR), lumG + cosVal * (-lumG) + sinVal * (-lumG), lumB + cosVal * (-lumB) + sinVal * (1f - lumB), 0f, 0f,
+                        lumR + cosVal * (-lumR) + sinVal * 0.143f, lumG + cosVal * (1f - lumG) + sinVal * 0.140f, lumB + cosVal * (-lumB) + sinVal * (-0.283f), 0f, 0f,
+                        lumR + cosVal * (-lumR) + sinVal * (-(1f - lumR)), lumG + cosVal * (-lumG) + sinVal * lumG, lumB + cosVal * (1f - lumB) + sinVal * lumB, 0f, 0f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                result.postConcat(hueMatrix)
+            }
+
+            return result
+        }
     }
 }

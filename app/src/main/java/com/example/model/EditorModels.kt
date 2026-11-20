@@ -3,29 +3,142 @@ package com.example.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.util.UUID
+import kotlin.math.roundToInt
 
 @Serializable
-enum class CanvasAspectRatio(
-    val label: String,
-    val widthUnits: Int,
-    val heightUnits: Int,
-    val exportWidth: Int,
-    val exportHeight: Int
+data class CanvasDimensions(
+    val isCustom: Boolean = false,
+    val ratioWidth: Int = 1,
+    val ratioHeight: Int = 1,
+    val exportWidth: Int = 1080,
+    val exportHeight: Int = 1080
 ) {
-    RATIO_1_1("1:1", 1, 1, 1080, 1080),
-    RATIO_16_9("16:9", 16, 9, 1920, 1080),
-    RATIO_9_16("9:16", 9, 16, 1080, 1920),
-    RATIO_4_5("4:5", 4, 5, 1080, 1350);
+    val label: String
+        get() = "$ratioWidth:$ratioHeight"
 
     val ratioFloat: Float
-        get() = widthUnits.toFloat() / heightUnits.toFloat()
+        get() = ratioWidth.coerceAtLeast(1).toFloat() / ratioHeight.coerceAtLeast(1).toFloat()
+
+    val pixelLabel: String
+        get() = "${exportWidth}x${exportHeight}"
 
     companion object {
-        fun closestForDimensions(width: Int, height: Int): CanvasAspectRatio {
-            if (width <= 0 || height <= 0) return RATIO_1_1
-            val target = width.toFloat() / height.toFloat()
-            return entries.minByOrNull { kotlin.math.abs(it.ratioFloat - target) } ?: RATIO_1_1
+        val SQUARE_1_1 = CanvasDimensions(
+            isCustom = false,
+            ratioWidth = 1,
+            ratioHeight = 1,
+            exportWidth = 1080,
+            exportHeight = 1080
+        )
+
+        fun fromRatioInput(raw: String): CanvasDimensions? {
+            val parts = raw.trim()
+                .replace('/', ':')
+                .replace('x', ':')
+                .replace('X', ':')
+                .split(':')
+                .mapNotNull { it.trim().toFloatOrNull() }
+            if (parts.size != 2) return null
+            val rwRaw = parts[0]
+            val rhRaw = parts[1]
+            if (rwRaw <= 0f || rhRaw <= 0f) return null
+
+            val scaleToInt = if (rwRaw % 1f != 0f || rhRaw % 1f != 0f) 100f else 1f
+            val intW = (rwRaw * scaleToInt).roundToInt().coerceAtLeast(1)
+            val intH = (rhRaw * scaleToInt).roundToInt().coerceAtLeast(1)
+            val divisor = gcd(intW, intH)
+            val rw = (intW / divisor).coerceAtLeast(1)
+            val rh = (intH / divisor).coerceAtLeast(1)
+
+            val (expW, expH) = computeExportPixelsFromRatio(rw, rh)
+            return CanvasDimensions(
+                isCustom = !(rw == 1 && rh == 1),
+                ratioWidth = rw,
+                ratioHeight = rh,
+                exportWidth = expW,
+                exportHeight = expH
+            )
         }
+
+        fun fromPixelInput(raw: String): CanvasDimensions? {
+            val parts = raw.trim()
+                .split(Regex("[xX×*,\\s]+"))
+                .mapNotNull { it.trim().toIntOrNull() }
+            if (parts.size != 2) return null
+            val w = parts[0].coerceIn(64, 4096)
+            val h = parts[1].coerceIn(64, 4096)
+            if (parts[0] <= 0 || parts[1] <= 0) return null
+
+            val divisor = gcd(w, h)
+            val rw = (w / divisor).coerceAtLeast(1)
+            val rh = (h / divisor).coerceAtLeast(1)
+            return CanvasDimensions(
+                isCustom = !(rw == 1 && rh == 1 && w == 1080 && h == 1080),
+                ratioWidth = rw,
+                ratioHeight = rh,
+                exportWidth = w,
+                exportHeight = h
+            )
+        }
+
+        fun computeExportPixelsFromRatio(rw: Int, rh: Int): Pair<Int, Int> {
+            val baseShort = 1080
+            val ratio = rw.toDouble() / rh.toDouble()
+            val (w, h) = if (rw >= rh) {
+                (baseShort * ratio).roundToInt() to baseShort
+            } else {
+                baseShort to (baseShort / ratio).roundToInt()
+            }
+            val maxDim = 4096
+            return if (w > maxDim || h > maxDim) {
+                val scale = maxDim.toDouble() / maxOf(w, h)
+                (w * scale).roundToInt().coerceAtLeast(64) to (h * scale).roundToInt().coerceAtLeast(64)
+            } else {
+                w.coerceAtLeast(64) to h.coerceAtLeast(64)
+            }
+        }
+
+        private fun gcd(a: Int, b: Int): Int {
+            var x = kotlin.math.abs(a)
+            var y = kotlin.math.abs(b)
+            while (y != 0) {
+                val t = x % y
+                x = y
+                y = t
+            }
+            return x.coerceAtLeast(1)
+        }
+    }
+}
+
+@Serializable
+enum class EmojiSourceMode(val label: String) {
+    SYSTEM("System"),
+    APPLICATION("Application")
+}
+
+@Serializable
+data class ImageAdjustments(
+    val exposure: Float = 0f,     // -1f..1f
+    val contrast: Float = 0f,     // -1f..1f
+    val saturation: Float = 0f,   // -1f..1f
+    val hue: Float = 0f,          // -180f..180f
+    val vibrance: Float = 0f,     // -1f..1f
+    val sharpness: Float = 0f,    // 0f..1f
+    val vignette: Float = 0f,     // 0f..1f
+    val brightness: Float = 0f,   // -1f..1f
+    val warmth: Float = 0f        // -1f..1f
+) {
+    fun isIdentity(): Boolean {
+        return exposure == 0f &&
+            contrast == 0f &&
+            saturation == 0f &&
+            hue == 0f &&
+            vibrance == 0f &&
+            sharpness == 0f &&
+            vignette == 0f &&
+            brightness == 0f &&
+            warmth == 0f
     }
 }
 
@@ -70,8 +183,8 @@ enum class TextAlignOption(val label: String) {
 
 @Serializable
 enum class LayerShapeType(val label: String) {
-    RECTANGLE("Rectangle"),
-    ROUNDED_RECT("Rounded Box"),
+    RECTANGLE("Rect"),
+    ROUNDED_RECT("Rounded"),
     CIRCLE("Circle"),
     STAR("Star"),
     BADGE("Badge")
@@ -104,50 +217,11 @@ sealed interface EditorLayer {
 @SerialName("image")
 data class ImageLayer(
     override val id: String = UUID.randomUUID().toString(),
-    override val name: String = "Image",
+    override val name: String = "Photo",
     val uriString: String,
     val originalWidth: Int,
     val originalHeight: Int,
-    override val offsetXNorm: Float = 0f,
-    override val offsetYNorm: Float = 0f,
-    override val scale: Float = 1f,
-    override val rotationDeg: Float = 0f,
-    override val opacity: Float = 1f,
-    override val visible: Boolean = true,
-    override val locked: Boolean = false
-) : EditorLayer {
-    override fun withBaseTransform(
-        offsetXNorm: Float,
-        offsetYNorm: Float,
-        scale: Float,
-        rotationDeg: Float,
-        opacity: Float,
-        visible: Boolean,
-        locked: Boolean
-    ) = copy(
-        offsetXNorm = offsetXNorm,
-        offsetYNorm = offsetYNorm,
-        scale = scale,
-        rotationDeg = rotationDeg,
-        opacity = opacity,
-        visible = visible,
-        locked = locked
-    )
-}
-
-@Serializable
-@SerialName("video")
-data class VideoLayer(
-    override val id: String = UUID.randomUUID().toString(),
-    override val name: String = "Video",
-    val uriString: String,
-    val originalWidth: Int,
-    val originalHeight: Int,
-    val durationMs: Long,
-    val trimStartMs: Long = 0L,
-    val trimEndMs: Long = durationMs,
-    val speed: Float = 1f,
-    val isMuted: Boolean = false,
+    val adjustments: ImageAdjustments = ImageAdjustments(),
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
@@ -262,10 +336,10 @@ data class ShapeLayer(
 data class ProjectDocument(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "Untitled Project",
-    val aspectRatio: CanvasAspectRatio = CanvasAspectRatio.RATIO_1_1,
-    val autoImageDetectionEnabled: Boolean = true,
-    val manualAspectOverride: Boolean = false,
+    val canvas: CanvasDimensions = CanvasDimensions.SQUARE_1_1,
     val background: BackgroundConfig = BackgroundConfig(),
     val layers: List<EditorLayer> = emptyList(),
-    val selectedLayerId: String? = null
+    val selectedLayerId: String? = null,
+    val emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
+    val appEmojiFontId: String? = null
 )

@@ -23,7 +23,7 @@ data class ProjectEntity(
     val projectJson: String,
     val aspectLabel: String,
     val layerCount: Int,
-    val hasVideo: Boolean,
+    val hasVideo: Boolean = false,
     val createdAtMillis: Long,
     val updatedAtMillis: Long
 )
@@ -93,9 +93,9 @@ class ProjectRepository(
             title = doc.title.ifBlank { "Untitled Project" },
             thumbnailPath = thumbnailPath ?: existing?.thumbnailPath,
             projectJson = encoded,
-            aspectLabel = doc.aspectRatio.label,
+            aspectLabel = doc.canvas.label,
             layerCount = doc.layers.size,
-            hasVideo = doc.layers.any { it is com.example.model.VideoLayer },
+            hasVideo = false,
             createdAtMillis = createdAtMillis ?: existing?.createdAtMillis ?: now,
             updatedAtMillis = now
         )

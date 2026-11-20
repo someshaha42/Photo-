@@ -6,9 +6,13 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.MetricAffectingSpan
 import android.util.LruCache
+import com.example.model.EmojiSourceMode
 import com.example.model.TextAlignOption
 import com.example.model.TextLayer
 import java.io.File
@@ -34,11 +38,39 @@ data class CachedGlyph(
     val byteCount: Int
 )
 
+class EmojiSpanSegment(
+    val start: Int,
+    val end: Int,
+    val isEmoji: Boolean
+)
+
+private class CustomEmojiFontSpan(
+    private val emojiTypeface: Typeface,
+    private val preserveOriginalColor: Boolean,
+    private val transparentForStrokePass: Boolean,
+    private val layerAlpha: Int
+) : MetricAffectingSpan() {
+    override fun updateDrawState(tp: TextPaint) {
+        tp.typeface = emojiTypeface
+        if (transparentForStrokePass) {
+            tp.color = android.graphics.Color.TRANSPARENT
+            tp.clearShadowLayer()
+        } else if (preserveOriginalColor) {
+            tp.color = android.graphics.Color.WHITE
+            tp.alpha = layerAlpha
+        }
+    }
+
+    override fun updateMeasureState(tp: TextPaint) {
+        tp.typeface = emojiTypeface
+    }
+}
+
 /**
  * High-resolution RGBA8888 font & Color Emoji rendering engine with intelligent resolution-aware LRU cache.
- * - Never upscales a lower-resolution cached bitmap when higher zoom/export resolution is needed.
- * - Never strips colors or forces monochrome onto Color Emoji fonts (COLR/CPAL, CBDT/CBLC, sbix).
- * - Preserves full 8-bit alpha channel in ARGB_8888.
+ * Supports dual-font rendering:
+ * - SYSTEM emoji mode: letters use layer's chosen font; emojis render in native Android system emoji style.
+ * - APPLICATION emoji mode: letters use layer's chosen font; emojis/symbols render using the selected app font.
  */
 class FontRenderEngine(private val context: Context) {
 
@@ -96,37 +128,32 @@ class FontRenderEngine(private val context: Context) {
         }.getOrElse { Typeface.DEFAULT }
     }
 
-    /**
-     * Renders text/emoji directly onto a target Canvas (e.g. live zoomed canvas or full-res PNG export)
-     * from the original Typeface vector/strike source — zero intermediate low-res downsampling!
-     */
     fun drawTextLayerOnCanvas(
         canvas: Canvas,
         layer: TextLayer,
         effectiveFontSizePx: Float,
-        maxWidthPx: Float
+        maxWidthPx: Float,
+        emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
+        appEmojiFontId: String? = null
     ) {
         val startNs = System.nanoTime()
         val meta = metadataIndex[layer.fontId]
         val typeface = getTypeface(layer.fontId)
         val isColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI ||
-            meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE
+            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
 
+        val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
             this.typeface = applyStyle(typeface, layer.isBold, layer.isItalic)
             this.textSize = effectiveFontSizePx.coerceAtLeast(8f)
             this.letterSpacing = layer.letterSpacing
-            this.alpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
-            // CRITICAL: Preserve original Color Emoji colors, gradients, and alpha.
-            // Never attach a monochrome ColorFilter or override RGB on Color Emoji fonts!
             if (!isColorEmojiFont) {
                 this.color = layer.colorArgb.toInt()
                 this.alpha = ((android.graphics.Color.alpha(layer.colorArgb) / 255f) * layer.opacity * 255f)
                     .roundToInt().coerceIn(0, 255)
             } else {
-                // Keep white base with full layer alpha so Android Skia draws native COLR/CBDT/sbix colors untouched
                 this.color = android.graphics.Color.WHITE
-                this.alpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
+                this.alpha = layerAlpha
             }
             if (layer.shadowEnabled) {
                 setShadowLayer(
@@ -138,6 +165,15 @@ class FontRenderEngine(private val context: Context) {
             }
         }
 
+        val styledText = buildStyledSpannable(
+            text = layer.text,
+            layerFontId = layer.fontId,
+            layerAlpha = layerAlpha,
+            emojiSourceMode = emojiSourceMode,
+            appEmojiFontId = appEmojiFontId,
+            forStrokePass = false
+        )
+
         val layoutWidth = maxWidthPx.roundToInt().coerceAtLeast(64)
         val alignment = when (layer.align) {
             TextAlignOption.LEFT -> Layout.Alignment.ALIGN_NORMAL
@@ -146,7 +182,7 @@ class FontRenderEngine(private val context: Context) {
         }
 
         val staticLayout = StaticLayout.Builder
-            .obtain(layer.text, 0, layer.text.length, textPaint, layoutWidth)
+            .obtain(styledText, 0, styledText.length, textPaint, layoutWidth)
             .setAlignment(alignment)
             .setIncludePad(true)
             .build()
@@ -187,8 +223,16 @@ class FontRenderEngine(private val context: Context) {
                 strokeJoin = Paint.Join.ROUND
                 clearShadowLayer()
             }
+            val strokeText = buildStyledSpannable(
+                text = layer.text,
+                layerFontId = layer.fontId,
+                layerAlpha = layerAlpha,
+                emojiSourceMode = emojiSourceMode,
+                appEmojiFontId = appEmojiFontId,
+                forStrokePass = true
+            )
             val strokeLayout = StaticLayout.Builder
-                .obtain(layer.text, 0, layer.text.length, strokePaint, layoutWidth)
+                .obtain(strokeText, 0, strokeText.length, strokePaint, layoutWidth)
                 .setAlignment(alignment)
                 .setIncludePad(true)
                 .build()
@@ -206,11 +250,50 @@ class FontRenderEngine(private val context: Context) {
         lastRenderedPx = effectiveFontSizePx.roundToInt()
     }
 
-    /**
-     * Resolution-aware cached glyph/text bitmap generator used for Zoom Quality inspection (100%-800%)
-     * and high-res bitmap overlays (e.g., Media3 video export overlays).
-     * Never returns an upscaled low-res cache entry if targetPx exceeds cached resolution.
-     */
+    fun buildStyledSpannable(
+        text: String,
+        layerFontId: String,
+        layerAlpha: Int = 255,
+        emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
+        appEmojiFontId: String? = null,
+        forStrokePass: Boolean = false
+    ): SpannableStringBuilder {
+        val builder = SpannableStringBuilder(text)
+        if (text.isEmpty()) return builder
+
+        val segments = segmentEmojiRuns(text)
+        val useAppFont = emojiSourceMode == EmojiSourceMode.APPLICATION && !appEmojiFontId.isNullOrBlank()
+        val resolvedEmojiFontId = if (useAppFont) appEmojiFontId!! else null
+        val emojiTypeface = if (resolvedEmojiFontId != null) getTypeface(resolvedEmojiFontId) else Typeface.DEFAULT
+        val emojiMeta = resolvedEmojiFontId?.let { metadataIndex[it] }
+        val preserveColor = if (!useAppFont) {
+            // System emoji font is always color emoji
+            true
+        } else {
+            emojiMeta?.classification == FontClassification.COLOR_EMOJI ||
+                (emojiMeta?.colorTableType != null && emojiMeta.colorTableType != ColorTableType.NONE)
+        }
+
+        // If layer itself is already a dedicated color emoji font and emoji mode is APPLICATION on the same font,
+        // no extra override is needed. Otherwise, isolate emoji runs cleanly!
+        for (seg in segments) {
+            if (!seg.isEmoji) continue
+            if (useAppFont && resolvedEmojiFontId == layerFontId) continue
+            builder.setSpan(
+                CustomEmojiFontSpan(
+                    emojiTypeface = emojiTypeface,
+                    preserveOriginalColor = preserveColor,
+                    transparentForStrokePass = forStrokePass,
+                    layerAlpha = layerAlpha
+                ),
+                seg.start,
+                seg.end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        return builder
+    }
+
     fun getOrRenderGlyphBitmap(
         fontId: String,
         text: String,
@@ -223,8 +306,6 @@ class FontRenderEngine(private val context: Context) {
         shadowEnabled: Boolean = false
     ): Bitmap {
         val clampedPx = targetFontPx.coerceIn(16, 640)
-        // Quantize to clean high-res buckets (16px steps) so small pinch fluctuations reuse cache cleanly,
-        // while larger zoom increases trigger fresh high-res rasterization!
         val bucketPx = ((clampedPx + 15) / 16) * 16
         val key = GlyphCacheKey(
             fontId = fontId,
@@ -330,5 +411,48 @@ class FontRenderEngine(private val context: Context) {
             else -> Typeface.NORMAL
         }
         return if (style == Typeface.NORMAL) base else Typeface.create(base, style)
+    }
+
+    companion object {
+        fun segmentEmojiRuns(text: String): List<EmojiSpanSegment> {
+            if (text.isEmpty()) return emptyList()
+            val segments = mutableListOf<EmojiSpanSegment>()
+            var idx = 0
+            var currentStart = 0
+            var currentEmoji: Boolean? = null
+
+            while (idx < text.length) {
+                val cp = text.codePointAt(idx)
+                val charCount = Character.charCount(cp)
+                val isModOrJoin = cp == 0x200D || cp == 0xFE0F || cp == 0xFE0E ||
+                    cp in 0x1F3FB..0x1F3FF || cp == 0x20E3
+                val isEmojiCp = isEmojiCodePoint(cp) || (isModOrJoin && currentEmoji == true)
+
+                if (currentEmoji == null) {
+                    currentEmoji = isEmojiCp
+                    currentStart = idx
+                } else if (currentEmoji != isEmojiCp) {
+                    segments.add(EmojiSpanSegment(currentStart, idx, currentEmoji))
+                    currentEmoji = isEmojiCp
+                    currentStart = idx
+                }
+                idx += charCount
+            }
+            if (currentEmoji != null && currentStart < text.length) {
+                segments.add(EmojiSpanSegment(currentStart, text.length, currentEmoji))
+            }
+            return segments
+        }
+
+        private fun isEmojiCodePoint(cp: Int): Boolean {
+            return cp in 0x1F000..0x1FAFF ||
+                cp in 0x2600..0x27BF ||
+                cp in 0x2300..0x23FF ||
+                cp in 0x2B00..0x2BFF ||
+                cp in 0x1F1E6..0x1F1FF ||
+                cp == 0x00A9 || cp == 0x00AE || cp == 0x203C || cp == 0x2049 ||
+                cp == 0x2122 || cp == 0x2139 || cp in 0x2194..0x21AA ||
+                cp in 0x25AA..0x25FE || cp in 0x2934..0x2935 || cp in 0x3030..0x3299
+        }
     }
 }

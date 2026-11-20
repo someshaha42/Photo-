@@ -26,8 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.SentimentSatisfied
-import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -74,13 +73,13 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private val PRESET_SWATCHES = listOf(
-    0xFF2D7FF9, // Blue
-    0xFFFF4D4F, // Red
-    0xFFFFB020, // Amber
-    0xFF22C55E, // Green
-    0xFF9333EA, // Purple
-    0xFFFFFFFF, // White
-    0xFF000000  // Black
+    0xFF2D7FF9,
+    0xFFFF4D4F,
+    0xFFFFB020,
+    0xFF22C55E,
+    0xFF9333EA,
+    0xFFFFFFFF,
+    0xFF000000
 )
 
 @Composable
@@ -104,36 +103,34 @@ fun BackgroundSettingsPanel(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Background Settings",
+                    text = "Background",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Icon(
-                    imageVector = Icons.Rounded.Tune,
-                    contentDescription = "Background Controls",
+                    imageVector = Icons.Rounded.Palette,
+                    contentDescription = "Background",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp)
                 )
             }
 
-            // 4 Tabs: Transparent, Blur, Colors, Image
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 BackgroundTab.entries.forEach { tab ->
                     val selected = background.activeTab == tab
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(10.dp))
                             .background(
                                 if (selected) MaterialTheme.colorScheme.surfaceContainerHigh
                                 else MaterialTheme.colorScheme.surfaceVariant
@@ -141,7 +138,7 @@ fun BackgroundSettingsPanel(
                             .border(
                                 width = if (selected) 1.5.dp else 1.dp,
                                 color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(10.dp)
                             )
                             .clickable {
                                 onUpdateBackground { it.copy(activeTab = tab) }
@@ -152,7 +149,7 @@ fun BackgroundSettingsPanel(
                     ) {
                         Text(
                             text = tab.title,
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.labelMedium,
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis,
@@ -163,7 +160,6 @@ fun BackgroundSettingsPanel(
                 }
             }
 
-            // Tab Content
             when (background.activeTab) {
                 BackgroundTab.TRANSPARENT -> {
                     TransparentBackgroundTab(
@@ -202,7 +198,6 @@ fun BackgroundSettingsPanel(
                 }
                 BackgroundTab.IMAGE -> {
                     ImageBackgroundTab(
-                        hasImage = background.backgroundImageUri != null,
                         bgImageBitmap = selectedBgImageBitmap,
                         backgroundOpacity = background.backgroundImageOpacity,
                         onPickImage = onPickBackgroundImage,
@@ -215,7 +210,6 @@ fun BackgroundSettingsPanel(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
 
-            // Shared Blend Mode Section
             Text(
                 text = "Blend Mode",
                 style = MaterialTheme.typography.titleMedium,
@@ -263,12 +257,6 @@ fun BackgroundSettingsPanel(
                     }
                 }
             }
-
-            Text(
-                text = "Selected Blend Mode: ${background.blendMode.label}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -284,17 +272,16 @@ private fun TransparentBackgroundTab(
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(110.dp)
-                .clip(RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center
+                .height(80.dp)
+                .clip(RoundedCornerShape(12.dp))
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val cell = 14.dp.toPx()
+                val cell = 12.dp.toPx()
                 val cols = (size.width / cell).toInt() + 1
                 val rows = (size.height / cell).toInt() + 1
                 for (r in 0..rows) {
@@ -308,26 +295,13 @@ private fun TransparentBackgroundTab(
                     }
                 }
             }
-            Icon(
-                imageVector = Icons.Rounded.SentimentSatisfied,
-                contentDescription = "Foreground subject preview",
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(48.dp)
-            )
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("Checkerboard Opacity", style = MaterialTheme.typography.bodyMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Grid Opacity", style = MaterialTheme.typography.bodyMedium)
             Text("${(checkerboardOpacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         }
-        Slider(
-            value = checkerboardOpacity,
-            onValueChange = onOpacityChange,
-            valueRange = 0.1f..1f
-        )
+        Slider(value = checkerboardOpacity, onValueChange = onOpacityChange, valueRange = 0.1f..1f)
     }
 }
 
@@ -350,7 +324,7 @@ private fun BlurBackgroundTab(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(115.dp)
+                .height(90.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF3E4552)),
             contentAlignment = Alignment.Center
@@ -358,51 +332,22 @@ private fun BlurBackgroundTab(
             if (blurredPreview != null) {
                 Image(
                     bitmap = blurredPreview.asImageBitmap(),
-                    contentDescription = "Blurred duplicate background",
+                    contentDescription = "Blurred background",
                     contentScale = ContentScale.Crop,
                     alpha = backgroundOpacity,
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Image,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp)
-                )
-                Text(
-                    text = "Blurred Duplicate Background",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color.White.copy(alpha = 0.85f)
-                ) {
-                    Text(
-                        text = "Original Foreground",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFF151922),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
-                }
-            }
         }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Blur Strength", style = MaterialTheme.typography.bodyMedium)
+            Text("Blur", style = MaterialTheme.typography.bodyMedium)
             Text("${(blurStrength * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         }
         Slider(value = blurStrength, onValueChange = onBlurStrengthChange)
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Background Opacity", style = MaterialTheme.typography.bodyMedium)
+            Text("Opacity", style = MaterialTheme.typography.bodyMedium)
             Text("${(backgroundOpacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         }
         Slider(value = backgroundOpacity, onValueChange = onBgOpacityChange)
@@ -431,31 +376,15 @@ private fun ColorsBackgroundTab(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Preview Box
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .height(44.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(activeColor)
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "Preview",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (hsv[2] > 0.6f && hsv[1] < 0.35f) Color.Black else Color.White
-            )
-        }
-
-        Text(
-            text = "Color Wheel",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
         )
 
-        // Interactive Color Wheel
         var wheelSize by remember { mutableStateOf(IntSize.Zero) }
         fun updateFromOffset(offset: Offset) {
             if (wheelSize.width == 0 || wheelSize.height == 0) return
@@ -470,17 +399,12 @@ private fun ColorsBackgroundTab(
             onColorChange(newColorInt.toLong() and 0xFFFFFFFFL)
         }
 
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Canvas(
                 modifier = Modifier
-                    .size(164.dp)
+                    .size(152.dp)
                     .onSizeChanged { wheelSize = it }
-                    .pointerInput(Unit) {
-                        detectTapGestures { offset -> updateFromOffset(offset) }
-                    }
+                    .pointerInput(Unit) { detectTapGestures { updateFromOffset(it) } }
                     .pointerInput(Unit) {
                         detectDragGestures { change, _ ->
                             change.consume()
@@ -492,10 +416,7 @@ private fun ColorsBackgroundTab(
                 val center = Offset(size.width / 2f, size.height / 2f)
                 drawCircle(
                     brush = Brush.sweepGradient(
-                        colors = listOf(
-                            Color.Red, Color.Yellow, Color.Green,
-                            Color.Cyan, Color.Blue, Color.Magenta, Color.Red
-                        ),
+                        colors = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red),
                         center = center
                     ),
                     radius = radius,
@@ -510,31 +431,16 @@ private fun ColorsBackgroundTab(
                     radius = radius,
                     center = center
                 )
-                // Selector handle
                 val rad = Math.toRadians(hsv[0].toDouble())
                 val dist = hsv[1].coerceIn(0f, 1f) * (radius - 10.dp.toPx())
                 val hx = center.x + (dist * cos(rad)).toFloat()
                 val hy = center.y + (dist * sin(rad)).toFloat()
-                drawCircle(
-                    color = Color(0xFF1A1F2A),
-                    radius = 16.dp.toPx(),
-                    center = Offset(hx, hy)
-                )
-                drawCircle(
-                    color = Color.White,
-                    radius = 16.dp.toPx(),
-                    center = Offset(hx, hy),
-                    style = Stroke(width = 2.dp.toPx())
-                )
-                drawCircle(
-                    color = Color(colorArgb.toInt()),
-                    radius = 6.dp.toPx(),
-                    center = Offset(hx, hy)
-                )
+                drawCircle(color = Color(0xFF1A1F2A), radius = 14.dp.toPx(), center = Offset(hx, hy))
+                drawCircle(color = Color.White, radius = 14.dp.toPx(), center = Offset(hx, hy), style = Stroke(width = 2.dp.toPx()))
+                drawCircle(color = Color(colorArgb.toInt()), radius = 6.dp.toPx(), center = Offset(hx, hy))
             }
         }
 
-        // Preset Swatches
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -544,7 +450,7 @@ private fun ColorsBackgroundTab(
                 val isSelected = (swatch and 0xFFFFFF) == (colorArgb and 0xFFFFFF)
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(Color(swatch.toInt()))
                         .border(
@@ -558,16 +464,14 @@ private fun ColorsBackgroundTab(
         }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Color Opacity", style = MaterialTheme.typography.bodyMedium)
+            Text("Opacity", style = MaterialTheme.typography.bodyMedium)
             Text("${(colorOpacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         }
         Slider(value = colorOpacity, onValueChange = onOpacityChange)
 
-        // Eyedropper
         Surface(
             shape = RoundedCornerShape(10.dp),
-            color = if (isEyedropperActive) StudioAzure.copy(alpha = 0.22f)
-            else MaterialTheme.colorScheme.surface,
+            color = if (isEyedropperActive) StudioAzure.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surface,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
@@ -579,16 +483,9 @@ private fun ColorsBackgroundTab(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Colorize,
-                    contentDescription = "Eyedropper",
-                    tint = StudioAzure
-                )
+                Icon(Icons.Rounded.Colorize, contentDescription = "Eyedropper", tint = StudioAzure)
                 Text(
-                    text = if (isEyedropperActive)
-                        "Eyedropper Active — Tap canvas to sample pixel"
-                    else
-                        "Eyedropper – Pick color from canvas",
+                    text = if (isEyedropperActive) "Eyedropper On" else "Eyedropper",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = if (isEyedropperActive) FontWeight.Bold else FontWeight.Normal
                 )
@@ -599,7 +496,6 @@ private fun ColorsBackgroundTab(
 
 @Composable
 private fun ImageBackgroundTab(
-    hasImage: Boolean,
     bgImageBitmap: Bitmap?,
     backgroundOpacity: Float,
     onPickImage: () -> Unit,
@@ -616,7 +512,7 @@ private fun ImageBackgroundTab(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(105.dp)
+                .height(95.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF2B313D)),
             contentAlignment = Alignment.Center
@@ -624,27 +520,18 @@ private fun ImageBackgroundTab(
             if (bgImageBitmap != null) {
                 Image(
                     bitmap = bgImageBitmap.asImageBitmap(),
-                    contentDescription = "Selected background image",
+                    contentDescription = "Background Image",
                     contentScale = ContentScale.Crop,
                     alpha = backgroundOpacity,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Rounded.AddPhotoAlternate,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(30.dp)
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Selected Background Image",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Rounded.AddPhotoAlternate,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp)
+                )
             }
         }
 
@@ -661,17 +548,11 @@ private fun ImageBackgroundTab(
         ) {
             Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Pick Image", fontWeight = FontWeight.Bold)
+            Text("Pick Photo", fontWeight = FontWeight.Bold)
         }
 
-        Text(
-            text = if (hasImage) "Selected: Custom Gallery Image" else "Selected: None",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Background Opacity", style = MaterialTheme.typography.bodyMedium)
+            Text("Opacity", style = MaterialTheme.typography.bodyMedium)
             Text("${(backgroundOpacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         }
         Slider(value = backgroundOpacity, onValueChange = onOpacityChange)

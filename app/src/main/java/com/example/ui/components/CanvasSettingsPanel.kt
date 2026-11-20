@@ -12,38 +12,49 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.CropSquare
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.model.CanvasAspectRatio
+import com.example.model.CanvasDimensions
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioEmerald
 
 @Composable
 fun CanvasSettingsPanel(
-    selectedRatio: CanvasAspectRatio,
-    autoImageDetectionEnabled: Boolean,
-    manualOverride: Boolean,
-    onSelectRatio: (CanvasAspectRatio) -> Unit,
-    onToggleAutoDetection: () -> Unit
+    canvas: CanvasDimensions,
+    onSelectSquare: () -> Unit,
+    onApplyCustom: (ratioInput: String, pixelInput: String, preferPixels: Boolean) -> Boolean
 ) {
+    var showCustomInputs by remember(canvas.isCustom) { mutableStateOf(canvas.isCustom) }
+    var ratioText by remember(canvas) { mutableStateOf(canvas.label) }
+    var pixelText by remember(canvas) { mutableStateOf(canvas.pixelLabel) }
+    var lastEditedPixels by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -53,7 +64,7 @@ fun CanvasSettingsPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -61,107 +72,16 @@ fun CanvasSettingsPanel(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Canvas Settings",
+                    text = "Canvas",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
-                )
-                Icon(
-                    imageVector = Icons.Rounded.OpenInFull,
-                    contentDescription = "Canvas Dimensions",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
-            Text(
-                text = "Aspect Ratio",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CanvasAspectRatio.entries.forEach { ratio ->
-                    val isSelected = ratio == selectedRatio
-                    val (boxW, boxH) = when (ratio) {
-                        CanvasAspectRatio.RATIO_1_1 -> 30.dp to 30.dp
-                        CanvasAspectRatio.RATIO_16_9 -> 34.dp to 22.dp
-                        CanvasAspectRatio.RATIO_9_16 -> 20.dp to 32.dp
-                        CanvasAspectRatio.RATIO_4_5 -> 25.dp to 31.dp
-                    }
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(
-                                if (isSelected) StudioAzure.copy(alpha = 0.16f)
-                                else MaterialTheme.colorScheme.surfaceVariant
-                            )
-                            .border(
-                                width = if (isSelected) 2.dp else 1.dp,
-                                color = if (isSelected) StudioAzure else MaterialTheme.colorScheme.outline,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable { onSelectRatio(ratio) }
-                            .padding(vertical = 12.dp, horizontal = 6.dp)
-                            .testTag("aspect_ratio_${ratio.label}"),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier.height(34.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(width = boxW, height = boxH)
-                                    .border(
-                                        width = 2.dp,
-                                        color = if (isSelected) StudioAzure else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                            )
-                        }
-                        Text(
-                            text = ratio.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isSelected) Color.White.takeIf { false } ?: MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (isSelected) {
-                            Icon(
-                                imageVector = Icons.Rounded.CheckCircle,
-                                contentDescription = "Selected",
-                                tint = StudioAzure,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        } else {
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-                    }
-                }
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Selected Ratio",
-                    style = MaterialTheme.typography.titleMedium
                 )
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = StudioEmerald.copy(alpha = 0.16f)
                 ) {
                     Text(
-                        text = selectedRatio.label,
+                        text = "${canvas.label} • ${canvas.pixelLabel}",
                         style = MaterialTheme.typography.labelLarge,
                         color = StudioEmerald,
                         fontWeight = FontWeight.Bold,
@@ -170,46 +90,174 @@ fun CanvasSettingsPanel(
                 }
             }
 
+            // ONLY 2 Canvas Options: 1:1 (Default) and Custom
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClick = onToggleAutoDetection)
-                    .padding(vertical = 4.dp)
-                    .testTag("auto_image_detection_toggle"),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "Auto Image Detection",
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (autoImageDetectionEnabled && !manualOverride)
-                        StudioEmerald.copy(alpha = 0.16f)
-                    else
-                        StudioAzure.copy(alpha = 0.16f)
+                val squareSelected = !showCustomInputs && !canvas.isCustom
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (squareSelected) StudioAzure.copy(alpha = 0.16f)
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .border(
+                            width = if (squareSelected) 2.dp else 1.dp,
+                            color = if (squareSelected) StudioAzure else MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        .clickable {
+                            showCustomInputs = false
+                            errorMsg = null
+                            onSelectSquare()
+                        }
+                        .padding(vertical = 14.dp)
+                        .testTag("canvas_preset_1_1"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = when {
-                            !autoImageDetectionEnabled -> "Disabled"
-                            manualOverride -> "Manual Override"
-                            else -> "Enabled"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (autoImageDetectionEnabled && !manualOverride) StudioEmerald else StudioAzure,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    Icon(
+                        imageVector = Icons.Rounded.CropSquare,
+                        contentDescription = "1:1",
+                        tint = if (squareSelected) StudioAzure else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp)
                     )
+                    Text(
+                        text = "1:1",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (squareSelected) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = "Selected",
+                            tint = StudioAzure,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+
+                val customSelected = showCustomInputs || canvas.isCustom
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (customSelected) StudioAzure.copy(alpha = 0.16f)
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .border(
+                            width = if (customSelected) 2.dp else 1.dp,
+                            color = if (customSelected) StudioAzure else MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        .clickable {
+                            showCustomInputs = true
+                            errorMsg = null
+                        }
+                        .padding(vertical = 14.dp)
+                        .testTag("canvas_preset_custom"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Tune,
+                        contentDescription = "Custom",
+                        tint = if (customSelected) StudioAzure else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = "Custom",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (customSelected) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = "Selected",
+                            tint = StudioAzure,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
                 }
             }
 
-            Text(
-                text = "Imported image remains unchanged. Canvas adjusts independently.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (showCustomInputs) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = ratioText,
+                        onValueChange = { input ->
+                            ratioText = input
+                            lastEditedPixels = false
+                            errorMsg = null
+                            CanvasDimensions.fromRatioInput(input)?.let { computed ->
+                                pixelText = computed.pixelLabel
+                            }
+                        },
+                        label = { Text("Ratio") },
+                        placeholder = { Text("9:16") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_ratio_input")
+                    )
+
+                    OutlinedTextField(
+                        value = pixelText,
+                        onValueChange = { input ->
+                            pixelText = input
+                            lastEditedPixels = true
+                            errorMsg = null
+                            CanvasDimensions.fromPixelInput(input)?.let { computed ->
+                                ratioText = computed.label
+                            }
+                        },
+                        label = { Text("Pixels") },
+                        placeholder = { Text("1080x1920") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_pixel_input")
+                    )
+                }
+
+                if (errorMsg != null) {
+                    Text(
+                        text = errorMsg!!,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        val ok = onApplyCustom(ratioText, pixelText, lastEditedPixels)
+                        if (!ok) {
+                            errorMsg = "Use e.g. 9:16 or 1080x1920"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("apply_custom_canvas_button")
+                ) {
+                    Icon(Icons.Rounded.Check, contentDescription = "Apply")
+                    Spacer(Modifier.width(6.dp))
+                    Text("Apply", fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }

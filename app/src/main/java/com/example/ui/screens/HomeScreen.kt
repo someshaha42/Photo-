@@ -22,28 +22,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.FontDownload
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -69,27 +62,20 @@ import com.example.ui.theme.CheckerDark1
 import com.example.ui.theme.CheckerDark2
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
-import com.example.ui.theme.StudioPurple
-import com.example.ui.theme.StudioTeal
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     projects: List<ProjectEntity>,
     isDarkTheme: Boolean,
-    fontCount: Int,
     onNewProjectClick: () -> Unit,
     onOpenProject: (String) -> Unit,
     onDeleteProject: (String) -> Unit,
     onToggleTheme: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenFontLibrary: () -> Unit,
-    onOpenAiImage: () -> Unit,
-    onOpenAiChat: () -> Unit
+    onOpenSettings: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy • hh:mm a", Locale.getDefault()) }
 
@@ -104,49 +90,15 @@ fun HomeScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Button(
-                            onClick = onNewProjectClick,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("new_project_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Add,
-                                contentDescription = "Create New Project",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "New",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        Column {
-                            Text(
-                                text = "PixelForge",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Photo & Video Studio",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                    Text(
+                        text = "PixelForge",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -160,7 +112,7 @@ fun HomeScreen(
                         ) {
                             Icon(
                                 imageVector = if (isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                contentDescription = if (isDarkTheme) "Switch to White Mode" else "Switch to Dark Mode",
+                                contentDescription = if (isDarkTheme) "White Mode" else "Dark Mode",
                                 tint = if (isDarkTheme) StudioAmber else StudioAzure
                             )
                         }
@@ -192,61 +144,31 @@ fun HomeScreen(
                     .fillMaxSize()
                     .widthIn(max = 720.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Quick Tools Strip
+                // Large Prominent "+ New" Action Button at top
                 item {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    Button(
+                        onClick = onNewProjectClick,
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .testTag("new_project_button")
                     ) {
-                        item {
-                            FilledTonalButton(
-                                onClick = onOpenFontLibrary,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("home_font_library_button")
-                            ) {
-                                Icon(
-                                    Icons.Rounded.FontDownload,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = StudioTeal
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("Fonts ($fontCount)")
-                            }
-                        }
-                        item {
-                            FilledTonalButton(
-                                onClick = onOpenAiImage,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("home_ai_image_button")
-                            ) {
-                                Icon(
-                                    Icons.Rounded.AutoAwesome,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = StudioPurple
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("AI Image")
-                            }
-                        }
-                        item {
-                            FilledTonalButton(
-                                onClick = onOpenAiChat,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("home_ai_chat_button")
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Chat,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = StudioAzure
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("Gemini Chat")
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = "New Project",
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "New Project",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
@@ -269,7 +191,7 @@ fun HomeScreen(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = "History (Recent → Old)",
+                                text = "History",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -279,8 +201,8 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
-                                text = "${projects.size} saved",
-                                style = MaterialTheme.typography.labelMedium,
+                                text = "${projects.size}",
+                                style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
@@ -306,7 +228,7 @@ fun HomeScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(64.dp)
+                                        .size(56.dp)
                                         .clip(CircleShape)
                                         .background(StudioAzure.copy(alpha = 0.14f)),
                                     contentAlignment = Alignment.Center
@@ -315,18 +237,13 @@ fun HomeScreen(
                                         imageVector = Icons.Rounded.PhotoLibrary,
                                         contentDescription = null,
                                         tint = StudioAzure,
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(28.dp)
                                     )
                                 }
                                 Text(
-                                    text = "No saved projects yet",
+                                    text = "No projects yet",
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Tap + New at the top to launch a blank transparent RGBA8888 canvas for photos, videos, text & color emojis.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
@@ -378,7 +295,7 @@ private fun HistoryProjectCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Sequential Numbering Badge (1, 2, 3...) at the start
+            // Sequential Numbering Badge (1, 2, 3...)
             Box(
                 modifier = Modifier
                     .size(32.dp)
@@ -395,10 +312,10 @@ private fun HistoryProjectCard(
                 )
             }
 
-            // Direct Thumbnail (with non-exportable dark checkerboard backing)
+            // Direct Thumbnail
             Box(
                 modifier = Modifier
-                    .size(68.dp)
+                    .size(66.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
@@ -420,39 +337,25 @@ private fun HistoryProjectCard(
                 if (thumbBitmap != null) {
                     Image(
                         bitmap = thumbBitmap,
-                        contentDescription = "Thumbnail for ${project.title}",
+                        contentDescription = project.title,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
             }
 
-            // Details + Date/Time at the end
+            // Title + Ratio + Date/Time
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = project.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (project.hasVideo) {
-                        Icon(
-                            imageVector = Icons.Rounded.Movie,
-                            contentDescription = "Contains Video",
-                            tint = StudioTeal,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
+                Text(
+                    text = project.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Surface(
@@ -490,7 +393,7 @@ private fun HistoryProjectCard(
             ) {
                 Icon(
                     imageVector = Icons.Rounded.DeleteOutline,
-                    contentDescription = "Delete project",
+                    contentDescription = "Delete",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

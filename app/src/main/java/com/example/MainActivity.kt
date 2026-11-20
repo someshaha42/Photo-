@@ -5,9 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.OpenDocument
 import androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,8 +21,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.StudioViewModel
-import com.example.ui.components.AiChatAssistantSheet
-import com.example.ui.components.AiImageGeneratorSheet
 import com.example.ui.components.FontLibrarySheet
 import com.example.ui.components.SettingsDialog
 import com.example.ui.screens.EditorScreen
@@ -56,30 +54,18 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
     val fontImportProgress by viewModel.fontImportProgress.collectAsStateWithLifecycle()
     val fontImportHistory by viewModel.fontImportHistory.collectAsStateWithLifecycle()
     val diagnostics by viewModel.diagnostics.collectAsStateWithLifecycle()
-    val aiImageState by viewModel.aiImageState.collectAsStateWithLifecycle()
-    val chatMessages by viewModel.chatMessages.collectAsStateWithLifecycle()
-    val isChatSending by viewModel.isChatSending.collectAsStateWithLifecycle()
 
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showFontLibrarySheet by remember { mutableStateOf(false) }
-    var showAiImageSheet by remember { mutableStateOf(false) }
-    var showAiChatSheet by remember { mutableStateOf(false) }
 
-    // Direct Android Photo Picker for Images (no file manager!)
-    val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = PickVisualMedia()
-    ) { uri ->
-        if (uri != null) viewModel.addImageFromPicker(uri)
-    }
-
-    // Direct Android Photo Picker for Videos (no file manager!)
-    val videoPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = PickVisualMedia()
-    ) { uri ->
-        if (uri != null) viewModel.addVideoFromPicker(uri)
+    // Direct Android Photo Picker (single or multiple photos, zero permissions, no file manager)
+    val photosPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) viewModel.addImagesFromPicker(uris)
     }
 
     // Direct Android Photo Picker for Background Image
@@ -112,7 +98,6 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                 HomeScreen(
                     projects = projects,
                     isDarkTheme = settings.isDarkTheme,
-                    fontCount = fonts.size,
                     onNewProjectClick = {
                         viewModel.createNewProject()
                         navController.navigate(EditorRoute)
@@ -126,10 +111,7 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                     },
                     onDeleteProject = { viewModel.deleteHistoryProject(it) },
                     onToggleTheme = { viewModel.toggleTheme() },
-                    onOpenSettings = { showSettingsDialog = true },
-                    onOpenFontLibrary = { showFontLibrarySheet = true },
-                    onOpenAiImage = { showAiImageSheet = true },
-                    onOpenAiChat = { showAiChatSheet = true }
+                    onOpenSettings = { showSettingsDialog = true }
                 )
             }
 
@@ -139,14 +121,9 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                     onNavigateBack = {
                         navController.popBackStack()
                     },
-                    onPickImageDirect = {
-                        imagePickerLauncher.launch(
+                    onPickPhotosDirect = {
+                        photosPickerLauncher.launch(
                             PickVisualMediaRequest(PickVisualMedia.ImageOnly)
-                        )
-                    },
-                    onPickVideoDirect = {
-                        videoPickerLauncher.launch(
-                            PickVisualMediaRequest(PickVisualMedia.VideoOnly)
                         )
                     },
                     onPickBackgroundImageDirect = {
@@ -154,9 +131,7 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                             PickVisualMediaRequest(PickVisualMedia.ImageOnly)
                         )
                     },
-                    onOpenFontLibrary = { showFontLibrarySheet = true },
-                    onOpenAiImage = { showAiImageSheet = true },
-                    onOpenAiChat = { showAiChatSheet = true }
+                    onOpenFontLibrary = { showFontLibrarySheet = true }
                 )
             }
         }
@@ -171,7 +146,6 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
             )
         }
 
-        // Unified Shared Font Library Sheet connected across Home & Editor
         if (showFontLibrarySheet) {
             FontLibrarySheet(
                 fonts = fonts,
@@ -193,29 +167,6 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                 onClearImportStatus = { viewModel.fontRepository.clearImportProgressMessage() },
                 onRefreshDiagnostics = { viewModel.refreshDiagnostics() },
                 onDismiss = { showFontLibrarySheet = false }
-            )
-        }
-
-        if (showAiImageSheet) {
-            AiImageGeneratorSheet(
-                uiState = aiImageState,
-                onGenerate = { prompt, size -> viewModel.generateAiImage(prompt, size) },
-                onAddToCanvas = { bmp, label ->
-                    viewModel.addGeneratedAiBitmapToCanvas(bmp, label)
-                },
-                onDismiss = { showAiImageSheet = false }
-            )
-        }
-
-        if (showAiChatSheet) {
-            AiChatAssistantSheet(
-                messages = chatMessages,
-                isSending = isChatSending,
-                onSendMessage = { model, role, msg ->
-                    viewModel.sendChatMessage(model, role, msg)
-                },
-                onClearHistory = { viewModel.clearChatHistory() },
-                onDismiss = { showAiChatSheet = false }
             )
         }
     }

@@ -2,13 +2,16 @@ package com.example.ui.screens
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -16,46 +19,49 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Redo
+import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.Undo
-import androidx.compose.material.icons.rounded.AspectRatio
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Chat
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.FontDownload
-import androidx.compose.material.icons.rounded.GridOn
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Category
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Layers
-import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Title
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ZoomIn
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -63,9 +69,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,40 +83,51 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.model.ImageLayer
+import com.example.model.LayerShapeType
+import com.example.model.ShapeLayer
 import com.example.model.TextLayer
-import com.example.model.VideoLayer
-import com.example.ui.EditorBottomTab
 import com.example.ui.ExportFeedbackState
 import com.example.ui.StudioViewModel
+import com.example.ui.ToolDrawerTab
+import com.example.ui.components.AdjustToolPanel
 import com.example.ui.components.BackgroundSettingsPanel
 import com.example.ui.components.CanvasSettingsPanel
 import com.example.ui.components.EditorCanvasViewport
-import com.example.ui.components.LayersAndAiPanel
-import com.example.ui.components.MediaAndVideoPanel
-import com.example.ui.components.TextEditorPanel
+import com.example.ui.components.EmojiSettingsPanel
+import com.example.ui.components.HorizontalLayerStrip
+import com.example.ui.components.RotateTransformPanel
+import com.example.ui.components.ShapesToolPanel
+import com.example.ui.components.TextToolPanel
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
-import com.example.ui.theme.StudioPurple
 import com.example.ui.theme.StudioTeal
-import com.example.video.VideoExportState
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+private enum class ThreeDotSheetSection(val title: String) {
+    NONE(""),
+    CANVAS("Canvas"),
+    BACKGROUND("Background"),
+    EMOJI("Emoji")
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
     viewModel: StudioViewModel,
     onNavigateBack: () -> Unit,
-    onPickImageDirect: () -> Unit,
-    onPickVideoDirect: () -> Unit,
+    onPickPhotosDirect: () -> Unit,
     onPickBackgroundImageDirect: () -> Unit,
-    onOpenFontLibrary: () -> Unit,
-    onOpenAiImage: () -> Unit,
-    onOpenAiChat: () -> Unit
+    onOpenFontLibrary: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -117,25 +136,51 @@ fun EditorScreen(
     val document by viewModel.document.collectAsStateWithLifecycle()
     val imageBitmaps by viewModel.imageBitmaps.collectAsStateWithLifecycle()
     val blurredPreview by viewModel.blurredBgPreview.collectAsStateWithLifecycle()
-    val activeBottomTab by viewModel.activeBottomTab.collectAsStateWithLifecycle()
+    val activeToolDrawer by viewModel.activeToolDrawer.collectAsStateWithLifecycle()
+    val showLayersStrip by viewModel.showLayersStrip.collectAsStateWithLifecycle()
+    val isZoomMode by viewModel.isZoomMode.collectAsStateWithLifecycle()
     val canvasZoom by viewModel.canvasZoom.collectAsStateWithLifecycle()
-    val showGrid by viewModel.showGrid.collectAsStateWithLifecycle()
+    val canvasPan by viewModel.canvasPan.collectAsStateWithLifecycle()
     val isEyedropperActive by viewModel.isEyedropperActive.collectAsStateWithLifecycle()
     val canUndo by viewModel.canUndo.collectAsStateWithLifecycle()
     val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
     val exportFeedback by viewModel.exportFeedback.collectAsStateWithLifecycle()
-    val videoExportState by viewModel.videoExportState.collectAsStateWithLifecycle()
     val fonts by viewModel.fonts.collectAsStateWithLifecycle()
+    val fontsRecentToOld by viewModel.fontsRecentToOld.collectAsStateWithLifecycle()
     val selectedFontId by viewModel.selectedFontId.collectAsStateWithLifecycle()
 
-    var showZoomMenu by remember { mutableStateOf(false) }
+    var showAddMenu by remember { mutableStateOf(false) }
+    var showThreeDotMenu by remember { mutableStateOf(false) }
+    var activeThreeDotSection by remember { mutableStateOf(ThreeDotSheetSection.NONE) }
     var showExportDialog by remember { mutableStateOf(false) }
-    var isVideoPlaying by remember { mutableStateOf(true) }
 
+    // Multi-stage Android Back behavior: never quit app directly when panels/options are open
     BackHandler {
-        viewModel.saveProjectToHistory(silent = true)
-        onNavigateBack()
+        when {
+            showExportDialog -> {
+                viewModel.clearExportFeedback()
+                showExportDialog = false
+            }
+            activeThreeDotSection != ThreeDotSheetSection.NONE -> {
+                activeThreeDotSection = ThreeDotSheetSection.NONE
+            }
+            showThreeDotMenu -> showThreeDotMenu = false
+            showAddMenu -> showAddMenu = false
+            activeToolDrawer != ToolDrawerTab.NONE -> {
+                viewModel.closeToolDrawer()
+            }
+            isZoomMode -> {
+                viewModel.setZoomMode(false)
+            }
+            document.selectedLayerId != null -> {
+                viewModel.selectLayer(null)
+            }
+            else -> {
+                viewModel.saveProjectToHistory(silent = true)
+                onNavigateBack()
+            }
+        }
     }
 
     LaunchedEffect(statusBanner) {
@@ -146,349 +191,552 @@ fun EditorScreen(
         }
     }
 
+    LaunchedEffect(exportFeedback) {
+        val fb = exportFeedback
+        if (fb is ExportFeedbackState.Success && fb.shareImmediately) {
+            val shareUri = viewModel.mediaManager.getShareUri(fb.file)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, shareUri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(shareIntent, "Share"))
+            viewModel.clearExportFeedback()
+        }
+    }
+
     val selectedLayer = document.layers.firstOrNull { it.id == document.selectedLayerId }
     val selectedTextLayer = selectedLayer as? TextLayer
-    val selectedVideoLayer = (selectedLayer as? VideoLayer)
-        ?: document.layers.filterIsInstance<VideoLayer>().firstOrNull()
+    val selectedImageLayer = (selectedLayer as? ImageLayer)
+        ?: document.layers.filterIsInstance<ImageLayer>().lastOrNull()
+    val selectedShapeLayer = selectedLayer as? ShapeLayer
     val activeFont = fonts.firstOrNull { it.id == (selectedTextLayer?.fontId ?: selectedFontId) }
 
     Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            // PixelLab-Inspired Dual Top Bar
             Surface(
                 color = StudioAzure,
-                contentColor = Color.White
+                contentColor = Color.White,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .statusBarsPadding()
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = {
-                                viewModel.saveProjectToHistory(silent = true)
-                                onNavigateBack()
-                            },
-                            modifier = Modifier.minimumInteractiveComponentSize()
-                        ) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Home")
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color.White.copy(alpha = 0.22f)
-                        ) {
-                            Text(
-                                text = "PixelForge",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    // Row 1: Add | Undo | Redo | Save | Share | 3-Dot Menu (⋮)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Box {
+                            TopActionItem(
+                                icon = Icons.Rounded.Add,
+                                label = "Add",
+                                tag = "top_add_button",
+                                onClick = { showAddMenu = true }
                             )
+                            DropdownMenu(
+                                expanded = showAddMenu,
+                                onDismissRequest = { showAddMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Photo") },
+                                    leadingIcon = { Icon(Icons.Rounded.PhotoLibrary, contentDescription = null) },
+                                    onClick = {
+                                        showAddMenu = false
+                                        onPickPhotosDirect()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Text") },
+                                    leadingIcon = { Icon(Icons.Rounded.TextFields, contentDescription = null) },
+                                    onClick = {
+                                        showAddMenu = false
+                                        viewModel.addTextLayer()
+                                        viewModel.openToolDrawer(ToolDrawerTab.TEXT)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Shapes") },
+                                    leadingIcon = { Icon(Icons.Rounded.Category, contentDescription = null) },
+                                    onClick = {
+                                        showAddMenu = false
+                                        viewModel.addShapeLayer(LayerShapeType.ROUNDED_RECT)
+                                        viewModel.openToolDrawer(ToolDrawerTab.SHAPES)
+                                    }
+                                )
+                            }
+                        }
+
+                        TopActionItem(
+                            icon = Icons.AutoMirrored.Rounded.Undo,
+                            label = "Undo",
+                            enabled = canUndo,
+                            tag = "undo_button",
+                            onClick = { viewModel.undo() }
+                        )
+                        TopActionItem(
+                            icon = Icons.AutoMirrored.Rounded.Redo,
+                            label = "Redo",
+                            enabled = canRedo,
+                            tag = "redo_button",
+                            onClick = { viewModel.redo() }
+                        )
+                        TopActionItem(
+                            icon = Icons.Rounded.Save,
+                            label = "Save",
+                            tag = "save_project_button",
+                            onClick = {
+                                showExportDialog = true
+                                viewModel.exportProjectPng(shareImmediately = false)
+                            }
+                        )
+                        TopActionItem(
+                            icon = Icons.Rounded.Share,
+                            label = "Share",
+                            tag = "share_project_button",
+                            onClick = {
+                                viewModel.exportProjectPng(shareImmediately = true)
+                            }
+                        )
+
+                        Box {
+                            TopActionItem(
+                                icon = Icons.Rounded.MoreVert,
+                                label = "Menu",
+                                tag = "three_dot_menu_button",
+                                onClick = { showThreeDotMenu = true }
+                            )
+                            DropdownMenu(
+                                expanded = showThreeDotMenu,
+                                onDismissRequest = { showThreeDotMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("1. Canvas") },
+                                    leadingIcon = { Icon(Icons.Rounded.AspectRatio, contentDescription = null) },
+                                    onClick = {
+                                        showThreeDotMenu = false
+                                        activeThreeDotSection = ThreeDotSheetSection.CANVAS
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("2. Background") },
+                                    leadingIcon = { Icon(Icons.Rounded.Palette, contentDescription = null) },
+                                    onClick = {
+                                        showThreeDotMenu = false
+                                        activeThreeDotSection = ThreeDotSheetSection.BACKGROUND
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("3. Emoji") },
+                                    leadingIcon = { Icon(Icons.Rounded.EmojiEmotions, contentDescription = null) },
+                                    onClick = {
+                                        showThreeDotMenu = false
+                                        activeThreeDotSection = ThreeDotSheetSection.EMOJI
+                                    }
+                                )
+                            }
                         }
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { viewModel.undo() },
-                            enabled = canUndo,
-                            modifier = Modifier.testTag("undo_button")
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.Undo,
-                                contentDescription = "Undo",
-                                tint = if (canUndo) Color.White else Color.White.copy(alpha = 0.35f)
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.redo() },
-                            enabled = canRedo,
-                            modifier = Modifier.testTag("redo_button")
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.Redo,
-                                contentDescription = "Redo",
-                                tint = if (canRedo) Color.White else Color.White.copy(alpha = 0.35f)
-                            )
-                        }
-                        Box {
-                            IconButton(
-                                onClick = { showZoomMenu = true },
-                                modifier = Modifier.testTag("zoom_button")
-                            ) {
-                                Icon(Icons.Rounded.ZoomIn, contentDescription = "Zoom (${(canvasZoom * 100).roundToInt()}%)")
-                            }
-                            DropdownMenu(
-                                expanded = showZoomMenu,
-                                onDismissRequest = { showZoomMenu = false }
-                            ) {
-                                listOf(1f, 2f, 4f, 8f).forEach { z ->
-                                    DropdownMenuItem(
-                                        text = { Text("Zoom ${(z * 100).roundToInt()}%") },
-                                        onClick = {
-                                            viewModel.setCanvasZoom(z)
-                                            showZoomMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                        IconButton(
-                            onClick = { viewModel.toggleGrid() },
-                            modifier = Modifier.testTag("grid_toggle_button")
-                        ) {
-                            Icon(
-                                Icons.Rounded.GridOn,
-                                contentDescription = "Toggle Grid",
-                                tint = if (showGrid) StudioAmber else Color.White
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.saveProjectToHistory(silent = false) },
-                            modifier = Modifier.testTag("save_project_button")
-                        ) {
-                            Icon(Icons.Rounded.Save, contentDescription = "Save to History")
-                        }
-                        IconButton(
-                            onClick = { showExportDialog = true },
-                            modifier = Modifier.testTag("export_button")
-                        ) {
-                            Icon(Icons.Rounded.Download, contentDescription = "Export")
-                        }
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.18f))
+
+                    // Row 2: Delete | Lock | Hide | Layers | Zoom
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        val hasSelection = selectedLayer != null
+                        TopActionItem(
+                            icon = Icons.Rounded.DeleteOutline,
+                            label = "Delete",
+                            enabled = hasSelection,
+                            tag = "top_delete_button",
+                            onClick = { selectedLayer?.let { viewModel.deleteLayer(it.id) } }
+                        )
+                        TopActionItem(
+                            icon = if (selectedLayer?.locked == true) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                            label = "Lock",
+                            enabled = hasSelection,
+                            highlighted = selectedLayer?.locked == true,
+                            highlightColor = StudioAmber,
+                            tag = "top_lock_button",
+                            onClick = { selectedLayer?.let { viewModel.toggleLayerLock(it.id) } }
+                        )
+                        TopActionItem(
+                            icon = if (selectedLayer?.visible == false) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            label = "Hide",
+                            enabled = hasSelection,
+                            highlighted = selectedLayer?.visible == false,
+                            highlightColor = StudioAmber,
+                            tag = "top_hide_button",
+                            onClick = { selectedLayer?.let { viewModel.toggleLayerVisibility(it.id) } }
+                        )
+                        TopActionItem(
+                            icon = Icons.Rounded.Layers,
+                            label = "Layers",
+                            highlighted = showLayersStrip,
+                            highlightColor = StudioAmber,
+                            tag = "top_layers_button",
+                            onClick = { viewModel.toggleLayersStrip() }
+                        )
+                        TopActionItem(
+                            icon = Icons.Rounded.ZoomIn,
+                            label = "Zoom",
+                            highlighted = isZoomMode,
+                            highlightColor = StudioAmber,
+                            tag = "top_zoom_button",
+                            onClick = { viewModel.toggleZoomMode() }
+                        )
                     }
                 }
             }
         },
         bottomBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 4.dp
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .navigationBarsPadding()
             ) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.navigationBarsPadding()
+                // Swipe-down Tool Drawer (appears cleanly BELOW fixed canvas, ABOVE bottom tool bar)
+                AnimatedVisibility(
+                    visible = activeToolDrawer != ToolDrawerTab.NONE,
+                    enter = expandVertically(),
+                    exit = shrinkVertically()
                 ) {
-                    val tabs = listOf(
-                        Triple(EditorBottomTab.CANVAS, Icons.Rounded.AspectRatio, "Canvas"),
-                        Triple(EditorBottomTab.TEXT, Icons.Rounded.Title, "Text"),
-                        Triple(EditorBottomTab.MEDIA, Icons.Rounded.PhotoLibrary, "Media"),
-                        Triple(EditorBottomTab.BACKGROUND, Icons.Rounded.Palette, "Background"),
-                        Triple(EditorBottomTab.LAYERS, Icons.Rounded.Layers, "Layers")
+                    val dragThresholdPx = with(LocalDensity.current) { 42.dp.toPx() }
+                    var dragSum by remember { mutableFloatStateOf(0f) }
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 6.dp,
+                        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("tool_drawer_container")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 265.dp)
+                        ) {
+                            // Drag handle to swipe down & dismiss
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .pointerInput(Unit) {
+                                        detectVerticalDragGestures(
+                                            onDragStart = { dragSum = 0f },
+                                            onVerticalDrag = { _, dragAmount ->
+                                                dragSum += dragAmount
+                                                if (dragSum > dragThresholdPx) {
+                                                    viewModel.closeToolDrawer()
+                                                    dragSum = 0f
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .clickable { viewModel.closeToolDrawer() }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = 40.dp, height = 4.dp)
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(MaterialTheme.colorScheme.outline)
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(bottom = 8.dp)
+                            ) {
+                                when (activeToolDrawer) {
+                                    ToolDrawerTab.TEXT -> {
+                                        TextToolPanel(
+                                            selectedTextLayer = selectedTextLayer,
+                                            activeFont = activeFont,
+                                            onTextChangeLive = { viewModel.updateSelectedTextTransient(it) },
+                                            onConfirmText = {
+                                                viewModel.saveProjectToHistory(silent = true)
+                                                viewModel.closeToolDrawer()
+                                            },
+                                            onDeleteOrCancelText = {
+                                                selectedTextLayer?.let { viewModel.deleteLayer(it.id) }
+                                                viewModel.closeToolDrawer()
+                                            },
+                                            onAddTextLayer = { viewModel.addTextLayer() },
+                                            onOpenFontLibrary = onOpenFontLibrary,
+                                            onUpdateTextLayer = { viewModel.updateSelectedTextLayer(it) }
+                                        )
+                                    }
+                                    ToolDrawerTab.ADJUST -> {
+                                        AdjustToolPanel(
+                                            selectedImageLayer = selectedImageLayer,
+                                            onUpdateAdjustments = { viewModel.updateSelectedImageAdjustments(it) },
+                                            onResetAdjustments = { viewModel.resetSelectedImageAdjustments() }
+                                        )
+                                    }
+                                    ToolDrawerTab.SHAPES -> {
+                                        ShapesToolPanel(
+                                            selectedShapeLayer = selectedShapeLayer,
+                                            onAddShape = { viewModel.addShapeLayer(it) },
+                                            onUpdateShape = { viewModel.updateSelectedShapeLayer(it) }
+                                        )
+                                    }
+                                    ToolDrawerTab.ROTATE -> {
+                                        RotateTransformPanel(
+                                            selectedLayer = selectedLayer,
+                                            onRotateBy = { viewModel.rotateSelectedLayerBy(it) },
+                                            onSetRotation = { viewModel.setSelectedLayerRotation(it) },
+                                            onSetScale = { viewModel.setSelectedLayerScale(it) },
+                                            onSetOpacity = { viewModel.setSelectedLayerOpacity(it) },
+                                            onMoveOrder = { dir ->
+                                                selectedLayer?.let { viewModel.moveLayerOrder(it.id, dir) }
+                                            },
+                                            onDuplicate = {
+                                                selectedLayer?.let { viewModel.duplicateLayer(it.id) }
+                                            }
+                                        )
+                                    }
+                                    ToolDrawerTab.NONE -> Unit
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Horizontal Layer Thumbnail Strip (right above bottom bar)
+                AnimatedVisibility(
+                    visible = showLayersStrip,
+                    enter = expandVertically(),
+                    exit = shrinkVertically()
+                ) {
+                    HorizontalLayerStrip(
+                        layers = document.layers,
+                        selectedLayerId = document.selectedLayerId,
+                        imageBitmaps = imageBitmaps,
+                        onSelectLayer = { viewModel.selectLayer(it) }
                     )
-                    tabs.forEach { (tab, icon, label) ->
-                        NavigationBarItem(
-                            selected = activeBottomTab == tab,
-                            onClick = { viewModel.setBottomTab(tab) },
-                            icon = { Icon(icon, contentDescription = label) },
-                            label = { Text(label, maxLines = 1) },
-                            modifier = Modifier.testTag("editor_tab_${tab.name.lowercase()}")
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+
+                // Single-Row Horizontal Scrollable Bottom Tool Bar: Photo | Text | Adjust | Shapes | Rotate
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BottomToolItem(
+                            icon = Icons.Rounded.Image,
+                            label = "Photo",
+                            selected = false,
+                            tag = "bottom_tool_photo",
+                            onClick = onPickPhotosDirect
+                        )
+                        BottomToolItem(
+                            icon = Icons.Rounded.Title,
+                            label = "Text",
+                            selected = activeToolDrawer == ToolDrawerTab.TEXT,
+                            tag = "bottom_tool_text",
+                            onClick = {
+                                if (activeToolDrawer == ToolDrawerTab.TEXT) {
+                                    viewModel.closeToolDrawer()
+                                } else {
+                                    viewModel.ensureTextLayerAndOpenDrawer()
+                                }
+                            }
+                        )
+                        BottomToolItem(
+                            icon = Icons.Rounded.Tune,
+                            label = "Adjust",
+                            selected = activeToolDrawer == ToolDrawerTab.ADJUST,
+                            tag = "bottom_tool_adjust",
+                            onClick = {
+                                viewModel.ensureImageLayerSelectedForAdjust()
+                                viewModel.openToolDrawer(ToolDrawerTab.ADJUST)
+                            }
+                        )
+                        BottomToolItem(
+                            icon = Icons.Rounded.Category,
+                            label = "Shapes",
+                            selected = activeToolDrawer == ToolDrawerTab.SHAPES,
+                            tag = "bottom_tool_shapes",
+                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
+                        )
+                        BottomToolItem(
+                            icon = Icons.AutoMirrored.Rounded.RotateRight,
+                            label = "Rotate",
+                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
+                            tag = "bottom_tool_rotate",
+                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
                         )
                     }
                 }
             }
         }
     ) { innerPadding ->
-        Column(
+        // Fixed Middle Canvas Viewport
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
         ) {
-            // 1. Live Editing Canvas Area
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .background(MaterialTheme.colorScheme.background),
-                contentAlignment = Alignment.Center
-            ) {
-                EditorCanvasViewport(
-                    document = document,
-                    imageBitmaps = imageBitmaps,
-                    blurredPreview = blurredPreview,
-                    fontRenderEngine = viewModel.fontRenderEngine,
-                    canvasZoom = canvasZoom,
-                    showGrid = showGrid,
-                    isEyedropperActive = isEyedropperActive,
-                    isVideoPlaying = isVideoPlaying,
-                    onSelectLayer = { viewModel.selectLayer(it) },
-                    onTransformLayer = { id, dx, dy, sc, rot ->
-                        viewModel.transformLayerTransient(id, dx, dy, sc, rot)
-                    },
-                    onEyedropperTap = { nx, ny ->
-                        scope.launch {
-                            val bmp = viewModel.mediaManager.renderProjectToBitmap(
-                                document = document,
-                                fontRenderEngine = viewModel.fontRenderEngine,
-                                targetWidth = 360,
-                                targetHeight = (360 / document.aspectRatio.ratioFloat).roundToInt().coerceAtLeast(180)
-                            )
-                            val px = (nx * (bmp.width - 1)).roundToInt().coerceIn(0, bmp.width - 1)
-                            val py = (ny * (bmp.height - 1)).roundToInt().coerceIn(0, bmp.height - 1)
-                            val sampled = bmp.getPixel(px, py)
-                            bmp.recycle()
-                            if (android.graphics.Color.alpha(sampled) > 0) {
-                                viewModel.updateBackground { bg ->
-                                    bg.copy(colorArgb = sampled.toLong() and 0xFFFFFFFFL)
-                                }
-                            }
-                            viewModel.setEyedropperActive(false)
-                        }
-                    }
-                )
-
-                // Zoom Indicator Chip when zoomed > 100%
-                if (canvasZoom > 1.05f) {
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color.Black.copy(alpha = 0.65f),
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(10.dp)
-                            .clickable { viewModel.setCanvasZoom(1f) }
-                    ) {
-                        Text(
-                            text = "${(canvasZoom * 100).roundToInt()}% (Tap reset)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            EditorCanvasViewport(
+                document = document,
+                imageBitmaps = imageBitmaps,
+                blurredPreview = blurredPreview,
+                fontRenderEngine = viewModel.fontRenderEngine,
+                isZoomMode = isZoomMode,
+                canvasZoom = canvasZoom,
+                canvasPan = canvasPan,
+                isEyedropperActive = isEyedropperActive,
+                onCanvasViewportTransform = { zoomDelta, dx, dy ->
+                    viewModel.updateCanvasViewportTransform(zoomDelta, dx, dy)
+                },
+                onSelectLayer = { viewModel.selectLayer(it) },
+                onTransformLayer = { id, dx, dy, sc, rot ->
+                    viewModel.transformLayerTransient(id, dx, dy, sc, rot)
+                },
+                onEyedropperTap = { nx, ny ->
+                    scope.launch {
+                        val bmp = viewModel.mediaManager.renderProjectToBitmap(
+                            document = document,
+                            fontRenderEngine = viewModel.fontRenderEngine,
+                            targetWidth = 360,
+                            targetHeight = (360 / document.canvas.ratioFloat).roundToInt().coerceAtLeast(180)
                         )
+                        val px = (nx * (bmp.width - 1)).roundToInt().coerceIn(0, bmp.width - 1)
+                        val py = (ny * (bmp.height - 1)).roundToInt().coerceIn(0, bmp.height - 1)
+                        val sampled = bmp.getPixel(px, py)
+                        bmp.recycle()
+                        if (android.graphics.Color.alpha(sampled) > 0) {
+                            viewModel.updateBackground { bg ->
+                                bg.copy(colorArgb = sampled.toLong() and 0xFFFFFFFFL)
+                            }
+                        }
+                        viewModel.setEyedropperActive(false)
                     }
                 }
-            }
+            )
 
-            // 2. Direct Quick-Action Bar: Image | Video | Text | Font (+ AI Art / AI Chat)
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
+            if (canvasZoom != 1f || canvasPan.first != 0f || canvasPan.second != 0f) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.Black.copy(alpha = 0.65f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .clickable { viewModel.resetCanvasViewport() }
+                ) {
+                    Text(
+                        text = "${(canvasZoom * 100).roundToInt()}% ✕",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    // 3-Dot Settings Bottom Sheet (Canvas | Background | Emoji)
+    if (activeThreeDotSection != ThreeDotSheetSection.NONE) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { activeThreeDotSection = ThreeDotSheetSection.NONE },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    QuickActionToolButton(
-                        icon = Icons.Rounded.Image,
-                        label = "Image",
-                        tint = StudioAzure,
-                        tag = "quick_image_button",
-                        onClick = onPickImageDirect
-                    )
-                    QuickActionToolButton(
-                        icon = Icons.Rounded.Movie,
-                        label = "Video",
-                        tint = StudioTeal,
-                        tag = "quick_video_button",
-                        onClick = onPickVideoDirect
-                    )
-                    QuickActionToolButton(
-                        icon = Icons.Rounded.TextFields,
-                        label = "Text",
-                        tint = StudioAmber,
-                        tag = "quick_text_button",
-                        onClick = { viewModel.addTextLayer() }
-                    )
-                    QuickActionToolButton(
-                        icon = Icons.Rounded.FontDownload,
-                        label = "Font",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        tag = "quick_font_button",
-                        onClick = onOpenFontLibrary
-                    )
-                    QuickActionToolButton(
-                        icon = Icons.Rounded.AutoAwesome,
-                        label = "AI Image",
-                        tint = StudioPurple,
-                        tag = "quick_ai_image_button",
-                        onClick = onOpenAiImage
-                    )
-                    QuickActionToolButton(
-                        icon = Icons.Rounded.Chat,
-                        label = "AI Chat",
-                        tint = StudioAzure,
-                        tag = "quick_ai_chat_button",
-                        onClick = onOpenAiChat
-                    )
+                    ThreeDotSheetSection.entries
+                        .filter { it != ThreeDotSheetSection.NONE }
+                        .forEach { sec ->
+                            FilterChip(
+                                selected = activeThreeDotSection == sec,
+                                onClick = { activeThreeDotSection = sec },
+                                label = { Text(sec.title) }
+                            )
+                        }
                 }
-            }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-
-            // 3. Active Tool Panel (Compact & Scrollable)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 175.dp, max = 310.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                when (activeBottomTab) {
-                    EditorBottomTab.CANVAS -> {
+                when (activeThreeDotSection) {
+                    ThreeDotSheetSection.CANVAS -> {
                         CanvasSettingsPanel(
-                            selectedRatio = document.aspectRatio,
-                            autoImageDetectionEnabled = document.autoImageDetectionEnabled,
-                            manualOverride = document.manualAspectOverride,
-                            onSelectRatio = { viewModel.selectAspectRatioManually(it) },
-                            onToggleAutoDetection = { viewModel.toggleAutoImageDetection() }
+                            canvas = document.canvas,
+                            onSelectSquare = { viewModel.selectSquareCanvas() },
+                            onApplyCustom = { r, p, preferPx ->
+                                viewModel.applyCustomCanvas(r, p, preferPx)
+                            }
                         )
                     }
-                    EditorBottomTab.TEXT -> {
-                        TextEditorPanel(
-                            selectedTextLayer = selectedTextLayer,
-                            activeFont = activeFont,
-                            onAddTextLayer = { viewModel.addTextLayer(it) },
-                            onOpenFontLibrary = onOpenFontLibrary,
-                            onUpdateTextLayer = { viewModel.updateSelectedTextLayer(it) }
-                        )
-                    }
-                    EditorBottomTab.MEDIA -> {
-                        MediaAndVideoPanel(
-                            selectedVideoLayer = selectedVideoLayer,
-                            isVideoPlaying = isVideoPlaying,
-                            videoExportState = videoExportState,
-                            onPickImage = onPickImageDirect,
-                            onPickVideo = onPickVideoDirect,
-                            onToggleVideoPlay = { isVideoPlaying = !isVideoPlaying },
-                            onAddShape = { viewModel.addShapeLayer(it) },
-                            onUpdateVideoLayer = { viewModel.updateSelectedVideoLayer(it) },
-                            onExportVideo = { viewModel.exportActiveVideo() },
-                            onCancelVideoExport = { viewModel.videoEditorEngine.cancelExport() },
-                            onOpenAiImage = onOpenAiImage
-                        )
-                    }
-                    EditorBottomTab.BACKGROUND -> {
+                    ThreeDotSheetSection.BACKGROUND -> {
                         BackgroundSettingsPanel(
                             background = document.background,
                             blurredPreview = blurredPreview,
                             selectedBgImageBitmap = document.background.backgroundImageUri?.let { imageBitmaps[it] },
                             isEyedropperActive = isEyedropperActive,
                             onUpdateBackground = { viewModel.updateBackground(it) },
-                            onPickBackgroundImage = onPickBackgroundImageDirect,
-                            onToggleEyedropper = { viewModel.setEyedropperActive(!isEyedropperActive) }
+                            onPickBackgroundImage = {
+                                activeThreeDotSection = ThreeDotSheetSection.NONE
+                                onPickBackgroundImageDirect()
+                            },
+                            onToggleEyedropper = {
+                                viewModel.setEyedropperActive(!isEyedropperActive)
+                                activeThreeDotSection = ThreeDotSheetSection.NONE
+                            }
                         )
                     }
-                    EditorBottomTab.LAYERS -> {
-                        LayersAndAiPanel(
-                            layers = document.layers,
-                            selectedLayerId = document.selectedLayerId,
-                            onSelectLayer = { viewModel.selectLayer(it) },
-                            onToggleVisibility = { viewModel.toggleLayerVisibility(it) },
-                            onToggleLock = { viewModel.toggleLayerLock(it) },
-                            onMoveLayer = { id, dir -> viewModel.moveLayerOrder(id, dir) },
-                            onDuplicateLayer = { viewModel.duplicateLayer(it) },
-                            onDeleteLayer = { viewModel.deleteLayer(it) },
-                            onOpenAiChat = onOpenAiChat,
-                            onOpenAiImage = onOpenAiImage
+                    ThreeDotSheetSection.EMOJI -> {
+                        EmojiSettingsPanel(
+                            emojiSourceMode = document.emojiSourceMode,
+                            appEmojiFontId = document.appEmojiFontId,
+                            fontsRecentToOld = fontsRecentToOld,
+                            renderEngine = viewModel.fontRenderEngine,
+                            onSelectMode = { viewModel.setEmojiSourceMode(it) },
+                            onSelectAppEmojiFont = { viewModel.setAppEmojiFont(it) }
                         )
                     }
+                    ThreeDotSheetSection.NONE -> Unit
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
     }
@@ -499,103 +747,41 @@ fun EditorScreen(
                 viewModel.clearExportFeedback()
                 showExportDialog = false
             },
-            title = { Text("Export Project", fontWeight = FontWeight.Bold) },
+            title = { Text("Save PNG", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Canvas: ${document.aspectRatio.label} (${document.aspectRatio.exportWidth}×${document.aspectRatio.exportHeight}px RGBA8888)",
+                        text = "${document.canvas.label} (${document.canvas.exportWidth}×${document.canvas.exportHeight}px)",
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    Text(
-                        text = "Checkerboard preview is never exported. Transparent areas keep full 8-bit alpha in PNG.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
                     when (val fb = exportFeedback) {
                         ExportFeedbackState.Idle -> Unit
                         ExportFeedbackState.Exporting -> {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                                Text("Rendering high-res RGBA8888 PNG...")
+                                Text("Saving...")
                             }
                         }
                         is ExportFeedbackState.Success -> {
                             Text(fb.message, color = StudioTeal, fontWeight = FontWeight.SemiBold)
-                            OutlinedButton(
-                                onClick = {
-                                    val shareUri = viewModel.mediaManager.getShareUri(fb.file)
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "image/png"
-                                        putExtra(Intent.EXTRA_STREAM, shareUri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share PNG"))
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Rounded.Share, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Share Exported PNG")
-                            }
                         }
                         is ExportFeedbackState.Error -> {
                             Text(fb.message, color = MaterialTheme.colorScheme.error)
                         }
                     }
-
-                    when (val vfb = videoExportState) {
-                        VideoExportState.Idle -> Unit
-                        is VideoExportState.Exporting -> Text("Video exporting: ${vfb.progressPercent}%")
-                        is VideoExportState.Completed -> {
-                            Text("MP4 Video exported successfully!", color = StudioTeal, fontWeight = FontWeight.SemiBold)
-                            OutlinedButton(
-                                onClick = {
-                                    val shareUri = viewModel.mediaManager.getShareUri(vfb.outputFile)
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "video/mp4"
-                                        putExtra(Intent.EXTRA_STREAM, shareUri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Rounded.Share, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Share Exported MP4")
-                            }
-                        }
-                        is VideoExportState.Error -> Text(vfb.message, color = MaterialTheme.colorScheme.error)
-                    }
                 }
             },
             confirmButton = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
-                        onClick = { viewModel.exportProjectPng() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Export RGBA8888 PNG")
-                    }
-                    if (selectedVideoLayer != null) {
-                        OutlinedButton(
-                            onClick = { viewModel.exportActiveVideo() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Export MP4 Video")
-                        }
-                    }
-                }
-            },
-            dismissButton = {
                 TextButton(
                     onClick = {
                         viewModel.clearExportFeedback()
                         showExportDialog = false
                     }
                 ) {
-                    Text("Close")
+                    Text("OK")
                 }
             }
         )
@@ -603,29 +789,69 @@ fun EditorScreen(
 }
 
 @Composable
-private fun QuickActionToolButton(
+private fun TopActionItem(
     icon: ImageVector,
     label: String,
-    tint: Color,
+    enabled: Boolean = true,
+    highlighted: Boolean = false,
+    highlightColor: Color = StudioAmber,
     tag: String,
     onClick: () -> Unit
 ) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+    val tint = when {
+        !enabled -> Color.White.copy(alpha = 0.35f)
+        highlighted -> highlightColor
+        else -> Color.White
+    }
+    Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .minimumInteractiveComponentSize()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Clip
+        )
+    }
+}
+
+@Composable
+private fun BottomToolItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    tag: String,
+    onClick: () -> Unit
+) {
+    val tint = if (selected) StudioAzure else MaterialTheme.colorScheme.onSurface
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) StudioAzure.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClick = onClick)
             .minimumInteractiveComponentSize()
-            .testTag(tag)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(18.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-        }
+        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = tint,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1
+        )
     }
 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -115,10 +116,6 @@ fun FontLibrarySheet(
     var inspectedFont by remember { mutableStateOf<FontMetadata?>(null) }
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
 
-    val selectedFont = remember(fonts, selectedFontId) {
-        fonts.firstOrNull { it.id == selectedFontId } ?: fonts.firstOrNull()
-    }
-
     val filteredFonts = remember(fonts, searchQuery, activeFilter) {
         fonts.filter { font ->
             val matchesQuery = searchQuery.isBlank() ||
@@ -145,21 +142,21 @@ fun FontLibrarySheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .fillMaxHeight(0.9f)
+                .navigationBarsPadding()
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Close Font Library")
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Close")
                 }
                 Text(
-                    text = "Font Library",
+                    text = "Fonts (${filteredFonts.size})",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -171,16 +168,15 @@ fun FontLibrarySheet(
                 }
             }
 
-            // Search bar
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Search fonts...") },
+                placeholder = { Text("Search") },
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Clear search")
+                            Icon(Icons.Rounded.Close, contentDescription = "Clear")
                         }
                     }
                 },
@@ -191,7 +187,6 @@ fun FontLibrarySheet(
                     .testTag("font_search_input")
             )
 
-            // Filter Pills
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -207,7 +202,6 @@ fun FontLibrarySheet(
                 }
             }
 
-            // Import Progress / Result Banner
             if (importProgress.isImporting || importProgress.summaryMessage != null) {
                 Card(
                     shape = RoundedCornerShape(12.dp),
@@ -216,12 +210,12 @@ fun FontLibrarySheet(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
+                            .padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         if (importProgress.isImporting) {
                             Text(
-                                text = "Importing ${importProgress.currentFile} (${importProgress.processed}/${importProgress.total})",
+                                text = "${importProgress.currentFile} (${importProgress.processed}/${importProgress.total})",
                                 style = MaterialTheme.typography.labelLarge
                             )
                             LinearProgressIndicator(
@@ -245,88 +239,19 @@ fun FontLibrarySheet(
                                     modifier = Modifier.weight(1f)
                                 )
                                 TextButton(onClick = onClearImportStatus) {
-                                    Text("Dismiss")
+                                    Text("OK")
                                 }
                             }
-                            importProgress.results.take(4).forEach { item ->
-                                Text(
-                                    text = "• ${item.fileName}: ${item.message}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
                     }
                 }
             }
 
-            // Currently Selected Font Card
-            if (selectedFont != null) {
-                Card(
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "CURRENTLY SELECTED FONT",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = selectedFont.displayName,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = selectedFont.classification.badgeName,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = StudioAzure
-                            )
-                        }
-                        Text(
-                            text = "Selected typeface • Active font",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Available Fonts",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "${filteredFonts.size} fonts",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // Vertical Notebook-style Font List
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 8.dp)
             ) {
                 items(filteredFonts, key = { it.id }) { font ->
@@ -347,39 +272,43 @@ fun FontLibrarySheet(
                 }
             }
 
-            // Bottom Action Controls
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 14.dp),
+                    .padding(bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = onImportFontsClick,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("import_fonts_button"),
-                    shape = RoundedCornerShape(999.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color(0xFF10131A)
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Import Fonts", fontWeight = FontWeight.Bold)
-                }
+                    Button(
+                        onClick = onImportFontsClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("import_fonts_button"),
+                        shape = RoundedCornerShape(999.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StudioAzure,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Import Font", fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
 
-                OutlinedButton(
-                    onClick = onImportArchiveClick,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("import_font_archive_button"),
-                    shape = RoundedCornerShape(999.dp)
-                ) {
-                    Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Import Font Archive (ZIP, RAR, 7Z, TAR, XZ)")
+                    OutlinedButton(
+                        onClick = onImportArchiveClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("import_font_archive_button"),
+                        shape = RoundedCornerShape(999.dp)
+                    ) {
+                        Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("ZIP / RAR / 7Z", maxLines = 1)
+                    }
                 }
 
                 OutlinedButton(
@@ -394,7 +323,7 @@ fun FontLibrarySheet(
                 ) {
                     Icon(Icons.Rounded.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Font Information / Diagnostics")
+                    Text("Diagnostics")
                 }
             }
         }
@@ -454,22 +383,22 @@ private fun FontPreviewCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
             .border(
                 width = if (isSelected) 2.dp else 1.dp,
                 color = if (isSelected) StudioAzure else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(14.dp)
             )
             .clickable(onClick = onSelect)
             .testTag("font_card_${font.fileName}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -484,7 +413,7 @@ private fun FontPreviewCard(
                     if (isSelected) {
                         Icon(
                             imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = "Active Font",
+                            contentDescription = "Selected",
                             tint = StudioAzure,
                             modifier = Modifier.size(18.dp)
                         )
@@ -498,25 +427,39 @@ private fun FontPreviewCard(
                     )
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = badgeColor.copy(alpha = 0.16f)
-                ) {
-                    Text(
-                        text = badgeLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = badgeColor,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = badgeColor.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            text = badgeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = badgeColor,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                    IconButton(onClick = onInspect, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Rounded.Info, contentDescription = "Inspect", tint = StudioAzure, modifier = Modifier.size(18.dp))
+                    }
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) {
+                            Icon(
+                                imageVector = Icons.Rounded.DeleteOutline,
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                 }
             }
 
-            // Live Typeface Preview using the font's own native Typeface (preserving Color Emoji RGBA colors!)
             AndroidView(
                 factory = { ctx ->
                     TextView(ctx).apply {
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
                         setTextColor(textColorInt)
                     }
                 },
@@ -527,36 +470,6 @@ private fun FontPreviewCard(
                 },
                 modifier = Modifier.fillMaxWidth()
             )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = font.statusSummary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onInspect) {
-                        Text("Preview", color = StudioAzure)
-                    }
-                    if (onDelete != null) {
-                        IconButton(onClick = onDelete) {
-                            Icon(
-                                imageVector = Icons.Rounded.DeleteOutline,
-                                contentDescription = "Delete imported font",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -593,32 +506,20 @@ private fun FontDetailZoomDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Classification: ${font.classification.label}")
-                Text("Format: ${font.format.label} • Color Table: ${font.colorTableType.label}")
-                Text("Glyphs: ${font.glyphCount} • Unicode Codepoints: ${font.unicodeCoverageCount}")
+                Text("${font.format.label} • ${font.colorTableType.label}")
+                Text("Glyphs: ${font.glyphCount} • Unicode: ${font.unicodeCoverageCount}")
                 if (font.bitmapStrikePpem.isNotEmpty()) {
-                    Text("Bitmap Strikes: ${font.bitmapStrikePpem.joinToString(", ")} px")
+                    Text("Strikes: ${font.bitmapStrikePpem.joinToString(", ")} px")
                 }
-                Text(
-                    text = "Tables: ${font.tableTags.take(12).joinToString(", ")}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
                 if (font.compatibilityWarnings.isNotEmpty()) {
                     Card(colors = CardDefaults.cardColors(containerColor = StudioAmber.copy(alpha = 0.14f))) {
-                        Row(
-                            modifier = Modifier.padding(8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = StudioAmber)
                             Text(font.compatibilityWarnings.joinToString("\n"), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
-
                 HorizontalDivider()
-                Text("Zoom Quality Test (${zoomPercent}% • ${renderedBitmap.width}×${renderedBitmap.height}px RGBA8888)", fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(100, 200, 400, 800).forEach { pct ->
                         FilterChip(
@@ -631,14 +532,14 @@ private fun FontDetailZoomDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(110.dp)
+                        .height(100.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
                         bitmap = renderedBitmap.asImageBitmap(),
-                        contentDescription = "High resolution glyph zoom preview",
+                        contentDescription = "Glyph Zoom Preview",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.padding(8.dp)
                     )
@@ -662,34 +563,24 @@ private fun FontDiagnosticsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Font Engine Diagnostics", fontWeight = FontWeight.Bold) },
+        title = { Text("Font Diagnostics", fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Installed Fonts: ${diagnostics.totalFonts} (Bundled: ${diagnostics.bundledCount}, Imported: ${diagnostics.importedCount}, Color Emoji: ${diagnostics.colorEmojiCount})")
-                val totalLookups = diagnostics.cacheHitCount + diagnostics.cacheMissCount
-                val hitRate = if (totalLookups > 0) (diagnostics.cacheHitCount * 100 / totalLookups) else 0
-                Text("Glyph LRU Cache: ${diagnostics.cacheEntryCount} entries • ${diagnostics.cacheMemoryBytes / 1024} KB / ${diagnostics.cacheMaxBytes / (1024 * 1024)} MB")
-                Text("Cache Hit/Miss: ${diagnostics.cacheHitCount} / ${diagnostics.cacheMissCount} ($hitRate% hit rate)")
-                Text("Last Rasterization: ${"%.2f".format(diagnostics.lastRasterizationMs)} ms (Avg: ${"%.2f".format(diagnostics.avgRasterizationMs)} ms)")
-                Text("Last Resolution: requested=${diagnostics.lastRequestedPx}px, rendered=${diagnostics.lastRenderedPx}px")
-
+                Text("Fonts: ${diagnostics.totalFonts} (Bundled: ${diagnostics.bundledCount}, Imported: ${diagnostics.importedCount})")
+                Text("LRU Cache: ${diagnostics.cacheEntryCount} entries • ${diagnostics.cacheMemoryBytes / 1024} KB / ${diagnostics.cacheMaxBytes / (1024 * 1024)} MB")
+                Text("Hit/Miss: ${diagnostics.cacheHitCount} / ${diagnostics.cacheMissCount}")
+                Text("Last Raster: ${"%.2f".format(diagnostics.lastRasterizationMs)} ms")
                 HorizontalDivider()
-                Text("Registered Fonts & Tables", fontWeight = FontWeight.Bold)
                 diagnostics.activeFontDiagnostics.forEach { line ->
                     Text("• $line", style = MaterialTheme.typography.bodyMedium)
                 }
-
                 if (importHistory.isNotEmpty()) {
                     HorizontalDivider()
-                    Text("Import History", fontWeight = FontWeight.Bold)
-                    importHistory.take(8).forEach { entry ->
-                        Text(
-                            text = "• ${entry.sourceLabel}: +${entry.importedCount} imported, ${entry.duplicateCount} dup, ${entry.failedCount} failed",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
+                    importHistory.take(5).forEach { entry ->
+                        Text("• ${entry.sourceLabel}: +${entry.importedCount}", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
