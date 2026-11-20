@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">PixelForge</string>
+    <string name="new_project">New</string>
+    <string name="recent_projects_history">Project History</string>
+    <string name="empty_history_title">No projects yet</string>
+    <string name="empty_history_subtitle">Tap + New above to start editing photos, videos, text &amp; color emoji.</string>
+    <string name="settings_title">Settings</string>
+    <string name="setting_copy_media_title">Keep Local Copy of Media</string>
+    <string name="setting_copy_media_subtitle">Save a duplicate copy inside the app so your project stays safe even if you delete the original file from your gallery.</string>
+    <string name="setting_unlimited_layers_title">Unlimited Layers</string>
+    <string name="setting_unlimited_layers_subtitle">Add as many photo, video, text, and sticker layers as you want without a layer cap.</string>
+    <string name="canvas_settings">Canvas Settings</string>
+    <string name="background_settings">Background Settings</string>
+    <string name="font_library">Font Library</string>
+    <string name="ai_studio_notice">Firebase is not connected. Showing sample AI placeholder output — enable Firebase AI Logic to run live Gemini generation.</string>
+</resources>
