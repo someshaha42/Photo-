@@ -66,11 +66,15 @@ private class CustomEmojiFontSpan(
     }
 }
 
+data class MeasuredTextBounds(
+    val widthPx: Float,
+    val heightPx: Float
+)
+
 /**
  * High-resolution RGBA8888 font & Color Emoji rendering engine with intelligent resolution-aware LRU cache.
- * Supports dual-font rendering:
- * - SYSTEM emoji mode: letters use layer's chosen font; emojis render in native Android system emoji style.
- * - APPLICATION emoji mode: letters use layer's chosen font; emojis/symbols render using the selected app font.
+ * Preserves custom TTF/OTF Typeface identity even when Bold/Italic toggles are used (via isFakeBoldText & textSkewX),
+ * and accurately isolates emoji runs for System vs Application emoji source mode.
  */
 class FontRenderEngine(private val context: Context) {
 
@@ -128,23 +132,18 @@ class FontRenderEngine(private val context: Context) {
         }.getOrElse { Typeface.DEFAULT }
     }
 
-    fun drawTextLayerOnCanvas(
-        canvas: Canvas,
+    private fun createTextPaint(
         layer: TextLayer,
         effectiveFontSizePx: Float,
-        maxWidthPx: Float,
-        emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
-        appEmojiFontId: String? = null
-    ) {
-        val startNs = System.nanoTime()
-        val meta = metadataIndex[layer.fontId]
-        val typeface = getTypeface(layer.fontId)
-        val isColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI ||
-            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
-
+        isColorEmojiFont: Boolean
+    ): TextPaint {
+        val baseTypeface = getTypeface(layer.fontId)
         val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
-        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
-            this.typeface = applyStyle(typeface, layer.isBold, layer.isItalic)
+        return TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
+            // Keep exact custom Typeface untouched so Android never reverts single-weight TTFs back to Roboto!
+            this.typeface = baseTypeface
+            this.isFakeBoldText = layer.isBold
+            this.textSkewX = if (layer.isItalic) -0.22f else 0f
             this.textSize = effectiveFontSizePx.coerceAtLeast(8f)
             this.letterSpacing = layer.letterSpacing
             if (!isColorEmojiFont) {
@@ -157,13 +156,68 @@ class FontRenderEngine(private val context: Context) {
             }
             if (layer.shadowEnabled) {
                 setShadowLayer(
-                    layer.shadowRadius.coerceAtLeast(1f) * (effectiveFontSizePx / 36f),
-                    0f,
+                    layer.shadowRadius.coerceAtLeast(2f) * (effectiveFontSizePx / 36f),
                     2f * (effectiveFontSizePx / 36f),
+                    3f * (effectiveFontSizePx / 36f),
                     layer.shadowColorArgb.toInt()
                 )
             }
         }
+    }
+
+    fun measureTextLayerBounds(
+        layer: TextLayer,
+        effectiveFontSizePx: Float,
+        maxWidthPx: Float,
+        emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
+        appEmojiFontId: String? = null
+    ): MeasuredTextBounds {
+        val meta = metadataIndex[layer.fontId]
+        val isColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI ||
+            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
+        val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
+        val paint = createTextPaint(layer, effectiveFontSizePx, isColorEmojiFont)
+        val styled = buildStyledSpannable(
+            text = layer.text.ifEmpty { " " },
+            layerFontId = layer.fontId,
+            layerAlpha = layerAlpha,
+            emojiSourceMode = emojiSourceMode,
+            appEmojiFontId = appEmojiFontId,
+            forStrokePass = false
+        )
+        val layoutWidth = maxWidthPx.roundToInt().coerceAtLeast(64)
+        val alignment = when (layer.align) {
+            TextAlignOption.LEFT -> Layout.Alignment.ALIGN_NORMAL
+            TextAlignOption.CENTER -> Layout.Alignment.ALIGN_CENTER
+            TextAlignOption.RIGHT -> Layout.Alignment.ALIGN_OPPOSITE
+        }
+        val layout = StaticLayout.Builder
+            .obtain(styled, 0, styled.length, paint, layoutWidth)
+            .setAlignment(alignment)
+            .setIncludePad(true)
+            .build()
+        val lineMaxW = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 48f
+        val pad = effectiveFontSizePx * 0.45f
+        return MeasuredTextBounds(
+            widthPx = (lineMaxW + pad).coerceIn(48f, maxWidthPx),
+            heightPx = (layout.height + pad).coerceAtLeast(48f)
+        )
+    }
+
+    fun drawTextLayerOnCanvas(
+        canvas: Canvas,
+        layer: TextLayer,
+        effectiveFontSizePx: Float,
+        maxWidthPx: Float,
+        emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
+        appEmojiFontId: String? = null
+    ) {
+        val startNs = System.nanoTime()
+        val meta = metadataIndex[layer.fontId]
+        val isColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI ||
+            (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
+        val layerAlpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
+        val textPaint = createTextPaint(layer, effectiveFontSizePx, isColorEmojiFont)
 
         val styledText = buildStyledSpannable(
             text = layer.text,
@@ -267,15 +321,12 @@ class FontRenderEngine(private val context: Context) {
         val emojiTypeface = if (resolvedEmojiFontId != null) getTypeface(resolvedEmojiFontId) else Typeface.DEFAULT
         val emojiMeta = resolvedEmojiFontId?.let { metadataIndex[it] }
         val preserveColor = if (!useAppFont) {
-            // System emoji font is always color emoji
             true
         } else {
             emojiMeta?.classification == FontClassification.COLOR_EMOJI ||
                 (emojiMeta?.colorTableType != null && emojiMeta.colorTableType != ColorTableType.NONE)
         }
 
-        // If layer itself is already a dedicated color emoji font and emoji mode is APPLICATION on the same font,
-        // no extra override is needed. Otherwise, isolate emoji runs cleanly!
         for (seg in segments) {
             if (!seg.isEmoji) continue
             if (useAppFont && resolvedEmojiFontId == layerFontId) continue
@@ -332,10 +383,12 @@ class FontRenderEngine(private val context: Context) {
         val meta = metadataIndex[fontId]
         val isColorEmoji = meta?.classification == FontClassification.COLOR_EMOJI ||
             (meta?.colorTableType != null && meta.colorTableType != ColorTableType.NONE)
-        val typeface = applyStyle(getTypeface(fontId), isBold, isItalic)
+        val baseTypeface = getTypeface(fontId)
 
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
-            this.typeface = typeface
+            this.typeface = baseTypeface
+            this.isFakeBoldText = isBold
+            this.textSkewX = if (isItalic) -0.22f else 0f
             this.textSize = bucketPx.toFloat()
             this.color = if (isColorEmoji) android.graphics.Color.WHITE else colorArgb.toInt()
         }
@@ -401,16 +454,6 @@ class FontRenderEngine(private val context: Context) {
                 "${f.displayName}: ${f.classification.badgeName} (${f.colorTableType.label}, ${f.glyphCount} glyphs$strikes)"
             }
         )
-    }
-
-    private fun applyStyle(base: Typeface, isBold: Boolean, isItalic: Boolean): Typeface {
-        val style = when {
-            isBold && isItalic -> Typeface.BOLD_ITALIC
-            isBold -> Typeface.BOLD
-            isItalic -> Typeface.ITALIC
-            else -> Typeface.NORMAL
-        }
-        return if (style == Typeface.NORMAL) base else Typeface.create(base, style)
     }
 
     companion object {

@@ -461,6 +461,8 @@ private fun FontPreviewCard(
                     TextView(ctx).apply {
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
                         setTextColor(textColorInt)
+                        includeFontPadding = true
+                        setPadding(0, 8, 0, 8)
                     }
                 },
                 update = { tv ->

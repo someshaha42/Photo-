@@ -37,7 +37,6 @@ import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.MoreVert
@@ -137,7 +136,9 @@ fun EditorScreen(
     val imageBitmaps by viewModel.imageBitmaps.collectAsStateWithLifecycle()
     val blurredPreview by viewModel.blurredBgPreview.collectAsStateWithLifecycle()
     val activeToolDrawer by viewModel.activeToolDrawer.collectAsStateWithLifecycle()
-    val showLayersStrip by viewModel.showLayersStrip.collectAsStateWithLifecycle()
+    val isMultiSelectMode by viewModel.isMultiSelectMode.collectAsStateWithLifecycle()
+    val draftText by viewModel.draftText.collectAsStateWithLifecycle()
+    val draftTextStyle by viewModel.draftTextStyle.collectAsStateWithLifecycle()
     val isZoomMode by viewModel.isZoomMode.collectAsStateWithLifecycle()
     val canvasZoom by viewModel.canvasZoom.collectAsStateWithLifecycle()
     val canvasPan by viewModel.canvasPan.collectAsStateWithLifecycle()
@@ -205,7 +206,7 @@ fun EditorScreen(
         }
     }
 
-    val selectedLayer = document.layers.firstOrNull { it.id == document.selectedLayerId }
+    val selectedLayer = StudioViewModel.findLayerRecursive(document.layers, document.selectedLayerId)
     val selectedTextLayer = selectedLayer as? TextLayer
     val selectedImageLayer = (selectedLayer as? ImageLayer)
         ?: document.layers.filterIsInstance<ImageLayer>().lastOrNull()
@@ -259,8 +260,7 @@ fun EditorScreen(
                                     leadingIcon = { Icon(Icons.Rounded.TextFields, contentDescription = null) },
                                     onClick = {
                                         showAddMenu = false
-                                        viewModel.addTextLayer()
-                                        viewModel.openToolDrawer(ToolDrawerTab.TEXT)
+                                        viewModel.startNewTextDraft()
                                     }
                                 )
                                 DropdownMenuItem(
@@ -348,7 +348,7 @@ fun EditorScreen(
 
                     HorizontalDivider(color = Color.White.copy(alpha = 0.18f))
 
-                    // Row 2: Delete | Lock | Hide | Layers | Zoom
+                    // Row 2: Delete | Lock | Hide | Zoom (Layers button removed; strip stays visible when no tool tab is open)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -381,14 +381,6 @@ fun EditorScreen(
                             highlightColor = StudioAmber,
                             tag = "top_hide_button",
                             onClick = { selectedLayer?.let { viewModel.toggleLayerVisibility(it.id) } }
-                        )
-                        TopActionItem(
-                            icon = Icons.Rounded.Layers,
-                            label = "Layers",
-                            highlighted = showLayersStrip,
-                            highlightColor = StudioAmber,
-                            tag = "top_layers_button",
-                            onClick = { viewModel.toggleLayersStrip() }
                         )
                         TopActionItem(
                             icon = Icons.Rounded.ZoomIn,
@@ -469,17 +461,13 @@ fun EditorScreen(
                                     ToolDrawerTab.TEXT -> {
                                         TextToolPanel(
                                             selectedTextLayer = selectedTextLayer,
+                                            draftText = draftText,
+                                            draftStyle = draftTextStyle,
                                             activeFont = activeFont,
                                             onTextChangeLive = { viewModel.updateSelectedTextTransient(it) },
-                                            onConfirmText = {
-                                                viewModel.saveProjectToHistory(silent = true)
-                                                viewModel.closeToolDrawer()
-                                            },
-                                            onDeleteOrCancelText = {
-                                                selectedTextLayer?.let { viewModel.deleteLayer(it.id) }
-                                                viewModel.closeToolDrawer()
-                                            },
-                                            onAddTextLayer = { viewModel.addTextLayer() },
+                                            onConfirmText = { viewModel.confirmTextBox() },
+                                            onStartNewText = { viewModel.startNewTextDraft() },
+                                            onCycleTextCase = { viewModel.cycleTextCase() },
                                             onOpenFontLibrary = onOpenFontLibrary,
                                             onUpdateTextLayer = { viewModel.updateSelectedTextLayer(it) }
                                         )
@@ -520,17 +508,29 @@ fun EditorScreen(
                     }
                 }
 
-                // Horizontal Layer Thumbnail Strip (right above bottom bar)
+                // Always-visible Horizontal Layer Strip whenever NO bottom tool option drawer is open
                 AnimatedVisibility(
-                    visible = showLayersStrip,
+                    visible = activeToolDrawer == ToolDrawerTab.NONE,
                     enter = expandVertically(),
                     exit = shrinkVertically()
                 ) {
                     HorizontalLayerStrip(
                         layers = document.layers,
                         selectedLayerId = document.selectedLayerId,
+                        selectionOrder = document.effectiveSelectionOrder,
+                        isMultiSelectMode = isMultiSelectMode,
                         imageBitmaps = imageBitmaps,
-                        onSelectLayer = { viewModel.selectLayer(it) }
+                        onSelectLayer = { viewModel.selectLayer(it) },
+                        onToggleMultiSelectLayer = { viewModel.toggleMultiSelectLayer(it) },
+                        onToggleMultiSelectMode = { viewModel.toggleMultiSelectMode() },
+                        onMoveLayerOrder = { id, dir -> viewModel.moveLayerOrder(id, dir) },
+                        onArrangeToTop = { viewModel.arrangeSelectedToTop() },
+                        onArrangeSwapReverse = { viewModel.swapOrReverseSelectedArrangement() },
+                        onArrangeToBottom = { viewModel.arrangeSelectedToBottom() },
+                        onAlignLayers = { opt -> viewModel.alignSelectedLayers(opt) },
+                        onGroupAction = { viewModel.handleGroupAction() },
+                        onToggleGroupExpanded = { id -> viewModel.toggleGroupExpanded(id) },
+                        onUngroupLayer = { id -> viewModel.ungroupLayer(id) }
                     )
                 }
 
@@ -565,7 +565,7 @@ fun EditorScreen(
                                 if (activeToolDrawer == ToolDrawerTab.TEXT) {
                                     viewModel.closeToolDrawer()
                                 } else {
-                                    viewModel.ensureTextLayerAndOpenDrawer()
+                                    viewModel.openTextToolDrawer()
                                 }
                             }
                         )

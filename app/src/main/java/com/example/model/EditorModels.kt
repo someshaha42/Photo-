@@ -117,6 +117,63 @@ enum class EmojiSourceMode(val label: String) {
     APPLICATION("Application")
 }
 
+enum class HorizontalAlignOption(val label: String) {
+    LEFT("Align Left"),
+    CENTER("Align Center"),
+    RIGHT("Align Right")
+}
+
+enum class TextCaseMode {
+    LOWERCASE,
+    UPPERCASE,
+    TITLE_CASE;
+
+    fun next(): TextCaseMode = when (this) {
+        LOWERCASE -> UPPERCASE
+        UPPERCASE -> TITLE_CASE
+        TITLE_CASE -> LOWERCASE
+    }
+}
+
+object TextCaseTransformer {
+    fun apply(text: String, mode: TextCaseMode): String {
+        return when (mode) {
+            TextCaseMode.LOWERCASE -> text.lowercase()
+            TextCaseMode.UPPERCASE -> text.uppercase()
+            TextCaseMode.TITLE_CASE -> toTitleCaseWords(text)
+        }
+    }
+
+    private fun toTitleCaseWords(input: String): String {
+        if (input.isEmpty()) return input
+        val sb = StringBuilder(input.length)
+        var capitalizeNext = true
+        var i = 0
+        while (i < input.length) {
+            val cp = input.codePointAt(i)
+            val charCount = Character.charCount(cp)
+            if (Character.isLetter(cp)) {
+                val mapped = if (capitalizeNext) {
+                    Character.toTitleCase(cp)
+                } else {
+                    Character.toLowerCase(cp)
+                }
+                sb.appendCodePoint(mapped)
+                capitalizeNext = false
+            } else {
+                sb.appendCodePoint(cp)
+                if (Character.isWhitespace(cp) || cp == '-'.code || cp == '/'.code || cp == '_'.code) {
+                    capitalizeNext = true
+                } else if (!Character.isDigit(cp) && cp != '\''.code && cp != '\u2019'.code) {
+                    capitalizeNext = true
+                }
+            }
+            i += charCount
+        }
+        return sb.toString()
+    }
+}
+
 @Serializable
 data class ImageAdjustments(
     val exposure: Float = 0f,     // -1f..1f
@@ -333,6 +390,40 @@ data class ShapeLayer(
 }
 
 @Serializable
+@SerialName("group")
+data class GroupLayer(
+    override val id: String = UUID.randomUUID().toString(),
+    override val name: String = "Group",
+    val children: List<EditorLayer> = emptyList(),
+    val isExpanded: Boolean = false,
+    override val offsetXNorm: Float = 0f,
+    override val offsetYNorm: Float = 0f,
+    override val scale: Float = 1f,
+    override val rotationDeg: Float = 0f,
+    override val opacity: Float = 1f,
+    override val visible: Boolean = true,
+    override val locked: Boolean = false
+) : EditorLayer {
+    override fun withBaseTransform(
+        offsetXNorm: Float,
+        offsetYNorm: Float,
+        scale: Float,
+        rotationDeg: Float,
+        opacity: Float,
+        visible: Boolean,
+        locked: Boolean
+    ) = copy(
+        offsetXNorm = offsetXNorm,
+        offsetYNorm = offsetYNorm,
+        scale = scale,
+        rotationDeg = rotationDeg,
+        opacity = opacity,
+        visible = visible,
+        locked = locked
+    )
+}
+
+@Serializable
 data class ProjectDocument(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "Untitled Project",
@@ -340,6 +431,10 @@ data class ProjectDocument(
     val background: BackgroundConfig = BackgroundConfig(),
     val layers: List<EditorLayer> = emptyList(),
     val selectedLayerId: String? = null,
+    val selectionOrder: List<String> = emptyList(),
     val emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
     val appEmojiFontId: String? = null
-)
+) {
+    val effectiveSelectionOrder: List<String>
+        get() = if (selectionOrder.isNotEmpty()) selectionOrder else listOfNotNull(selectedLayerId)
+}

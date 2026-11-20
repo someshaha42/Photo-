@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -49,6 +50,8 @@ import com.example.data.MediaStorageManager
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
 import com.example.model.EditorBlendMode
+import com.example.model.EditorLayer
+import com.example.model.GroupLayer
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
@@ -58,6 +61,7 @@ import com.example.ui.theme.CheckerDark1
 import com.example.ui.theme.CheckerDark2
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
+import com.example.ui.theme.StudioEmerald
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -79,7 +83,9 @@ fun EditorCanvasViewport(
     modifier: Modifier = Modifier
 ) {
     val ratio = document.canvas.ratioFloat
-    val density = LocalDensity.current.density
+    val selectedSet = remember(document.selectionOrder, document.selectedLayerId) {
+        document.effectiveSelectionOrder.toSet()
+    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -200,200 +206,30 @@ fun EditorCanvasViewport(
                 }
             }
 
-            // 3. Layers Stack (Photos, Shapes, Text/Color Emojis)
+            // 3. Layers Stack (Photos, Shapes, Text/Color Emojis, Groups)
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val canvasWpx = with(LocalDensity.current) { maxWidth.toPx() }
                 val canvasHpx = with(LocalDensity.current) { maxHeight.toPx() }
                 val baseUnitPx = min(canvasWpx, canvasHpx)
 
                 document.layers.forEach { layer ->
-                    if (!layer.visible) return@forEach
-                    val isSelected = layer.id == document.selectedLayerId && !isEyedropperActive && !isZoomMode
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                translationX = layer.offsetXNorm * canvasWpx
-                                translationY = layer.offsetYNorm * canvasHpx
-                                rotationZ = layer.rotationDeg
-                                scaleX = layer.scale
-                                scaleY = layer.scale
-                                alpha = layer.opacity
-                            }
-                            .then(
-                                if (!isZoomMode) {
-                                    Modifier
-                                        .pointerInput(layer.id, isEyedropperActive) {
-                                            if (isEyedropperActive) return@pointerInput
-                                            detectTapGestures(onTap = { onSelectLayer(layer.id) })
-                                        }
-                                        .pointerInput(layer.id, layer.locked, isEyedropperActive, canvasWpx, canvasHpx) {
-                                            if (isEyedropperActive || layer.locked) return@pointerInput
-                                            detectTransformGestures { _, pan, zoom, rotation ->
-                                                onSelectLayer(layer.id)
-                                                onTransformLayer(
-                                                    layer.id,
-                                                    pan.x / canvasWpx.coerceAtLeast(1f),
-                                                    pan.y / canvasHpx.coerceAtLeast(1f),
-                                                    zoom,
-                                                    rotation
-                                                )
-                                            }
-                                        }
-                                } else Modifier
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        when (layer) {
-                            is ImageLayer -> {
-                                val bmp = imageBitmaps[layer.uriString]
-                                if (bmp != null) {
-                                    val imgRatio = bmp.width.toFloat() / bmp.height.coerceAtLeast(1)
-                                    val fitModifier = if (imgRatio >= 1f) {
-                                        Modifier.size(
-                                            width = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() },
-                                            height = with(LocalDensity.current) { (baseUnitPx * 0.85f / imgRatio).toDp() }
-                                        )
-                                    } else {
-                                        Modifier.size(
-                                            width = with(LocalDensity.current) { (baseUnitPx * 0.85f * imgRatio).toDp() },
-                                            height = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() }
-                                        )
-                                    }
-                                    val adjColorFilter = remember(layer.adjustments) {
-                                        if (layer.adjustments.isIdentity()) null
-                                        else {
-                                            val androidMatrix = MediaStorageManager.buildColorMatrix(layer.adjustments)
-                                            ColorFilter.colorMatrix(ColorMatrix(androidMatrix.array))
-                                        }
-                                    }
-                                    Box(
-                                        modifier = fitModifier
-                                            .then(
-                                                if (isSelected) Modifier.border(2.dp, StudioAzure, RoundedCornerShape(4.dp))
-                                                else Modifier
-                                            )
-                                    ) {
-                                        Image(
-                                            bitmap = bmp.asImageBitmap(),
-                                            contentDescription = layer.name,
-                                            contentScale = ContentScale.Fit,
-                                            colorFilter = adjColorFilter,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                        if (layer.adjustments.vignette > 0.01f) {
-                                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                                val vAlpha = layer.adjustments.vignette.coerceIn(0f, 1f) * 0.8f
-                                                drawRect(
-                                                    brush = Brush.radialGradient(
-                                                        colors = listOf(
-                                                            Color.Transparent,
-                                                            Color.Black.copy(alpha = vAlpha * 0.35f),
-                                                            Color.Black.copy(alpha = vAlpha)
-                                                        ),
-                                                        center = Offset(size.width / 2f, size.height / 2f),
-                                                        radius = size.maxDimension * 0.72f
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            is ShapeLayer -> {
-                                val shapePx = baseUnitPx * 0.34f
-                                val shapeDp = with(LocalDensity.current) { shapePx.toDp() }
-                                Canvas(
-                                    modifier = Modifier
-                                        .size(shapeDp)
-                                        .then(
-                                            if (isSelected) Modifier.border(1.5.dp, StudioAzure, RoundedCornerShape(4.dp))
-                                            else Modifier
-                                        )
-                                ) {
-                                    val fill = Color(layer.fillColorArgb.toInt())
-                                    val stroke = Color(layer.strokeColorArgb.toInt())
-                                    val strokeW = layer.strokeWidth.dp.toPx()
-                                    when (layer.shapeType) {
-                                        LayerShapeType.RECTANGLE -> {
-                                            drawRect(color = fill)
-                                            if (strokeW > 0f) drawRect(color = stroke, style = Stroke(strokeW))
-                                        }
-                                        LayerShapeType.ROUNDED_RECT -> {
-                                            val r = size.minDimension * 0.18f
-                                            drawRoundRect(color = fill, cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r))
-                                            if (strokeW > 0f) drawRoundRect(color = stroke, cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r), style = Stroke(strokeW))
-                                        }
-                                        LayerShapeType.CIRCLE -> {
-                                            drawCircle(color = fill)
-                                            if (strokeW > 0f) drawCircle(color = stroke, style = Stroke(strokeW))
-                                        }
-                                        LayerShapeType.STAR, LayerShapeType.BADGE -> {
-                                            val pts = if (layer.shapeType == LayerShapeType.STAR) 5 else 8
-                                            val inner = if (layer.shapeType == LayerShapeType.STAR) 0.45f else 0.78f
-                                            val path = Path()
-                                            val cx = size.width / 2f
-                                            val cy = size.height / 2f
-                                            val outerR = size.minDimension / 2f
-                                            val total = pts * 2
-                                            for (i in 0 until total) {
-                                                val rad = if (i % 2 == 0) outerR else outerR * inner
-                                                val ang = Math.toRadians((i * 360.0 / total) - 90.0)
-                                                val px = cx + (rad * cos(ang)).toFloat()
-                                                val py = cy + (rad * sin(ang)).toFloat()
-                                                if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
-                                            }
-                                            path.close()
-                                            drawPath(path, color = fill)
-                                            if (strokeW > 0f) drawPath(path, color = stroke, style = Stroke(strokeW))
-                                        }
-                                    }
-                                }
-                            }
-
-                            is TextLayer -> {
-                                Canvas(
-                                    modifier = Modifier
-                                        .size(
-                                            width = with(LocalDensity.current) { (canvasWpx * 0.9f).toDp() },
-                                            height = with(LocalDensity.current) { (baseUnitPx * 0.48f).toDp() }
-                                        )
-                                        .then(
-                                            if (isSelected) Modifier.border(1.5.dp, StudioAzure, RoundedCornerShape(6.dp))
-                                            else Modifier
-                                        )
-                                ) {
-                                    drawIntoCanvas { canvas ->
-                                        canvas.nativeCanvas.save()
-                                        canvas.nativeCanvas.translate(size.width / 2f, size.height / 2f)
-                                        fontRenderEngine.drawTextLayerOnCanvas(
-                                            canvas = canvas.nativeCanvas,
-                                            layer = layer,
-                                            effectiveFontSizePx = layer.fontSizeSp * density,
-                                            maxWidthPx = size.width,
-                                            emojiSourceMode = document.emojiSourceMode,
-                                            appEmojiFontId = document.appEmojiFontId
-                                        )
-                                        canvas.nativeCanvas.restore()
-                                    }
-                                }
-                            }
-                        }
-
-                        if (isSelected && layer.locked) {
-                            Icon(
-                                imageVector = Icons.Rounded.Lock,
-                                contentDescription = "Locked",
-                                tint = StudioAmber,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(4.dp)
-                                    .size(16.dp)
-                            )
-                        }
-                    }
+                    RenderCanvasLayerNode(
+                        layer = layer,
+                        document = document,
+                        selectedSet = selectedSet,
+                        primarySelectedId = document.selectedLayerId,
+                        parentGroupTargetId = null,
+                        parentLocked = false,
+                        canvasWpx = canvasWpx,
+                        canvasHpx = canvasHpx,
+                        baseUnitPx = baseUnitPx,
+                        imageBitmaps = imageBitmaps,
+                        fontRenderEngine = fontRenderEngine,
+                        isZoomMode = isZoomMode,
+                        isEyedropperActive = isEyedropperActive,
+                        onSelectLayer = onSelectLayer,
+                        onTransformLayer = onTransformLayer
+                    )
                 }
             }
 
@@ -414,6 +250,296 @@ fun EditorCanvasViewport(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RenderCanvasLayerNode(
+    layer: EditorLayer,
+    document: ProjectDocument,
+    selectedSet: Set<String>,
+    primarySelectedId: String?,
+    parentGroupTargetId: String?,
+    parentLocked: Boolean,
+    canvasWpx: Float,
+    canvasHpx: Float,
+    baseUnitPx: Float,
+    imageBitmaps: Map<String, Bitmap>,
+    fontRenderEngine: FontRenderEngine,
+    isZoomMode: Boolean,
+    isEyedropperActive: Boolean,
+    onSelectLayer: (String?) -> Unit,
+    onTransformLayer: (layerId: String, dxNorm: Float, dyNorm: Float, scale: Float, rotation: Float) -> Unit
+) {
+    if (!layer.visible) return
+    val density = LocalDensity.current.density
+    val interactiveTargetId = parentGroupTargetId ?: layer.id
+    val effectiveLocked = parentLocked || layer.locked
+    val isPrimarySelected = (interactiveTargetId == primarySelectedId) && !isEyedropperActive && !isZoomMode
+    val isMultiSelected = (interactiveTargetId in selectedSet) && !isEyedropperActive && !isZoomMode
+    val borderColor = when {
+        isPrimarySelected -> StudioAzure
+        isMultiSelected -> StudioEmerald
+        else -> null
+    }
+
+    val gestureModifier = if (!isZoomMode && !isEyedropperActive && parentGroupTargetId == null) {
+        if (layer is GroupLayer && layer.isExpanded) {
+            // When group is expanded, children inside handle their own independent tap/drag!
+            Modifier
+        } else {
+            Modifier
+                .pointerInput(interactiveTargetId, isEyedropperActive) {
+                    detectTapGestures(onTap = { onSelectLayer(interactiveTargetId) })
+                }
+                .pointerInput(interactiveTargetId, effectiveLocked, canvasWpx, canvasHpx) {
+                    if (effectiveLocked) return@pointerInput
+                    detectTransformGestures { _, pan, zoom, rotation ->
+                        onSelectLayer(interactiveTargetId)
+                        onTransformLayer(
+                            interactiveTargetId,
+                            pan.x / canvasWpx.coerceAtLeast(1f),
+                            pan.y / canvasHpx.coerceAtLeast(1f),
+                            zoom,
+                            rotation
+                        )
+                    }
+                }
+        }
+    } else if (!isZoomMode && !isEyedropperActive && parentGroupTargetId != null) {
+        // Inside collapsed group: forward gesture to the GroupLayer id
+        Modifier
+            .pointerInput(parentGroupTargetId, isEyedropperActive) {
+                detectTapGestures(onTap = { onSelectLayer(parentGroupTargetId) })
+            }
+            .pointerInput(parentGroupTargetId, effectiveLocked, canvasWpx, canvasHpx) {
+                if (effectiveLocked) return@pointerInput
+                detectTransformGestures { _, pan, zoom, rotation ->
+                    onSelectLayer(parentGroupTargetId)
+                    onTransformLayer(
+                        parentGroupTargetId,
+                        pan.x / canvasWpx.coerceAtLeast(1f),
+                        pan.y / canvasHpx.coerceAtLeast(1f),
+                        zoom,
+                        rotation
+                    )
+                }
+            }
+    } else {
+        Modifier
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                translationX = layer.offsetXNorm * canvasWpx
+                translationY = layer.offsetYNorm * canvasHpx
+                rotationZ = layer.rotationDeg
+                scaleX = layer.scale
+                scaleY = layer.scale
+                alpha = layer.opacity
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        when (layer) {
+            is GroupLayer -> {
+                val childForwardTarget = if (layer.isExpanded) null else layer.id
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    layer.children.forEach { child ->
+                        RenderCanvasLayerNode(
+                            layer = child,
+                            document = document,
+                            selectedSet = selectedSet,
+                            primarySelectedId = primarySelectedId,
+                            parentGroupTargetId = childForwardTarget,
+                            parentLocked = effectiveLocked,
+                            canvasWpx = canvasWpx,
+                            canvasHpx = canvasHpx,
+                            baseUnitPx = baseUnitPx,
+                            imageBitmaps = imageBitmaps,
+                            fontRenderEngine = fontRenderEngine,
+                            isZoomMode = isZoomMode,
+                            isEyedropperActive = isEyedropperActive,
+                            onSelectLayer = onSelectLayer,
+                            onTransformLayer = onTransformLayer
+                        )
+                    }
+                }
+            }
+
+            is ImageLayer -> {
+                val bmp = imageBitmaps[layer.uriString]
+                if (bmp != null) {
+                    val imgRatio = bmp.width.toFloat() / bmp.height.coerceAtLeast(1)
+                    val fitModifier = if (imgRatio >= 1f) {
+                        Modifier.size(
+                            width = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() },
+                            height = with(LocalDensity.current) { (baseUnitPx * 0.85f / imgRatio).toDp() }
+                        )
+                    } else {
+                        Modifier.size(
+                            width = with(LocalDensity.current) { (baseUnitPx * 0.85f * imgRatio).toDp() },
+                            height = with(LocalDensity.current) { (baseUnitPx * 0.85f).toDp() }
+                        )
+                    }
+                    val adjColorFilter = remember(layer.adjustments) {
+                        if (layer.adjustments.isIdentity()) null
+                        else {
+                            val androidMatrix = MediaStorageManager.buildColorMatrix(layer.adjustments)
+                            ColorFilter.colorMatrix(ColorMatrix(androidMatrix.array))
+                        }
+                    }
+                    Box(
+                        modifier = fitModifier
+                            .then(gestureModifier)
+                            .then(
+                                if (borderColor != null) Modifier.border(2.dp, borderColor, RoundedCornerShape(4.dp))
+                                else Modifier
+                            )
+                    ) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = layer.name,
+                            contentScale = ContentScale.Fit,
+                            colorFilter = adjColorFilter,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (layer.adjustments.vignette > 0.01f) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val vAlpha = layer.adjustments.vignette.coerceIn(0f, 1f) * 0.8f
+                                drawRect(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            Color.Black.copy(alpha = vAlpha * 0.35f),
+                                            Color.Black.copy(alpha = vAlpha)
+                                        ),
+                                        center = Offset(size.width / 2f, size.height / 2f),
+                                        radius = size.maxDimension * 0.72f
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            is ShapeLayer -> {
+                val shapePx = baseUnitPx * 0.34f
+                val shapeDp = with(LocalDensity.current) { shapePx.toDp() }
+                Canvas(
+                    modifier = Modifier
+                        .size(shapeDp)
+                        .then(gestureModifier)
+                        .then(
+                            if (borderColor != null) Modifier.border(1.8.dp, borderColor, RoundedCornerShape(4.dp))
+                            else Modifier
+                        )
+                ) {
+                    val fill = Color(layer.fillColorArgb.toInt())
+                    val stroke = Color(layer.strokeColorArgb.toInt())
+                    val strokeW = layer.strokeWidth.dp.toPx()
+                    when (layer.shapeType) {
+                        LayerShapeType.RECTANGLE -> {
+                            drawRect(color = fill)
+                            if (strokeW > 0f) drawRect(color = stroke, style = Stroke(strokeW))
+                        }
+                        LayerShapeType.ROUNDED_RECT -> {
+                            val r = size.minDimension * 0.18f
+                            drawRoundRect(color = fill, cornerRadius = CornerRadius(r, r))
+                            if (strokeW > 0f) drawRoundRect(color = stroke, cornerRadius = CornerRadius(r, r), style = Stroke(strokeW))
+                        }
+                        LayerShapeType.CIRCLE -> {
+                            drawCircle(color = fill)
+                            if (strokeW > 0f) drawCircle(color = stroke, style = Stroke(strokeW))
+                        }
+                        LayerShapeType.STAR, LayerShapeType.BADGE -> {
+                            val pts = if (layer.shapeType == LayerShapeType.STAR) 5 else 8
+                            val inner = if (layer.shapeType == LayerShapeType.STAR) 0.45f else 0.78f
+                            val path = Path()
+                            val cx = size.width / 2f
+                            val cy = size.height / 2f
+                            val outerR = size.minDimension / 2f
+                            val total = pts * 2
+                            for (i in 0 until total) {
+                                val rad = if (i % 2 == 0) outerR else outerR * inner
+                                val ang = Math.toRadians((i * 360.0 / total) - 90.0)
+                                val px = cx + (rad * cos(ang)).toFloat()
+                                val py = cy + (rad * sin(ang)).toFloat()
+                                if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                            }
+                            path.close()
+                            drawPath(path, color = fill)
+                            if (strokeW > 0f) drawPath(path, color = stroke, style = Stroke(strokeW))
+                        }
+                    }
+                }
+            }
+
+            is TextLayer -> {
+                val effPx = layer.fontSizeSp * density
+                val maxBoxW = (canvasWpx * 0.92f).coerceAtLeast(64f)
+                val measured = remember(
+                    layer.text,
+                    layer.fontId,
+                    layer.fontSizeSp,
+                    layer.isBold,
+                    layer.isItalic,
+                    layer.letterSpacing,
+                    layer.align,
+                    document.emojiSourceMode,
+                    document.appEmojiFontId,
+                    maxBoxW
+                ) {
+                    fontRenderEngine.measureTextLayerBounds(
+                        layer = layer,
+                        effectiveFontSizePx = effPx,
+                        maxWidthPx = maxBoxW,
+                        emojiSourceMode = document.emojiSourceMode,
+                        appEmojiFontId = document.appEmojiFontId
+                    )
+                }
+                val boxWdp = with(LocalDensity.current) { measured.widthPx.toDp() }
+                val boxHdp = with(LocalDensity.current) { measured.heightPx.toDp() }
+
+                Canvas(
+                    modifier = Modifier
+                        .size(width = boxWdp, height = boxHdp)
+                        .then(gestureModifier)
+                        .then(
+                            if (borderColor != null) Modifier.border(1.5.dp, borderColor, RoundedCornerShape(6.dp))
+                            else Modifier
+                        )
+                ) {
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.save()
+                        canvas.nativeCanvas.translate(size.width / 2f, size.height / 2f)
+                        fontRenderEngine.drawTextLayerOnCanvas(
+                            canvas = canvas.nativeCanvas,
+                            layer = layer,
+                            effectiveFontSizePx = effPx,
+                            maxWidthPx = (measured.widthPx + 4f).coerceAtMost(maxBoxW),
+                            emojiSourceMode = document.emojiSourceMode,
+                            appEmojiFontId = document.appEmojiFontId
+                        )
+                        canvas.nativeCanvas.restore()
+                    }
+                }
+            }
+        }
+
+        if (isPrimarySelected && layer.locked && layer !is GroupLayer) {
+            Icon(
+                imageVector = Icons.Rounded.Lock,
+                contentDescription = "Locked",
+                tint = StudioAmber,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(16.dp)
+            )
         }
     }
 }

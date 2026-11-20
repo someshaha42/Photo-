@@ -14,13 +14,19 @@ import com.example.model.BackgroundConfig
 import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
 import com.example.model.EmojiSourceMode
+import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageLayer
 import com.example.model.ProjectDocument
+import com.example.model.ShapeLayer
+import com.example.model.TextCaseMode
+import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
+import com.example.ui.StudioViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -49,11 +55,104 @@ class PixelForgeEngineTest {
             repo.initialize()
 
             val loaded = repo.fonts.value
-            assertTrue("Expected bundled fonts from assets/Fonts/", loaded.isNotEmpty())
+            assertTrue("Expected bundled fonts from assets/Fonts/", loaded.size >= 10)
             val roboto = loaded.firstOrNull { it.displayName.contains("Roboto", ignoreCase = true) }
             assertNotNull("Roboto must be bundled as mandatory default font", roboto)
             assertTrue(roboto!!.isDefaultMandatory)
             assertFalse("Mandatory default font must never be deletable", repo.deleteImportedFont(roboto.id))
+
+            val lobster = loaded.firstOrNull { it.displayName.contains("Lobster", ignoreCase = true) }
+            assertNotNull("Distinct display font Lobster must be loaded", lobster)
+            assertNotEquals(renderEngine.getTypeface(roboto.id), renderEngine.getTypeface(lobster!!.id))
+        }
+    }
+
+    @Test
+    fun textCaseTransformerAppliesLowerUpperAndTitleCaseAcrossLines() {
+        val raw = "hELLO wORLD!\nsecond line   here 😀"
+        assertEquals(
+            "hello world!\nsecond line   here 😀",
+            TextCaseTransformer.apply(raw, TextCaseMode.LOWERCASE)
+        )
+        assertEquals(
+            "HELLO WORLD!\nSECOND LINE   HERE 😀",
+            TextCaseTransformer.apply(raw, TextCaseMode.UPPERCASE)
+        )
+        assertEquals(
+            "Hello World!\nSecond Line   Here 😀",
+            TextCaseTransformer.apply(raw, TextCaseMode.TITLE_CASE)
+        )
+    }
+
+    @Test
+    fun arrangementBySelectionOrderPlacesFirstSelectedOnTopAndSupportsSwap() {
+        val a = TextLayer(id = "A", text = "First")
+        val b = ShapeLayer(id = "B")
+        val c = ImageLayer(id = "C", uriString = "/tmp/c.png", originalWidth = 100, originalHeight = 100)
+
+        // Stack bottom->top: [A, B, C]; select B 1st and A 2nd -> arrangeTop puts C below, then A, then B on very top!
+        val doc = ProjectDocument(
+            layers = listOf(a, b, c),
+            selectedLayerId = "A",
+            selectionOrder = listOf("B", "A")
+        )
+        val topArranged = StudioViewModel.applyArrangementToTop(doc)
+        assertEquals(listOf("C", "A", "B"), topArranged.layers.map { it.id })
+
+        val bottomArranged = StudioViewModel.applyArrangementToBottom(topArranged)
+        assertEquals(listOf("A", "B", "C"), bottomArranged.layers.map { it.id })
+
+        // Swap/Reverse reverses both selectionOrder and mutual stack positions!
+        val swapped = StudioViewModel.applySwapOrReverseArrangement(topArranged)
+        assertEquals(listOf("A", "B"), swapped.selectionOrder)
+        assertEquals(listOf("C", "B", "A"), swapped.layers.map { it.id })
+    }
+
+    @Test
+    fun nonDestructiveGroupExpandCollapsePreservesChildPropertiesAndRenders() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+
+            val tLayer = TextLayer(
+                id = "t1",
+                text = "Group Title",
+                fontId = repo.selectedFontId.value,
+                offsetXNorm = 0.12f,
+                offsetYNorm = -0.15f,
+                rotationDeg = 18f,
+                scale = 1.4f
+            )
+            val sLayer = ShapeLayer(id = "s1", offsetXNorm = -0.2f, offsetYNorm = 0.1f)
+            val doc = ProjectDocument(
+                layers = listOf(tLayer, sLayer),
+                selectedLayerId = "s1",
+                selectionOrder = listOf("t1", "s1")
+            )
+
+            val groupedDoc = StudioViewModel.createGroupFromSelection(doc, setOf("t1", "s1"))
+            assertEquals(1, groupedDoc.layers.size)
+            val group = groupedDoc.layers.first() as GroupLayer
+            assertFalse(group.isExpanded)
+            assertEquals(2, group.children.size)
+
+            // Child transforms remain untouched non-destructively
+            val preservedText = group.children.first() as TextLayer
+            assertEquals(0.12f, preservedText.offsetXNorm, 0.0001f)
+            assertEquals(-0.15f, preservedText.offsetYNorm, 0.0001f)
+            assertEquals(18f, preservedText.rotationDeg, 0.0001f)
+            assertEquals(1.4f, preservedText.scale, 0.0001f)
+
+            // Render bitmap with grouped layer succeeds cleanly
+            val mediaManager = MediaStorageManager(context)
+            val bmp = mediaManager.renderProjectToBitmap(groupedDoc, renderEngine, 240, 240)
+            assertEquals(240, bmp.width)
+            bmp.recycle()
+
+            // Ungroup restores independent layers
+            val ungrouped = StudioViewModel.ungroupInDocument(groupedDoc, group.id)
+            assertEquals(listOf("t1", "s1"), ungrouped.layers.map { it.id })
         }
     }
 

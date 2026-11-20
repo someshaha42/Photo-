@@ -23,6 +23,8 @@ import androidx.core.content.FileProvider
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
 import com.example.model.EditorBlendMode
+import com.example.model.EditorLayer
+import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
@@ -187,7 +189,7 @@ class MediaStorageManager(private val context: Context) {
             }
             BackgroundTab.BLUR -> {
                 val firstImageUri = bg.backgroundImageUri
-                    ?: document.layers.filterIsInstance<ImageLayer>().firstOrNull()?.uriString
+                    ?: findFirstImageUri(document.layers)
                 if (firstImageUri != null) {
                     decodeRgba8888Bitmap(firstImageUri, maxDimension = 1280)?.let { src ->
                         val blurred = createBlurredBitmap(src, bg.blurStrength)
@@ -224,63 +226,121 @@ class MediaStorageManager(private val context: Context) {
 
         for (layer in document.layers) {
             if (!layer.visible) continue
-            val cx = targetWidth * (0.5f + layer.offsetXNorm)
-            val cy = targetHeight * (0.5f + layer.offsetYNorm)
-            canvas.save()
-            canvas.translate(cx, cy)
-            canvas.rotate(layer.rotationDeg)
-            canvas.scale(layer.scale, layer.scale)
-
-            when (layer) {
-                is ImageLayer -> {
-                    decodeRgba8888Bitmap(layer.uriString, maxDimension = null)?.let { rawBmp ->
-                        val bmp = if (layer.adjustments.sharpness > 0.01f) {
-                            applySharpenBitmap(rawBmp, layer.adjustments.sharpness)
-                        } else {
-                            rawBmp
-                        }
-                        val fitScale = min(
-                            (targetWidth * 0.85f) / bmp.width.coerceAtLeast(1),
-                            (targetHeight * 0.85f) / bmp.height.coerceAtLeast(1)
-                        )
-                        val drawW = bmp.width * fitScale
-                        val drawH = bmp.height * fitScale
-                        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                            alpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
-                            if (!layer.adjustments.isIdentity()) {
-                                colorFilter = ColorMatrixColorFilter(buildColorMatrix(layer.adjustments))
-                            }
-                        }
-                        val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
-                        canvas.drawBitmap(bmp, null, dst, paint)
-
-                        if (layer.adjustments.vignette > 0.01f) {
-                            drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, layer.opacity)
-                        }
-
-                        if (bmp !== rawBmp) bmp.recycle()
-                        rawBmp.recycle()
-                    }
-                }
-                is ShapeLayer -> {
-                    drawShapeOnCanvas(canvas, layer, targetWidth)
-                }
-                is TextLayer -> {
-                    val resolutionFactor = targetWidth / 360f
-                    fontRenderEngine.drawTextLayerOnCanvas(
-                        canvas = canvas,
-                        layer = layer,
-                        effectiveFontSizePx = layer.fontSizeSp * resolutionFactor,
-                        maxWidthPx = targetWidth * 0.9f,
-                        emojiSourceMode = document.emojiSourceMode,
-                        appEmojiFontId = document.appEmojiFontId
-                    )
-                }
-            }
-            canvas.restore()
+            renderLayerToCanvas(
+                canvas = canvas,
+                layer = layer,
+                document = document,
+                fontRenderEngine = fontRenderEngine,
+                targetWidth = targetWidth,
+                targetHeight = targetHeight,
+                isNestedInGroup = false,
+                parentOpacity = 1f
+            )
         }
 
         output
+    }
+
+    private fun findFirstImageUri(layers: List<EditorLayer>): String? {
+        for (layer in layers) {
+            when (layer) {
+                is ImageLayer -> return layer.uriString
+                is GroupLayer -> findFirstImageUri(layer.children)?.let { return it }
+                else -> Unit
+            }
+        }
+        return null
+    }
+
+    private suspend fun renderLayerToCanvas(
+        canvas: Canvas,
+        layer: EditorLayer,
+        document: ProjectDocument,
+        fontRenderEngine: FontRenderEngine,
+        targetWidth: Int,
+        targetHeight: Int,
+        isNestedInGroup: Boolean,
+        parentOpacity: Float
+    ) {
+        if (!layer.visible) return
+        val cx = if (isNestedInGroup) targetWidth * layer.offsetXNorm else targetWidth * (0.5f + layer.offsetXNorm)
+        val cy = if (isNestedInGroup) targetHeight * layer.offsetYNorm else targetHeight * (0.5f + layer.offsetYNorm)
+        val effectiveOpacity = (layer.opacity * parentOpacity).coerceIn(0f, 1f)
+
+        canvas.save()
+        canvas.translate(cx, cy)
+        canvas.rotate(layer.rotationDeg)
+        canvas.scale(layer.scale, layer.scale)
+
+        when (layer) {
+            is GroupLayer -> {
+                for (child in layer.children) {
+                    renderLayerToCanvas(
+                        canvas = canvas,
+                        layer = child,
+                        document = document,
+                        fontRenderEngine = fontRenderEngine,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight,
+                        isNestedInGroup = true,
+                        parentOpacity = effectiveOpacity
+                    )
+                }
+            }
+            is ImageLayer -> {
+                decodeRgba8888Bitmap(layer.uriString, maxDimension = null)?.let { rawBmp ->
+                    val bmp = if (layer.adjustments.sharpness > 0.01f) {
+                        applySharpenBitmap(rawBmp, layer.adjustments.sharpness)
+                    } else {
+                        rawBmp
+                    }
+                    val fitScale = min(
+                        (targetWidth * 0.85f) / bmp.width.coerceAtLeast(1),
+                        (targetHeight * 0.85f) / bmp.height.coerceAtLeast(1)
+                    )
+                    val drawW = bmp.width * fitScale
+                    val drawH = bmp.height * fitScale
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
+                        if (!layer.adjustments.isIdentity()) {
+                            colorFilter = ColorMatrixColorFilter(buildColorMatrix(layer.adjustments))
+                        }
+                    }
+                    val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
+                    canvas.drawBitmap(bmp, null, dst, paint)
+
+                    if (layer.adjustments.vignette > 0.01f) {
+                        drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
+                    }
+
+                    if (bmp !== rawBmp) bmp.recycle()
+                    rawBmp.recycle()
+                }
+            }
+            is ShapeLayer -> {
+                drawShapeOnCanvas(canvas, layer.copy(opacity = effectiveOpacity), targetWidth)
+            }
+            is TextLayer -> {
+                val resolutionFactor = targetWidth / 360f
+                val effPx = layer.fontSizeSp * resolutionFactor
+                val measured = fontRenderEngine.measureTextLayerBounds(
+                    layer = layer.copy(opacity = effectiveOpacity),
+                    effectiveFontSizePx = effPx,
+                    maxWidthPx = targetWidth * 0.9f,
+                    emojiSourceMode = document.emojiSourceMode,
+                    appEmojiFontId = document.appEmojiFontId
+                )
+                fontRenderEngine.drawTextLayerOnCanvas(
+                    canvas = canvas,
+                    layer = layer.copy(opacity = effectiveOpacity),
+                    effectiveFontSizePx = effPx,
+                    maxWidthPx = (measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f),
+                    emojiSourceMode = document.emojiSourceMode,
+                    appEmojiFontId = document.appEmojiFontId
+                )
+            }
+        }
+        canvas.restore()
     }
 
     suspend fun saveProjectThumbnail(
