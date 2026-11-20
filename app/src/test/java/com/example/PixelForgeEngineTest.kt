@@ -16,6 +16,7 @@ import com.example.model.CanvasDimensions
 import com.example.model.EmojiSourceMode
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
+import com.example.model.ImageCropRect
 import com.example.model.ImageLayer
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
@@ -33,6 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -303,6 +305,104 @@ class PixelForgeEngineTest {
         assertFalse(adjusted.isIdentity())
         val cm = MediaStorageManager.buildColorMatrix(adjusted)
         assertEquals(20, cm.array.size)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun visibleNonEmojiTextRendersWithOpaqueAlphaPixels() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+
+            val mediaManager = MediaStorageManager(context)
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(
+                    activeTab = BackgroundTab.TRANSPARENT,
+                    checkerboardPreviewEnabled = false
+                ),
+                layers = listOf(
+                    TextLayer(
+                        text = "ABC Hello",
+                        fontId = repo.selectedFontId.value,
+                        fontSizeSp = 48f,
+                        colorArgb = 0xFFFFFFFFL,
+                        opacity = 1f
+                    )
+                )
+            )
+            val rendered = mediaManager.renderProjectToBitmap(doc, renderEngine, 240, 240)
+            var maxAlpha = 0
+            var opaqueWhitePixels = 0
+            for (y in 40 until 200) {
+                for (x in 20 until 220) {
+                    val px = rendered.getPixel(x, y)
+                    val a = Color.alpha(px)
+                    if (a > maxAlpha) maxAlpha = a
+                    if (a > 200 && Color.red(px) > 200 && Color.green(px) > 200 && Color.blue(px) > 200) {
+                        opaqueWhitePixels++
+                    }
+                }
+            }
+            rendered.recycle()
+            assertTrue(
+                "Expected opaque white alphabet text pixels (maxAlpha=$maxAlpha, whitePixels=$opaqueWhitePixels)",
+                maxAlpha > 200 && opaqueWhitePixels > 25
+            )
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun imageCropRectAndNonUniformStretchRenderCleanly() {
+        runBlocking {
+            val rawCrop = ImageCropRect(left = -0.2f, top = 0.2f, right = 0.25f, bottom = 1.4f)
+            val normalized = rawCrop.normalized()
+            assertEquals(0f, normalized.left, 0.0001f)
+            assertEquals(0.2f, normalized.top, 0.0001f)
+            assertEquals(0.25f, normalized.right, 0.0001f)
+            assertEquals(1f, normalized.bottom, 0.0001f)
+            assertFalse(normalized.isFull())
+
+            val sourceFile = File(context.cacheDir, "crop_test_src.png")
+            val srcBmp = android.graphics.Bitmap.createBitmap(100, 100, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(srcBmp)
+            val leftPaint = android.graphics.Paint().apply { color = Color.RED }
+            val rightPaint = android.graphics.Paint().apply { color = Color.BLUE }
+            c.drawRect(0f, 0f, 50f, 100f, leftPaint)
+            c.drawRect(50f, 0f, 100f, 100f, rightPaint)
+            FileOutputStream(sourceFile).use { out ->
+                srcBmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            srcBmp.recycle()
+
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(
+                    activeTab = BackgroundTab.TRANSPARENT,
+                    checkerboardPreviewEnabled = false
+                ),
+                layers = listOf(
+                    ImageLayer(
+                        uriString = sourceFile.absolutePath,
+                        originalWidth = 100,
+                        originalHeight = 100,
+                        crop = ImageCropRect(left = 0f, top = 0f, right = 0.4f, bottom = 1f),
+                        stretchX = 1.5f,
+                        stretchY = 0.7f
+                    )
+                )
+            )
+            val rendered = mediaManager.renderProjectToBitmap(doc, renderEngine, 240, 240)
+            val centerPx = rendered.getPixel(120, 120)
+            assertTrue("Cropped left region must render red center pixel", Color.red(centerPx) > 200)
+            assertTrue("Cropped left region must exclude blue right half", Color.blue(centerPx) < 40)
+            rendered.recycle()
+            sourceFile.delete()
+        }
     }
 
     private fun buildMinimalSfnt(tags: List<String>): ByteArray {

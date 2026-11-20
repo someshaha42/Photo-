@@ -179,9 +179,10 @@ class MediaStorageManager(private val context: Context) {
         when (bg.activeTab) {
             BackgroundTab.TRANSPARENT -> Unit
             BackgroundTab.COLORS -> {
+                val bgColorInt = bg.colorArgb.toInt()
                 val colorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = bg.colorArgb.toInt()
-                    alpha = ((android.graphics.Color.alpha(bg.colorArgb) / 255f) * bg.colorOpacity * 255f)
+                    color = bgColorInt
+                    alpha = ((android.graphics.Color.alpha(bgColorInt) / 255f) * bg.colorOpacity * 255f)
                         .roundToInt().coerceIn(0, 255)
                     xfermode = blendModeToPorterDuff(bg.blendMode)
                 }
@@ -270,7 +271,7 @@ class MediaStorageManager(private val context: Context) {
         canvas.save()
         canvas.translate(cx, cy)
         canvas.rotate(layer.rotationDeg)
-        canvas.scale(layer.scale, layer.scale)
+        canvas.scale(layer.scale * layer.stretchX, layer.scale * layer.stretchY)
 
         when (layer) {
             is GroupLayer -> {
@@ -294,12 +295,21 @@ class MediaStorageManager(private val context: Context) {
                     } else {
                         rawBmp
                     }
-                    val fitScale = min(
-                        (targetWidth * 0.85f) / bmp.width.coerceAtLeast(1),
-                        (targetHeight * 0.85f) / bmp.height.coerceAtLeast(1)
+                    val cropNorm = layer.crop.normalized()
+                    val srcRect = android.graphics.Rect(
+                        (cropNorm.left * bmp.width).roundToInt().coerceIn(0, (bmp.width - 1).coerceAtLeast(0)),
+                        (cropNorm.top * bmp.height).roundToInt().coerceIn(0, (bmp.height - 1).coerceAtLeast(0)),
+                        (cropNorm.right * bmp.width).roundToInt().coerceIn(1, bmp.width.coerceAtLeast(1)),
+                        (cropNorm.bottom * bmp.height).roundToInt().coerceIn(1, bmp.height.coerceAtLeast(1))
                     )
-                    val drawW = bmp.width * fitScale
-                    val drawH = bmp.height * fitScale
+                    val croppedW = srcRect.width().coerceAtLeast(1)
+                    val croppedH = srcRect.height().coerceAtLeast(1)
+                    val fitScale = min(
+                        (targetWidth * 0.85f) / croppedW,
+                        (targetHeight * 0.85f) / croppedH
+                    )
+                    val drawW = croppedW * fitScale
+                    val drawH = croppedH * fitScale
                     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
                         alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
                         if (!layer.adjustments.isIdentity()) {
@@ -307,7 +317,7 @@ class MediaStorageManager(private val context: Context) {
                         }
                     }
                     val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
-                    canvas.drawBitmap(bmp, null, dst, paint)
+                    canvas.drawBitmap(bmp, srcRect, dst, paint)
 
                     if (layer.adjustments.vignette > 0.01f) {
                         drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
@@ -433,10 +443,11 @@ class MediaStorageManager(private val context: Context) {
     private fun drawShapeOnCanvas(canvas: Canvas, layer: ShapeLayer, targetWidth: Int) {
         val baseSize = targetWidth * 0.28f
         val half = baseSize / 2f
+        val fillColorInt = layer.fillColorArgb.toInt()
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = layer.fillColorArgb.toInt()
-            alpha = ((android.graphics.Color.alpha(layer.fillColorArgb) / 255f) * layer.opacity * 255f)
+            color = fillColorInt
+            alpha = ((android.graphics.Color.alpha(fillColorInt) / 255f) * layer.opacity * 255f)
                 .roundToInt().coerceIn(0, 255)
         }
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

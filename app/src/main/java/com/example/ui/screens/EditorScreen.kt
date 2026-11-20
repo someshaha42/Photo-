@@ -5,6 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -24,7 +26,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -33,12 +34,14 @@ import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Category
+import androidx.compose.material.icons.rounded.Crop
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoLibrary
@@ -47,10 +50,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Title
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ZoomIn
-import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -100,9 +100,11 @@ import com.example.ui.ToolDrawerTab
 import com.example.ui.components.AdjustToolPanel
 import com.example.ui.components.BackgroundSettingsPanel
 import com.example.ui.components.CanvasSettingsPanel
+import com.example.ui.components.CropToolPanel
 import com.example.ui.components.EditorCanvasViewport
 import com.example.ui.components.EmojiSettingsPanel
 import com.example.ui.components.HorizontalLayerStrip
+import com.example.ui.components.LayersSideDrawer
 import com.example.ui.components.RotateTransformPanel
 import com.example.ui.components.ShapesToolPanel
 import com.example.ui.components.TextToolPanel
@@ -136,6 +138,7 @@ fun EditorScreen(
     val imageBitmaps by viewModel.imageBitmaps.collectAsStateWithLifecycle()
     val blurredPreview by viewModel.blurredBgPreview.collectAsStateWithLifecycle()
     val activeToolDrawer by viewModel.activeToolDrawer.collectAsStateWithLifecycle()
+    val showLayersDrawer by viewModel.showLayersDrawer.collectAsStateWithLifecycle()
     val isMultiSelectMode by viewModel.isMultiSelectMode.collectAsStateWithLifecycle()
     val draftText by viewModel.draftText.collectAsStateWithLifecycle()
     val draftTextStyle by viewModel.draftTextStyle.collectAsStateWithLifecycle()
@@ -168,6 +171,9 @@ fun EditorScreen(
             }
             showThreeDotMenu -> showThreeDotMenu = false
             showAddMenu -> showAddMenu = false
+            showLayersDrawer -> {
+                viewModel.setShowLayersDrawer(false)
+            }
             activeToolDrawer != ToolDrawerTab.NONE -> {
                 viewModel.closeToolDrawer()
             }
@@ -348,7 +354,7 @@ fun EditorScreen(
 
                     HorizontalDivider(color = Color.White.copy(alpha = 0.18f))
 
-                    // Row 2: Delete | Lock | Hide | Zoom (Layers button removed; strip stays visible when no tool tab is open)
+                    // Row 2: Delete | Layers | Zoom (Hide & Lock moved inside Layers side drawer)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -365,22 +371,12 @@ fun EditorScreen(
                             onClick = { selectedLayer?.let { viewModel.deleteLayer(it.id) } }
                         )
                         TopActionItem(
-                            icon = if (selectedLayer?.locked == true) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
-                            label = "Lock",
-                            enabled = hasSelection,
-                            highlighted = selectedLayer?.locked == true,
+                            icon = Icons.Rounded.Layers,
+                            label = "Layers",
+                            highlighted = showLayersDrawer,
                             highlightColor = StudioAmber,
-                            tag = "top_lock_button",
-                            onClick = { selectedLayer?.let { viewModel.toggleLayerLock(it.id) } }
-                        )
-                        TopActionItem(
-                            icon = if (selectedLayer?.visible == false) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                            label = "Hide",
-                            enabled = hasSelection,
-                            highlighted = selectedLayer?.visible == false,
-                            highlightColor = StudioAmber,
-                            tag = "top_hide_button",
-                            onClick = { selectedLayer?.let { viewModel.toggleLayerVisibility(it.id) } }
+                            tag = "top_layers_button",
+                            onClick = { viewModel.toggleLayersDrawer() }
                         )
                         TopActionItem(
                             icon = Icons.Rounded.ZoomIn,
@@ -458,6 +454,13 @@ fun EditorScreen(
                                     .padding(bottom = 8.dp)
                             ) {
                                 when (activeToolDrawer) {
+                                    ToolDrawerTab.CROP -> {
+                                        CropToolPanel(
+                                            selectedImageLayer = selectedImageLayer,
+                                            onUpdateCrop = { viewModel.updateSelectedImageCrop(it) },
+                                            onResetCrop = { viewModel.resetSelectedImageCrop() }
+                                        )
+                                    }
                                     ToolDrawerTab.TEXT -> {
                                         TextToolPanel(
                                             selectedTextLayer = selectedTextLayer,
@@ -517,26 +520,17 @@ fun EditorScreen(
                     HorizontalLayerStrip(
                         layers = document.layers,
                         selectedLayerId = document.selectedLayerId,
-                        selectionOrder = document.effectiveSelectionOrder,
-                        isMultiSelectMode = isMultiSelectMode,
                         imageBitmaps = imageBitmaps,
                         onSelectLayer = { viewModel.selectLayer(it) },
-                        onToggleMultiSelectLayer = { viewModel.toggleMultiSelectLayer(it) },
-                        onToggleMultiSelectMode = { viewModel.toggleMultiSelectMode() },
-                        onMoveLayerOrder = { id, dir -> viewModel.moveLayerOrder(id, dir) },
-                        onArrangeToTop = { viewModel.arrangeSelectedToTop() },
-                        onArrangeSwapReverse = { viewModel.swapOrReverseSelectedArrangement() },
-                        onArrangeToBottom = { viewModel.arrangeSelectedToBottom() },
-                        onAlignLayers = { opt -> viewModel.alignSelectedLayers(opt) },
-                        onGroupAction = { viewModel.handleGroupAction() },
-                        onToggleGroupExpanded = { id -> viewModel.toggleGroupExpanded(id) },
-                        onUngroupLayer = { id -> viewModel.ungroupLayer(id) }
+                        onMoveLayerOrder = { id, dir -> viewModel.moveLayerOrder(id, dir) }
                     )
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
 
-                // Single-Row Horizontal Scrollable Bottom Tool Bar: Photo | Text | Adjust | Shapes | Rotate
+                // Context-Sensitive Bottom Tool Bar:
+                // - When Photo is selected -> Crop appears FIRST!
+                // - When Text is selected -> Edit appears FIRST (opens Text box + Stroke/Shadow/Font/B/Aa)!
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 4.dp
@@ -549,6 +543,23 @@ fun EditorScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (selectedLayer is ImageLayer) {
+                            BottomToolItem(
+                                icon = Icons.Rounded.Crop,
+                                label = "Crop",
+                                selected = activeToolDrawer == ToolDrawerTab.CROP,
+                                tag = "bottom_tool_crop",
+                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.CROP) }
+                            )
+                        } else if (selectedLayer is TextLayer) {
+                            BottomToolItem(
+                                icon = Icons.Rounded.Edit,
+                                label = "Edit",
+                                selected = activeToolDrawer == ToolDrawerTab.TEXT,
+                                tag = "bottom_tool_edit_text",
+                                onClick = { viewModel.openTextToolDrawer() }
+                            )
+                        }
                         BottomToolItem(
                             icon = Icons.Rounded.Image,
                             label = "Photo",
@@ -559,7 +570,7 @@ fun EditorScreen(
                         BottomToolItem(
                             icon = Icons.Rounded.Title,
                             label = "Text",
-                            selected = activeToolDrawer == ToolDrawerTab.TEXT,
+                            selected = activeToolDrawer == ToolDrawerTab.TEXT && selectedLayer !is TextLayer,
                             tag = "bottom_tool_text",
                             onClick = {
                                 if (activeToolDrawer == ToolDrawerTab.TEXT) {
@@ -598,7 +609,7 @@ fun EditorScreen(
             }
         }
     ) { innerPadding ->
-        // Fixed Middle Canvas Viewport
+        // Fixed Middle Canvas Viewport + Right-Half Layers Side Drawer
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -619,8 +630,8 @@ fun EditorScreen(
                     viewModel.updateCanvasViewportTransform(zoomDelta, dx, dy)
                 },
                 onSelectLayer = { viewModel.selectLayer(it) },
-                onTransformLayer = { id, dx, dy, sc, rot ->
-                    viewModel.transformLayerTransient(id, dx, dy, sc, rot)
+                onTransformLayer = { id, dx, dy, sc, rot, sx, sy ->
+                    viewModel.transformLayerTransient(id, dx, dy, sc, rot, sx, sy)
                 },
                 onEyedropperTap = { nx, ny ->
                     scope.launch {
@@ -660,6 +671,31 @@ fun EditorScreen(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
+            }
+
+            // Right-Half Vertical Side Layers Drawer (Top-to-bottom on right side of canvas)
+            AnimatedVisibility(
+                visible = showLayersDrawer,
+                enter = slideInHorizontally { it },
+                exit = slideOutHorizontally { it },
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                LayersSideDrawer(
+                    layers = document.layers,
+                    selectedLayerId = document.selectedLayerId,
+                    selectionOrder = document.effectiveSelectionOrder,
+                    isMultiSelectMode = isMultiSelectMode,
+                    imageBitmaps = imageBitmaps,
+                    onSelectLayer = { viewModel.selectLayer(it) },
+                    onHoldSelectMulti = { viewModel.toggleMultiSelectLayer(it) },
+                    onToggleVisibility = { viewModel.toggleLayerVisibility(it) },
+                    onToggleLock = { viewModel.toggleLayerLock(it) },
+                    onMoveLayerOrder = { id, dir -> viewModel.moveLayerOrder(id, dir) },
+                    onGroupSelected = { viewModel.handleGroupAction() },
+                    onToggleGroupExpanded = { viewModel.toggleGroupExpanded(it) },
+                    onUngroupLayer = { viewModel.ungroupLayer(it) },
+                    onClose = { viewModel.setShowLayersDrawer(false) }
+                )
             }
         }
     }

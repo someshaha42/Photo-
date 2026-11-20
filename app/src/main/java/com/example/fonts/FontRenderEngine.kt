@@ -147,8 +147,9 @@ class FontRenderEngine(private val context: Context) {
             this.textSize = effectiveFontSizePx.coerceAtLeast(8f)
             this.letterSpacing = layer.letterSpacing
             if (!isColorEmojiFont) {
-                this.color = layer.colorArgb.toInt()
-                this.alpha = ((android.graphics.Color.alpha(layer.colorArgb) / 255f) * layer.opacity * 255f)
+                val colorInt = layer.colorArgb.toInt()
+                this.color = colorInt
+                this.alpha = ((android.graphics.Color.alpha(colorInt) / 255f) * layer.opacity * 255f)
                     .roundToInt().coerceIn(0, 255)
             } else {
                 this.color = android.graphics.Color.WHITE
@@ -261,9 +262,10 @@ class FontRenderEngine(private val context: Context) {
                 left + textW + padX * 2f,
                 textH + padY
             )
+            val pillColorInt = layer.bgPillColorArgb.toInt()
             val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = layer.bgPillColorArgb.toInt()
-                alpha = ((android.graphics.Color.alpha(layer.bgPillColorArgb) / 255f) * layer.opacity * 255f)
+                color = pillColorInt
+                alpha = ((android.graphics.Color.alpha(pillColorInt) / 255f) * layer.opacity * 255f)
                     .roundToInt().coerceIn(0, 255)
             }
             canvas.drawRoundRect(pillRect, effectiveFontSizePx * 0.35f, effectiveFontSizePx * 0.35f, pillPaint)

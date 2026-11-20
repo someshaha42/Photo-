@@ -200,6 +200,24 @@ data class ImageAdjustments(
 }
 
 @Serializable
+data class ImageCropRect(
+    val left: Float = 0f,
+    val top: Float = 0f,
+    val right: Float = 1f,
+    val bottom: Float = 1f
+) {
+    fun isFull(): Boolean = left <= 0.001f && top <= 0.001f && right >= 0.999f && bottom >= 0.999f
+
+    fun normalized(): ImageCropRect {
+        val l = left.coerceIn(0f, 0.85f)
+        val t = top.coerceIn(0f, 0.85f)
+        val r = right.coerceIn((l + 0.15f).coerceAtMost(1f), 1f)
+        val b = bottom.coerceIn((t + 0.15f).coerceAtMost(1f), 1f)
+        return ImageCropRect(l, t, r, b)
+    }
+}
+
+@Serializable
 enum class BackgroundTab(val title: String) {
     TRANSPARENT("Transparent"),
     BLUR("Blur"),
@@ -254,6 +272,8 @@ sealed interface EditorLayer {
     val offsetXNorm: Float
     val offsetYNorm: Float
     val scale: Float
+    val stretchX: Float
+    val stretchY: Float
     val rotationDeg: Float
     val opacity: Float
     val visible: Boolean
@@ -263,6 +283,8 @@ sealed interface EditorLayer {
         offsetXNorm: Float = this.offsetXNorm,
         offsetYNorm: Float = this.offsetYNorm,
         scale: Float = this.scale,
+        stretchX: Float = this.stretchX,
+        stretchY: Float = this.stretchY,
         rotationDeg: Float = this.rotationDeg,
         opacity: Float = this.opacity,
         visible: Boolean = this.visible,
@@ -279,9 +301,12 @@ data class ImageLayer(
     val originalWidth: Int,
     val originalHeight: Int,
     val adjustments: ImageAdjustments = ImageAdjustments(),
+    val crop: ImageCropRect = ImageCropRect(),
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
+    override val stretchX: Float = 1f,
+    override val stretchY: Float = 1f,
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
@@ -291,6 +316,8 @@ data class ImageLayer(
         offsetXNorm: Float,
         offsetYNorm: Float,
         scale: Float,
+        stretchX: Float,
+        stretchY: Float,
         rotationDeg: Float,
         opacity: Float,
         visible: Boolean,
@@ -299,6 +326,8 @@ data class ImageLayer(
         offsetXNorm = offsetXNorm,
         offsetYNorm = offsetYNorm,
         scale = scale,
+        stretchX = stretchX,
+        stretchY = stretchY,
         rotationDeg = rotationDeg,
         opacity = opacity,
         visible = visible,
@@ -329,6 +358,8 @@ data class TextLayer(
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
+    override val stretchX: Float = 1f,
+    override val stretchY: Float = 1f,
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
@@ -338,6 +369,8 @@ data class TextLayer(
         offsetXNorm: Float,
         offsetYNorm: Float,
         scale: Float,
+        stretchX: Float,
+        stretchY: Float,
         rotationDeg: Float,
         opacity: Float,
         visible: Boolean,
@@ -346,6 +379,8 @@ data class TextLayer(
         offsetXNorm = offsetXNorm,
         offsetYNorm = offsetYNorm,
         scale = scale,
+        stretchX = stretchX,
+        stretchY = stretchY,
         rotationDeg = rotationDeg,
         opacity = opacity,
         visible = visible,
@@ -365,6 +400,8 @@ data class ShapeLayer(
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
+    override val stretchX: Float = 1f,
+    override val stretchY: Float = 1f,
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
@@ -374,6 +411,8 @@ data class ShapeLayer(
         offsetXNorm: Float,
         offsetYNorm: Float,
         scale: Float,
+        stretchX: Float,
+        stretchY: Float,
         rotationDeg: Float,
         opacity: Float,
         visible: Boolean,
@@ -382,6 +421,8 @@ data class ShapeLayer(
         offsetXNorm = offsetXNorm,
         offsetYNorm = offsetYNorm,
         scale = scale,
+        stretchX = stretchX,
+        stretchY = stretchY,
         rotationDeg = rotationDeg,
         opacity = opacity,
         visible = visible,
@@ -399,6 +440,8 @@ data class GroupLayer(
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
+    override val stretchX: Float = 1f,
+    override val stretchY: Float = 1f,
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
@@ -408,6 +451,8 @@ data class GroupLayer(
         offsetXNorm: Float,
         offsetYNorm: Float,
         scale: Float,
+        stretchX: Float,
+        stretchY: Float,
         rotationDeg: Float,
         opacity: Float,
         visible: Boolean,
@@ -416,6 +461,8 @@ data class GroupLayer(
         offsetXNorm = offsetXNorm,
         offsetYNorm = offsetYNorm,
         scale = scale,
+        stretchX = stretchX,
+        stretchY = stretchY,
         rotationDeg = rotationDeg,
         opacity = opacity,
         visible = visible,

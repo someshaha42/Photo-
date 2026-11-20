@@ -24,13 +24,12 @@ import com.example.model.CanvasDimensions
 import com.example.model.EditorLayer
 import com.example.model.EmojiSourceMode
 import com.example.model.GroupLayer
-import com.example.model.HorizontalAlignOption
 import com.example.model.ImageAdjustments
+import com.example.model.ImageCropRect
 import com.example.model.ImageLayer
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
-import com.example.model.TextAlignOption
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
@@ -54,6 +53,7 @@ sealed interface ExportFeedbackState {
 
 enum class ToolDrawerTab(val label: String) {
     NONE(""),
+    CROP("Crop"),
     TEXT("Text"),
     ADJUST("Adjust"),
     SHAPES("Shapes"),
@@ -103,6 +103,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _activeToolDrawer = MutableStateFlow(ToolDrawerTab.NONE)
     val activeToolDrawer: StateFlow<ToolDrawerTab> = _activeToolDrawer.asStateFlow()
+
+    private val _showLayersDrawer = MutableStateFlow(false)
+    val showLayersDrawer: StateFlow<Boolean> = _showLayersDrawer.asStateFlow()
 
     private val _isMultiSelectMode = MutableStateFlow(false)
     val isMultiSelectMode: StateFlow<Boolean> = _isMultiSelectMode.asStateFlow()
@@ -166,6 +169,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _activeToolDrawer.value = ToolDrawerTab.NONE
     }
 
+    fun toggleLayersDrawer() {
+        _showLayersDrawer.value = !_showLayersDrawer.value
+    }
+
+    fun setShowLayersDrawer(open: Boolean) {
+        _showLayersDrawer.value = open
+    }
+
     fun toggleMultiSelectMode() {
         val next = !_isMultiSelectMode.value
         _isMultiSelectMode.value = next
@@ -222,6 +233,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canvasPan.value = 0f to 0f
         _isZoomMode.value = false
         _isMultiSelectMode.value = false
+        _showLayersDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _isEyedropperActive.value = false
         _blurredBgPreview.value = null
@@ -252,6 +264,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canvasPan.value = 0f to 0f
         _isZoomMode.value = false
         _isMultiSelectMode.value = false
+        _showLayersDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _isEyedropperActive.value = false
         _draftText.value = ""
@@ -676,6 +689,23 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateSelectedImageCrop(transform: (ImageCropRect) -> ImageCropRect) {
+        val target = ensureImageLayerSelectedForAdjust() ?: return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, target.id) { layer ->
+                    if (layer is ImageLayer) {
+                        layer.copy(crop = transform(layer.crop).normalized())
+                    } else layer
+                }
+            )
+        }
+    }
+
+    fun resetSelectedImageCrop() {
+        updateSelectedImageCrop { ImageCropRect() }
+    }
+
     fun applyFontGloballyAndToSelection(fontId: String) {
         fontRepository.selectFont(fontId)
         _draftTextStyle.value = _draftTextStyle.value.copy(fontId = fontId)
@@ -725,15 +755,19 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         deltaXNorm: Float,
         deltaYNorm: Float,
         scaleFactor: Float,
-        rotationDelta: Float
+        rotationDelta: Float,
+        stretchXFactor: Float = 1f,
+        stretchYFactor: Float = 1f
     ) {
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
                 if (!layer.locked) {
                     layer.withBaseTransform(
-                        offsetXNorm = (layer.offsetXNorm + deltaXNorm).coerceIn(-0.95f, 0.95f),
-                        offsetYNorm = (layer.offsetYNorm + deltaYNorm).coerceIn(-0.95f, 0.95f),
+                        offsetXNorm = (layer.offsetXNorm + deltaXNorm).coerceIn(-0.98f, 0.98f),
+                        offsetYNorm = (layer.offsetYNorm + deltaYNorm).coerceIn(-0.98f, 0.98f),
                         scale = (layer.scale * scaleFactor).coerceIn(0.2f, 8f),
+                        stretchX = (layer.stretchX * stretchXFactor).coerceIn(0.25f, 4f),
+                        stretchY = (layer.stretchY * stretchYFactor).coerceIn(0.25f, 4f),
                         rotationDeg = (layer.rotationDeg + rotationDelta) % 360f
                     )
                 } else layer
@@ -812,10 +846,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 3-icon Layer Arrangement system based on Position & Selection Order:
-     * 1. arrangeSelectedToTop: selected move to Top/Front, 1st selected at highest index, later selected below.
-     * 2. swapOrReverseSelectedArrangement: swaps mutual stack positions & reverses selectionOrder.
-     * 3. arrangeSelectedToBottom: selected move to Bottom/Back, 1st selected above later selected.
+     * 3-icon Layer Arrangement system based on Position & Selection Order.
      */
     fun arrangeSelectedToTop() {
         commitChange { doc -> applyArrangementToTop(doc) }
@@ -827,75 +858,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun swapOrReverseSelectedArrangement() {
         commitChange { doc -> applySwapOrReverseArrangement(doc) }
-    }
-
-    fun alignSelectedLayers(option: HorizontalAlignOption) {
-        val order = _document.value.effectiveSelectionOrder
-        if (order.isEmpty()) return
-        val targets = order.toSet()
-        commitChange { doc ->
-            doc.copy(
-                layers = mapTargetsWithAlignment(doc.layers, targets, option, doc.canvas)
-            )
-        }
-    }
-
-    private fun mapTargetsWithAlignment(
-        layers: List<EditorLayer>,
-        targets: Set<String>,
-        option: HorizontalAlignOption,
-        canvas: CanvasDimensions
-    ): List<EditorLayer> {
-        return layers.map { layer ->
-            val updatedSelf = if (layer.id in targets && !layer.locked) {
-                val halfW = estimateHalfWidthNorm(layer, canvas)
-                val targetX = when (option) {
-                    HorizontalAlignOption.CENTER -> 0f
-                    HorizontalAlignOption.LEFT -> (-0.47f + halfW).coerceIn(-0.46f, 0f)
-                    HorizontalAlignOption.RIGHT -> (0.47f - halfW).coerceIn(0f, 0.46f)
-                }
-                val baseMoved = layer.withBaseTransform(offsetXNorm = targetX)
-                if (baseMoved is TextLayer) {
-                    val textAlign = when (option) {
-                        HorizontalAlignOption.LEFT -> TextAlignOption.LEFT
-                        HorizontalAlignOption.CENTER -> TextAlignOption.CENTER
-                        HorizontalAlignOption.RIGHT -> TextAlignOption.RIGHT
-                    }
-                    baseMoved.copy(align = textAlign)
-                } else baseMoved
-            } else layer
-
-            if (updatedSelf is GroupLayer) {
-                updatedSelf.copy(
-                    children = mapTargetsWithAlignment(updatedSelf.children, targets, option, canvas)
-                )
-            } else updatedSelf
-        }
-    }
-
-    private fun estimateHalfWidthNorm(layer: EditorLayer, canvas: CanvasDimensions): Float {
-        val canvasRatio = canvas.ratioFloat.coerceAtLeast(0.25f)
-        val minToW = if (canvasRatio >= 1f) 1f / canvasRatio else 1f
-        val half = when (layer) {
-            is ImageLayer -> {
-                val imgRatio = layer.originalWidth.coerceAtLeast(1).toFloat() / layer.originalHeight.coerceAtLeast(1)
-                val wFraction = if (imgRatio >= 1f) 0.85f * minToW else 0.85f * imgRatio * minToW
-                wFraction * 0.5f * layer.scale
-            }
-            is ShapeLayer -> 0.34f * minToW * 0.5f * layer.scale
-            is TextLayer -> {
-                val bounds = fontRenderEngine.measureTextLayerBounds(
-                    layer = layer,
-                    effectiveFontSizePx = layer.fontSizeSp,
-                    maxWidthPx = 360f * 0.9f,
-                    emojiSourceMode = _document.value.emojiSourceMode,
-                    appEmojiFontId = _document.value.appEmojiFontId
-                )
-                ((bounds.widthPx / 360f) * 0.5f * layer.scale)
-            }
-            is GroupLayer -> 0.30f * layer.scale
-        }
-        return half.coerceIn(0.06f, 0.45f)
     }
 
     /**
