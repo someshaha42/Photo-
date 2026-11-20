@@ -311,16 +311,31 @@ class MediaStorageManager(private val context: Context) {
                     val drawW = croppedW * fitScale
                     val drawH = croppedH * fitScale
                     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
                         if (!layer.adjustments.isIdentity()) {
                             colorFilter = ColorMatrixColorFilter(buildColorMatrix(layer.adjustments))
                         }
                     }
                     val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
-                    canvas.drawBitmap(bmp, srcRect, dst, paint)
-
-                    if (layer.adjustments.vignette > 0.01f) {
-                        drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
+                    val layerAlpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
+                    val tintArgb = layer.tintColorArgb
+                    if (tintArgb != null) {
+                        val saveCount = canvas.saveLayerAlpha(dst, layerAlpha)
+                        canvas.drawBitmap(bmp, srcRect, dst, paint)
+                        val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = tintArgb.toInt()
+                            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+                        }
+                        canvas.drawRect(dst, tintPaint)
+                        if (layer.adjustments.vignette > 0.01f) {
+                            drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, 1f)
+                        }
+                        canvas.restoreToCount(saveCount)
+                    } else {
+                        paint.alpha = layerAlpha
+                        canvas.drawBitmap(bmp, srcRect, dst, paint)
+                        if (layer.adjustments.vignette > 0.01f) {
+                            drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
+                        }
                     }
 
                     if (bmp !== rawBmp) bmp.recycle()

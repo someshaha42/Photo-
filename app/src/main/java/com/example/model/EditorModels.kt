@@ -302,6 +302,7 @@ data class ImageLayer(
     val originalHeight: Int,
     val adjustments: ImageAdjustments = ImageAdjustments(),
     val crop: ImageCropRect = ImageCropRect(),
+    val tintColorArgb: Long? = null,
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,

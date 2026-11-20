@@ -54,10 +54,19 @@ sealed interface ExportFeedbackState {
 enum class ToolDrawerTab(val label: String) {
     NONE(""),
     CROP("Crop"),
+    COLOR("Color"),
+    FONT("Font"),
+    PHOTO("Photo"),
     TEXT("Text"),
     ADJUST("Adjust"),
     SHAPES("Shapes"),
     ROTATE("Rotate")
+}
+
+enum class EyedropperTarget {
+    NONE,
+    BACKGROUND,
+    SELECTED_LAYER
 }
 
 class StudioViewModel(application: Application) : AndroidViewModel(application) {
@@ -127,8 +136,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _canvasPan = MutableStateFlow(0f to 0f)
     val canvasPan: StateFlow<Pair<Float, Float>> = _canvasPan.asStateFlow()
 
-    private val _isEyedropperActive = MutableStateFlow(false)
-    val isEyedropperActive: StateFlow<Boolean> = _isEyedropperActive.asStateFlow()
+    private val _eyedropperTarget = MutableStateFlow(EyedropperTarget.NONE)
+    val eyedropperTarget: StateFlow<EyedropperTarget> = _eyedropperTarget.asStateFlow()
+
+    val isEyedropperActive: StateFlow<Boolean> = _eyedropperTarget
+        .map { it != EyedropperTarget.NONE }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
@@ -167,6 +180,20 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeToolDrawer() {
         _activeToolDrawer.value = ToolDrawerTab.NONE
+        val selected = findLayerRecursive(_document.value.layers, _document.value.selectedLayerId)
+        if (selected !is TextLayer) {
+            _draftText.value = ""
+            lastAppliedCaseMode = null
+        }
+    }
+
+    fun dismissAllOverlaysAndSelection() {
+        _activeToolDrawer.value = ToolDrawerTab.NONE
+        _showLayersDrawer.value = false
+        _eyedropperTarget.value = EyedropperTarget.NONE
+        _draftText.value = ""
+        lastAppliedCaseMode = null
+        selectLayer(null)
     }
 
     fun toggleLayersDrawer() {
@@ -208,8 +235,28 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canvasPan.value = 0f to 0f
     }
 
-    fun setEyedropperActive(active: Boolean) {
-        _isEyedropperActive.value = active
+    fun setEyedropperActive(active: Boolean, target: EyedropperTarget = EyedropperTarget.BACKGROUND) {
+        _eyedropperTarget.value = if (active) target else EyedropperTarget.NONE
+    }
+
+    fun startEyedropper(target: EyedropperTarget) {
+        _eyedropperTarget.value = target
+    }
+
+    fun applyEyedropperColor(argbInt: Int) {
+        val opaqueLong = (argbInt.toLong() and 0xFFFFFFFFL) or 0xFF000000L
+        when (_eyedropperTarget.value) {
+            EyedropperTarget.BACKGROUND -> {
+                updateBackground { bg ->
+                    bg.copy(activeTab = BackgroundTab.COLORS, colorArgb = opaqueLong)
+                }
+            }
+            EyedropperTarget.SELECTED_LAYER -> {
+                applyColorToSelectedLayer(opaqueLong)
+            }
+            EyedropperTarget.NONE -> Unit
+        }
+        _eyedropperTarget.value = EyedropperTarget.NONE
     }
 
     fun toggleTheme() {
@@ -235,7 +282,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _isMultiSelectMode.value = false
         _showLayersDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
-        _isEyedropperActive.value = false
+        _eyedropperTarget.value = EyedropperTarget.NONE
         _blurredBgPreview.value = null
         _draftText.value = ""
         lastAppliedCaseMode = null
@@ -266,7 +313,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _isMultiSelectMode.value = false
         _showLayersDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
-        _isEyedropperActive.value = false
+        _eyedropperTarget.value = EyedropperTarget.NONE
         _draftText.value = ""
         lastAppliedCaseMode = null
         _document.value = loaded
@@ -383,6 +430,21 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         if (layer is TextLayer) {
             fontRepository.selectFont(layer.fontId)
             _draftTextStyle.value = layer
+        }
+    }
+
+    fun onCanvasLayerTapped(layerId: String) {
+        selectLayer(layerId)
+        if (_isMultiSelectMode.value) return
+        val layer = findLayerRecursive(_document.value.layers, layerId)
+        if (layer is TextLayer) {
+            val currentTab = _activeToolDrawer.value
+            if (currentTab != ToolDrawerTab.COLOR &&
+                currentTab != ToolDrawerTab.FONT &&
+                currentTab != ToolDrawerTab.ROTATE
+            ) {
+                _activeToolDrawer.value = ToolDrawerTab.TEXT
+            }
         }
     }
 
@@ -510,14 +572,20 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        val raw = _draftText.value
+        if (raw.isBlank()) {
+            // Do not add empty unconfirmed draft text
+            _draftText.value = ""
+            lastAppliedCaseMode = null
+            _activeToolDrawer.value = ToolDrawerTab.NONE
+            return
+        }
+
         if (!canAddLayer()) return
         val style = _draftTextStyle.value
         val fontId = fontRepository.selectedFontId.value
         val isEmojiFont = fontRenderEngine.getMetadata(fontId)?.classification?.name?.contains("EMOJI") == true
-        val raw = _draftText.value
-        val resolvedText = raw.ifBlank {
-            if (isEmojiFont) "😀🚀🌈✨" else "New Text"
-        }
+        val resolvedText = raw.trimEnd()
         val newLayer = style.copy(
             id = UUID.randomUUID().toString(),
             name = resolvedText.take(14).ifBlank { "Text" },
@@ -574,9 +642,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateSelectedTextLayer(transform: (TextLayer) -> TextLayer) {
-        val selId = _document.value.selectedLayerId ?: return
+        val selId = _document.value.selectedLayerId
         val existing = findLayerRecursive(_document.value.layers, selId)
-        if (existing !is TextLayer) {
+        if (selId == null || existing !is TextLayer) {
             updateDraftStyle(transform)
             return
         }
@@ -704,6 +772,45 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun resetSelectedImageCrop() {
         updateSelectedImageCrop { ImageCropRect() }
+    }
+
+    fun setSelectedImageOpacity(opacity: Float) {
+        val target = ensureImageLayerSelectedForAdjust() ?: return
+        val clamped = opacity.coerceIn(0f, 1f)
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
+                if (layer is ImageLayer) layer.copy(opacity = clamped) else layer
+            }
+        )
+    }
+
+    fun setSelectedLayerColorTransient(colorArgb: Long?) {
+        val selId = _document.value.selectedLayerId ?: return
+        _document.value = _document.value.copy(
+            layers = applyColorTransformToLayers(_document.value.layers, selId, colorArgb)
+        )
+    }
+
+    fun applyColorToSelectedLayer(colorArgb: Long?) {
+        val selId = _document.value.selectedLayerId ?: return
+        commitChange { doc ->
+            doc.copy(layers = applyColorTransformToLayers(doc.layers, selId, colorArgb))
+        }
+    }
+
+    private fun applyColorTransformToLayers(
+        layers: List<EditorLayer>,
+        layerId: String,
+        colorArgb: Long?
+    ): List<EditorLayer> {
+        return mapLayerRecursive(layers, layerId) { layer ->
+            when (layer) {
+                is TextLayer -> layer.copy(colorArgb = colorArgb ?: 0xFFFFFFFFL)
+                is ImageLayer -> layer.copy(tintColorArgb = colorArgb)
+                is ShapeLayer -> layer.copy(fillColorArgb = colorArgb ?: 0xFF2D8CFFL)
+                is GroupLayer -> layer
+            }
+        }
     }
 
     fun applyFontGloballyAndToSelection(fontId: String) {

@@ -24,6 +24,7 @@ import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
 import com.example.ui.StudioViewModel
+import com.example.ui.ToolDrawerTab
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -403,6 +404,94 @@ class PixelForgeEngineTest {
             rendered.recycle()
             sourceFile.delete()
         }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun imageLayerColorTintAppliesAndResetsToDefault() {
+        runBlocking {
+            val sourceFile = File(context.cacheDir, "tint_test_src.png")
+            val srcBmp = android.graphics.Bitmap.createBitmap(80, 80, android.graphics.Bitmap.Config.ARGB_8888)
+            srcBmp.eraseColor(Color.RED)
+            FileOutputStream(sourceFile).use { out ->
+                srcBmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            srcBmp.recycle()
+
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+            val tintedLayer = ImageLayer(
+                uriString = sourceFile.absolutePath,
+                originalWidth = 80,
+                originalHeight = 80,
+                tintColorArgb = 0xFF00FF00L
+            )
+            val tintedDoc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                layers = listOf(tintedLayer)
+            )
+            val tintedBmp = mediaManager.renderProjectToBitmap(tintedDoc, renderEngine, 160, 160)
+            val centerTinted = tintedBmp.getPixel(80, 80)
+            assertTrue("Green tint must cover red base photo", Color.green(centerTinted) > 200 && Color.red(centerTinted) < 40)
+            tintedBmp.recycle()
+
+            val resetDoc = tintedDoc.copy(layers = listOf(tintedLayer.copy(tintColorArgb = null)))
+            val resetBmp = mediaManager.renderProjectToBitmap(resetDoc, renderEngine, 160, 160)
+            val centerReset = resetBmp.getPixel(80, 80)
+            assertTrue("Default reset must restore original red pixels", Color.red(centerReset) > 200 && Color.green(centerReset) < 40)
+            resetBmp.recycle()
+            sourceFile.delete()
+        }
+    }
+
+    @Test
+    fun blankOrUnconfirmedDraftTextIsNeverAddedToCanvas() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        assertEquals(0, vm.document.value.layers.size)
+
+        // Blank text + checkmark must not add a layer
+        vm.startNewTextDraft()
+        assertEquals(ToolDrawerTab.TEXT, vm.activeToolDrawer.value)
+        vm.confirmTextBox()
+        assertEquals(0, vm.document.value.layers.size)
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+
+        // Typed draft + Back/Dismiss without checkmark must not add a layer
+        vm.startNewTextDraft()
+        vm.updateDraftText("Unsaved Draft")
+        vm.closeToolDrawer()
+        assertEquals(0, vm.document.value.layers.size)
+        assertEquals("", vm.draftText.value)
+
+        // Typed draft + checkmark adds 1 layer
+        vm.startNewTextDraft()
+        vm.updateDraftText("Confirmed Headline")
+        vm.confirmTextBox()
+        assertEquals(1, vm.document.value.layers.size)
+        assertEquals("Confirmed Headline", (vm.document.value.layers.first() as TextLayer).text)
+    }
+
+    @Test
+    fun directBackDismissesDrawersWhilePreservingAppliedColorAndOpacity() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val id = vm.addTextLayer("Color Test")!!
+        vm.openToolDrawer(ToolDrawerTab.COLOR)
+        vm.setShowLayersDrawer(true)
+        vm.applyColorToSelectedLayer(0x80FF4D4FL)
+        vm.setSelectedLayerOpacity(0.6f)
+
+        // Tap empty canvas shortcut ("direct back")
+        vm.dismissAllOverlaysAndSelection()
+
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        assertFalse(vm.showLayersDrawer.value)
+        assertEquals(null, vm.document.value.selectedLayerId)
+        val savedLayer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(0x80FF4D4FL, savedLayer.colorArgb)
+        assertEquals(0.6f, savedLayer.opacity, 0.001f)
     }
 
     private fun buildMinimalSfnt(tags: List<String>): ByteArray {

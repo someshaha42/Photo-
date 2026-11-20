@@ -131,7 +131,13 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                             PickVisualMediaRequest(PickVisualMedia.ImageOnly)
                         )
                     },
-                    onOpenFontLibrary = { showFontLibrarySheet = true }
+                    onOpenFontLibrary = { showFontLibrarySheet = true },
+                    onImportFontsClick = {
+                        fontFilesLauncher.launch(arrayOf("*/*"))
+                    },
+                    onImportArchiveClick = {
+                        fontArchiveLauncher.launch(arrayOf("*/*"))
+                    }
                 )
             }
         }

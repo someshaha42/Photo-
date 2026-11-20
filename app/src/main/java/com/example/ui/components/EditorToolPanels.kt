@@ -395,6 +395,9 @@ fun LayersSideDrawer(
     }
     val displayLayers = remember(layers) { layers.reversed() }
 
+    var drawerDragX by remember { mutableFloatStateOf(0f) }
+    val drawerDismissPx = with(LocalDensity.current) { 48.dp.toPx() }
+
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         tonalElevation = 8.dp,
@@ -403,6 +406,18 @@ fun LayersSideDrawer(
         modifier = modifier
             .fillMaxHeight()
             .fillMaxWidth(0.55f)
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { drawerDragX = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        drawerDragX += dragAmount
+                        if (drawerDragX > drawerDismissPx) {
+                            drawerDragX = 0f
+                            onClose()
+                        }
+                    }
+                )
+            }
             .testTag("layers_side_drawer")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -993,6 +1008,7 @@ private enum class AdjustParam(val label: String, val min: Float, val max: Float
     EXPOSURE("Exposure", -1f, 1f),
     CONTRAST("Contrast", -1f, 1f),
     SATURATION("Saturation", -1f, 1f),
+    OPACITY("Opacity", 0f, 1f),
     HUE("Hue", -180f, 180f),
     VIBRANCE("HSL", -1f, 1f),
     SHARPNESS("Sharpness", 0f, 1f),
@@ -1005,6 +1021,7 @@ private enum class AdjustParam(val label: String, val min: Float, val max: Float
 fun AdjustToolPanel(
     selectedImageLayer: ImageLayer?,
     onUpdateAdjustments: ((ImageAdjustments) -> ImageAdjustments) -> Unit,
+    onSetImageOpacity: (Float) -> Unit,
     onResetAdjustments: () -> Unit
 ) {
     var activeParam by remember { mutableStateOf(AdjustParam.EXPOSURE) }
@@ -1028,6 +1045,7 @@ fun AdjustToolPanel(
                 AdjustParam.EXPOSURE -> adj.exposure
                 AdjustParam.CONTRAST -> adj.contrast
                 AdjustParam.SATURATION -> adj.saturation
+                AdjustParam.OPACITY -> selectedImageLayer.opacity
                 AdjustParam.HUE -> adj.hue
                 AdjustParam.VIBRANCE -> adj.vibrance
                 AdjustParam.SHARPNESS -> adj.sharpness
@@ -1057,17 +1075,20 @@ fun AdjustToolPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val formatted = if (activeParam == AdjustParam.HUE) {
-                    "${currentVal.roundToInt()}°"
-                } else {
-                    "${(currentVal * 100).roundToInt()}"
+                val formatted = when (activeParam) {
+                    AdjustParam.HUE -> "${currentVal.roundToInt()}°"
+                    AdjustParam.OPACITY -> "${(currentVal * 100).roundToInt()}%"
+                    else -> "${(currentVal * 100).roundToInt()}"
                 }
                 Text(
                     text = "${activeParam.label}: $formatted",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
-                TextButton(onClick = onResetAdjustments) {
+                TextButton(onClick = {
+                    onSetImageOpacity(1f)
+                    onResetAdjustments()
+                }) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Reset")
@@ -1077,17 +1098,22 @@ fun AdjustToolPanel(
             Slider(
                 value = currentVal,
                 onValueChange = { v ->
-                    onUpdateAdjustments { prev ->
-                        when (activeParam) {
-                            AdjustParam.EXPOSURE -> prev.copy(exposure = v)
-                            AdjustParam.CONTRAST -> prev.copy(contrast = v)
-                            AdjustParam.SATURATION -> prev.copy(saturation = v)
-                            AdjustParam.HUE -> prev.copy(hue = v)
-                            AdjustParam.VIBRANCE -> prev.copy(vibrance = v)
-                            AdjustParam.SHARPNESS -> prev.copy(sharpness = v)
-                            AdjustParam.VIGNETTE -> prev.copy(vignette = v)
-                            AdjustParam.BRIGHTNESS -> prev.copy(brightness = v)
-                            AdjustParam.WARMTH -> prev.copy(warmth = v)
+                    if (activeParam == AdjustParam.OPACITY) {
+                        onSetImageOpacity(v)
+                    } else {
+                        onUpdateAdjustments { prev ->
+                            when (activeParam) {
+                                AdjustParam.EXPOSURE -> prev.copy(exposure = v)
+                                AdjustParam.CONTRAST -> prev.copy(contrast = v)
+                                AdjustParam.SATURATION -> prev.copy(saturation = v)
+                                AdjustParam.OPACITY -> prev
+                                AdjustParam.HUE -> prev.copy(hue = v)
+                                AdjustParam.VIBRANCE -> prev.copy(vibrance = v)
+                                AdjustParam.SHARPNESS -> prev.copy(sharpness = v)
+                                AdjustParam.VIGNETTE -> prev.copy(vignette = v)
+                                AdjustParam.BRIGHTNESS -> prev.copy(brightness = v)
+                                AdjustParam.WARMTH -> prev.copy(warmth = v)
+                            }
                         }
                     }
                 },

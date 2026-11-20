@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -91,6 +92,8 @@ fun EditorCanvasViewport(
     isEyedropperActive: Boolean,
     onCanvasViewportTransform: (zoomDelta: Float, panDx: Float, panDy: Float) -> Unit,
     onSelectLayer: (String?) -> Unit,
+    onLayerTapped: (String) -> Unit = onSelectLayer,
+    onEmptyCanvasTap: () -> Unit = { onSelectLayer(null) },
     onTransformLayer: (
         layerId: String,
         dxNorm: Float,
@@ -118,6 +121,10 @@ fun EditorCanvasViewport(
                         detectTransformGestures { _, pan, zoom, _ ->
                             onCanvasViewportTransform(zoom, pan.x, pan.y)
                         }
+                    }
+                } else if (!isEyedropperActive) {
+                    Modifier.pointerInput(isZoomMode, isEyedropperActive) {
+                        detectTapGestures { onEmptyCanvasTap() }
                     }
                 } else Modifier
             )
@@ -163,7 +170,7 @@ fun EditorCanvasViewport(
                             val ny = (offset.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
                             onEyedropperTap(nx, ny)
                         } else {
-                            onSelectLayer(null)
+                            onEmptyCanvasTap()
                         }
                     }
                 }
@@ -249,6 +256,7 @@ fun EditorCanvasViewport(
                         isZoomMode = isZoomMode,
                         isEyedropperActive = isEyedropperActive,
                         onSelectLayer = onSelectLayer,
+                        onLayerTapped = onLayerTapped,
                         onTransformLayer = onTransformLayer
                     )
                 }
@@ -291,6 +299,7 @@ private fun RenderCanvasLayerNode(
     isZoomMode: Boolean,
     isEyedropperActive: Boolean,
     onSelectLayer: (String?) -> Unit,
+    onLayerTapped: (String) -> Unit,
     onTransformLayer: (
         layerId: String,
         dxNorm: Float,
@@ -322,7 +331,7 @@ private fun RenderCanvasLayerNode(
         } else {
             Modifier
                 .pointerInput(interactiveTargetId, isEyedropperActive) {
-                    detectTapGestures(onTap = { onSelectLayer(interactiveTargetId) })
+                    detectTapGestures(onTap = { onLayerTapped(interactiveTargetId) })
                 }
                 .pointerInput(interactiveTargetId, effectiveLocked, canvasWpx, canvasHpx) {
                     if (effectiveLocked) return@pointerInput
@@ -387,6 +396,7 @@ private fun RenderCanvasLayerNode(
                             isZoomMode = isZoomMode,
                             isEyedropperActive = isEyedropperActive,
                             onSelectLayer = onSelectLayer,
+                            onLayerTapped = onLayerTapped,
                             onTransformLayer = onTransformLayer
                         )
                     }
@@ -435,29 +445,50 @@ private fun RenderCanvasLayerNode(
                     }
 
                     Box(modifier = fitModifier.then(bodyGestureModifier)) {
-                        if (cropNorm.isFull()) {
-                            Image(
-                                bitmap = bmp.asImageBitmap(),
-                                contentDescription = layer.name,
-                                contentScale = ContentScale.Fit,
-                                colorFilter = adjColorFilter,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            val imageBmp = remember(bmp) { bmp.asImageBitmap() }
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val srcOffset = IntOffset(
-                                    (cropNorm.left * bmp.width).roundToInt().coerceIn(0, (bmp.width - 1).coerceAtLeast(0)),
-                                    (cropNorm.top * bmp.height).roundToInt().coerceIn(0, (bmp.height - 1).coerceAtLeast(0))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    compositingStrategy = if (layer.tintColorArgb != null) {
+                                        CompositingStrategy.Offscreen
+                                    } else {
+                                        CompositingStrategy.Auto
+                                    }
+                                }
+                        ) {
+                            if (cropNorm.isFull()) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = layer.name,
+                                    contentScale = ContentScale.Fit,
+                                    colorFilter = adjColorFilter,
+                                    modifier = Modifier.fillMaxSize()
                                 )
-                                drawImage(
-                                    image = imageBmp,
-                                    srcOffset = srcOffset,
-                                    srcSize = IntSize(srcW.coerceAtMost(bmp.width - srcOffset.x), srcH.coerceAtMost(bmp.height - srcOffset.y)),
-                                    dstOffset = IntOffset.Zero,
-                                    dstSize = IntSize(size.width.roundToInt().coerceAtLeast(1), size.height.roundToInt().coerceAtLeast(1)),
-                                    colorFilter = adjColorFilter
-                                )
+                            } else {
+                                val imageBmp = remember(bmp) { bmp.asImageBitmap() }
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val srcOffset = IntOffset(
+                                        (cropNorm.left * bmp.width).roundToInt().coerceIn(0, (bmp.width - 1).coerceAtLeast(0)),
+                                        (cropNorm.top * bmp.height).roundToInt().coerceIn(0, (bmp.height - 1).coerceAtLeast(0))
+                                    )
+                                    drawImage(
+                                        image = imageBmp,
+                                        srcOffset = srcOffset,
+                                        srcSize = IntSize(srcW.coerceAtMost(bmp.width - srcOffset.x), srcH.coerceAtMost(bmp.height - srcOffset.y)),
+                                        dstOffset = IntOffset.Zero,
+                                        dstSize = IntSize(size.width.roundToInt().coerceAtLeast(1), size.height.roundToInt().coerceAtLeast(1)),
+                                        colorFilter = adjColorFilter
+                                    )
+                                }
+                            }
+
+                            layer.tintColorArgb?.let { tintLong ->
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    drawRect(
+                                        color = Color(tintLong.toInt()),
+                                        blendMode = BlendMode.SrcAtop
+                                    )
+                                }
                             }
                         }
 
