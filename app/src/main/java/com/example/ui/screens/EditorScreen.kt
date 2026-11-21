@@ -9,8 +9,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,7 +30,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -88,8 +94,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -133,6 +141,7 @@ import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
 import kotlinx.coroutines.launch
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 private enum class ThreeDotSheetSection(val title: String) {
@@ -277,7 +286,11 @@ fun EditorScreen(
             Surface(
                 color = StudioAzure,
                 contentColor = Color.White,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .detectUnconsumedTap(key = "topbar_empty") {
+                        viewModel.dismissAllOverlaysAndSelection()
+                    }
             ) {
                 Column(
                     modifier = Modifier
@@ -413,162 +426,124 @@ fun EditorScreen(
 
                     HorizontalDivider(color = Color.White.copy(alpha = 0.18f))
 
-                    // Row 2: Unwrapped Top Action Bar — Delete | Corner Pin | 3D | S | Z | R | P Locks
-                    // Automatically unwraps into 2 balanced rows on wide/landscape canvas ratios (e.g., 16:9)
-                    // or compact single row on portrait/square screens (no hidden HorizontalPager swipe required)
+                    // Row 2: Original-Size Top Action Bar — Delete | Corner Pin | 3D | S | Z | R | P Locks
+                    // Never shrinks icons. Fills vertical spare rows on 1:1 & 16:9; uses notebook-style
+                    // HorizontalPager when canvas ratio leaves tight vertical room (e.g. 9:16 portrait).
                     val hasSelection = selectedLayer != null
-                    val useTwoRowTopControls = document.canvas.ratioFloat > 1.15f
+                    val topControls = listOf(
+                        TopBarControlSpec.Action(
+                            icon = Icons.Rounded.DeleteOutline,
+                            label = "Delete",
+                            enabled = hasSelection,
+                            tag = "top_delete_button",
+                            onClick = { selectedLayer?.let { viewModel.deleteLayer(it.id) } }
+                        ),
+                        TopBarControlSpec.Action(
+                            icon = Icons.Rounded.Transform,
+                            label = "Corner Pin",
+                            enabled = hasSelection,
+                            highlighted = activeToolDrawer == ToolDrawerTab.CORNER_PIN,
+                            highlightColor = StudioAmber,
+                            tag = "top_tool_corner_pin",
+                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.CORNER_PIN) }
+                        ),
+                        TopBarControlSpec.Action(
+                            icon = Icons.Rounded.ViewInAr,
+                            label = "3D",
+                            enabled = hasSelection,
+                            highlighted = activeToolDrawer == ToolDrawerTab.THREE_D,
+                            highlightColor = StudioAmber,
+                            tag = "top_tool_3d",
+                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.THREE_D) }
+                        ),
+                        TopBarControlSpec.Lock(
+                            shortCode = "S",
+                            label = "Stretch",
+                            isLocked = transformLocks.stretchLocked,
+                            tag = "top_lock_stretch_button",
+                            onClick = { viewModel.toggleStretchLock() }
+                        ),
+                        TopBarControlSpec.Lock(
+                            shortCode = "Z",
+                            label = "Zoom",
+                            isLocked = transformLocks.zoomLocked,
+                            tag = "top_lock_zoom_button",
+                            onClick = { viewModel.toggleZoomLock() }
+                        ),
+                        TopBarControlSpec.Lock(
+                            shortCode = "R",
+                            label = "Rotate",
+                            isLocked = transformLocks.rotationLocked,
+                            tag = "top_lock_rotation_button",
+                            onClick = { viewModel.toggleRotationLock() }
+                        ),
+                        TopBarControlSpec.Lock(
+                            shortCode = "P",
+                            label = "Move",
+                            isLocked = transformLocks.positionLocked,
+                            tag = "top_lock_position_button",
+                            onClick = { viewModel.togglePositionLock() }
+                        )
+                    )
 
                     BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("top_controls_row2")
                     ) {
-                        if (useTwoRowTopControls || maxWidth >= 520.dp) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceEvenly
-                                ) {
-                                    TopActionItem(
-                                        icon = Icons.Rounded.DeleteOutline,
-                                        label = "Delete",
-                                        enabled = hasSelection,
-                                        tag = "top_delete_button",
-                                        onClick = { selectedLayer?.let { viewModel.deleteLayer(it.id) } }
-                                    )
-                                    TopActionItem(
-                                        icon = Icons.Rounded.Transform,
-                                        label = "Corner Pin",
-                                        enabled = hasSelection,
-                                        highlighted = activeToolDrawer == ToolDrawerTab.CORNER_PIN,
-                                        highlightColor = StudioAmber,
-                                        tag = "top_tool_corner_pin",
-                                        onClick = { viewModel.openToolDrawer(ToolDrawerTab.CORNER_PIN) }
-                                    )
-                                    TopActionItem(
-                                        icon = Icons.Rounded.ViewInAr,
-                                        label = "3D",
-                                        enabled = hasSelection,
-                                        highlighted = activeToolDrawer == ToolDrawerTab.THREE_D,
-                                        highlightColor = StudioAmber,
-                                        tag = "top_tool_3d",
-                                        onClick = { viewModel.openToolDrawer(ToolDrawerTab.THREE_D) }
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceEvenly
-                                ) {
-                                    TransformLockTopItem(
-                                        shortCode = "S",
-                                        label = "Stretch",
-                                        isLocked = transformLocks.stretchLocked,
-                                        tag = "top_lock_stretch_button",
-                                        onClick = { viewModel.toggleStretchLock() }
-                                    )
-                                    TransformLockTopItem(
-                                        shortCode = "Z",
-                                        label = "Zoom",
-                                        isLocked = transformLocks.zoomLocked,
-                                        tag = "top_lock_zoom_button",
-                                        onClick = { viewModel.toggleZoomLock() }
-                                    )
-                                    TransformLockTopItem(
-                                        shortCode = "R",
-                                        label = "Rotate",
-                                        isLocked = transformLocks.rotationLocked,
-                                        tag = "top_lock_rotation_button",
-                                        onClick = { viewModel.toggleRotationLock() }
-                                    )
-                                    TransformLockTopItem(
-                                        shortCode = "P",
-                                        label = "Move",
-                                        isLocked = transformLocks.positionLocked,
-                                        tag = "top_lock_position_button",
-                                        onClick = { viewModel.togglePositionLock() }
-                                    )
-                                }
-                            }
+                        val canvasRatioForTop = document.canvas.ratioFloat.coerceAtLeast(0.1f)
+                        val topCols = (maxWidth / 72.dp).toInt().coerceIn(3, 7)
+                        val allowTwoTopRows = canvasRatioForTop >= 0.85f || maxWidth >= 500.dp
+                        val neededTopRows = ceil(topControls.size / topCols.toFloat()).toInt().coerceAtLeast(1)
+                        val topRowsPerPage = if (allowTwoTopRows) minOf(2, neededTopRows) else 1
+                        val topPageSize = (topCols * topRowsPerPage).coerceAtLeast(1)
+                        val topPages = topControls.chunked(topPageSize)
+
+                        if (topPages.size <= 1) {
+                            TopActionPageGrid(
+                                pageItems = topControls,
+                                cols = topCols,
+                                rows = topRowsPerPage
+                            )
                         } else {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (maxWidth < 340.dp) Modifier.horizontalScroll(rememberScrollState())
-                                        else Modifier
-                                    )
-                                    .padding(horizontal = 2.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceEvenly
+                            val topPagerState = rememberPagerState(pageCount = { topPages.size })
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                TopActionItem(
-                                    icon = Icons.Rounded.DeleteOutline,
-                                    label = "Delete",
-                                    enabled = hasSelection,
-                                    tag = "top_delete_button",
-                                    compact = true,
-                                    onClick = { selectedLayer?.let { viewModel.deleteLayer(it.id) } }
-                                )
-                                TopActionItem(
-                                    icon = Icons.Rounded.Transform,
-                                    label = "Pin",
-                                    enabled = hasSelection,
-                                    highlighted = activeToolDrawer == ToolDrawerTab.CORNER_PIN,
-                                    highlightColor = StudioAmber,
-                                    tag = "top_tool_corner_pin",
-                                    compact = true,
-                                    onClick = { viewModel.openToolDrawer(ToolDrawerTab.CORNER_PIN) }
-                                )
-                                TopActionItem(
-                                    icon = Icons.Rounded.ViewInAr,
-                                    label = "3D",
-                                    enabled = hasSelection,
-                                    highlighted = activeToolDrawer == ToolDrawerTab.THREE_D,
-                                    highlightColor = StudioAmber,
-                                    tag = "top_tool_3d",
-                                    compact = true,
-                                    onClick = { viewModel.openToolDrawer(ToolDrawerTab.THREE_D) }
-                                )
-                                TransformLockTopItem(
-                                    shortCode = "S",
-                                    label = "Stretch",
-                                    isLocked = transformLocks.stretchLocked,
-                                    compact = true,
-                                    tag = "top_lock_stretch_button",
-                                    onClick = { viewModel.toggleStretchLock() }
-                                )
-                                TransformLockTopItem(
-                                    shortCode = "Z",
-                                    label = "Zoom",
-                                    isLocked = transformLocks.zoomLocked,
-                                    compact = true,
-                                    tag = "top_lock_zoom_button",
-                                    onClick = { viewModel.toggleZoomLock() }
-                                )
-                                TransformLockTopItem(
-                                    shortCode = "R",
-                                    label = "Rotate",
-                                    isLocked = transformLocks.rotationLocked,
-                                    compact = true,
-                                    tag = "top_lock_rotation_button",
-                                    onClick = { viewModel.toggleRotationLock() }
-                                )
-                                TransformLockTopItem(
-                                    shortCode = "P",
-                                    label = "Move",
-                                    isLocked = transformLocks.positionLocked,
-                                    compact = true,
-                                    tag = "top_lock_position_button",
-                                    onClick = { viewModel.togglePositionLock() }
-                                )
+                                HorizontalPager(
+                                    state = topPagerState,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("top_row2_pager")
+                                ) { pageIdx ->
+                                    TopActionPageGrid(
+                                        pageItems = topPages[pageIdx],
+                                        cols = topCols,
+                                        rows = topRowsPerPage
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.padding(bottom = 4.dp, top = 1.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    repeat(topPages.size) { dotIdx ->
+                                        val isCur = topPagerState.currentPage == dotIdx
+                                        Box(
+                                            modifier = Modifier
+                                                .size(if (isCur) 7.dp else 5.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (isCur) Color.White else Color.White.copy(alpha = 0.38f)
+                                                )
+                                                .clickable {
+                                                    scope.launch { topPagerState.animateScrollToPage(dotIdx) }
+                                                }
+                                                .testTag("top_pager_dot_$dotIdx")
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -583,14 +558,18 @@ fun EditorScreen(
                 .imePadding()
                 .navigationBarsPadding()
                 .background(MaterialTheme.colorScheme.background)
+                .detectUnconsumedTap(key = "editor_theme_bg") {
+                    viewModel.dismissAllOverlaysAndSelection()
+                }
+                .testTag("editor_root_theme_background")
         ) {
             val availW = maxWidth
             val availH = maxHeight
             val canvasRatio = document.canvas.ratioFloat.coerceAtLeast(0.1f)
             val estimatedCanvasH = ((availW - 16.dp).coerceAtLeast(120.dp)) / canvasRatio
-            val spareVerticalDp = availH - estimatedCanvasH
+            val spareVerticalDp = (availH - estimatedCanvasH).coerceAtLeast(0.dp)
             val isSpaciousLandscapeCanvas = canvasRatio > 1.15f && spareVerticalDp > 220.dp
-            val maxSafeDrawerHeight = (availH - 150.dp).coerceAtLeast(160.dp)
+            val maxSafeDrawerHeight = (availH - 165.dp).coerceAtLeast(72.dp)
             val toolDrawerMaxHeight = when {
                 isClearTypingMode -> 140.dp
                 isSpaciousLandscapeCanvas -> (spareVerticalDp - 88.dp).coerceIn(280.dp, 460.dp)
@@ -743,6 +722,7 @@ fun EditorScreen(
                             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .pointerInput(Unit) { detectTapGestures { } }
                                 .testTag("tool_drawer_container")
                         ) {
                             Column(
@@ -924,7 +904,9 @@ fun EditorScreen(
                         )
                     }
 
-                    // Single-row Context-Sensitive Bottom Tool Bar (no Corner Pin or 3D here)
+                    // Original-Size Context-Sensitive Bottom Tool Bar:
+                    // Expands downward into vertical spare space outside canvas, or paginates whole pages
+                    // like notebook sheets via HorizontalPager without ever shrinking icons.
                     AnimatedVisibility(visible = !isClearTypingMode) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
@@ -936,169 +918,222 @@ fun EditorScreen(
                                 val isInTextMode = activeToolDrawer == ToolDrawerTab.TEXT || selectedLayer is TextLayer
                                 val isPhotoSelected = selectedLayer is ImageLayer
 
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    when {
-                                        isInTextMode -> {
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Edit,
-                                                label = "Edit",
-                                                selected = activeToolDrawer == ToolDrawerTab.TEXT,
-                                                tag = "bottom_tool_edit_text",
-                                                onClick = { viewModel.openTextToolDrawer() }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Palette,
-                                                label = "Color",
-                                                selected = activeToolDrawer == ToolDrawerTab.COLOR,
-                                                tag = "bottom_tool_color",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.FontDownload,
-                                                label = "Font",
-                                                selected = activeToolDrawer == ToolDrawerTab.FONT,
-                                                tag = "bottom_tool_font",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.FONT) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                                label = "Rotate",
-                                                selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                                tag = "bottom_tool_rotate",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                            )
-                                        }
-                                        isPhotoSelected -> {
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Crop,
-                                                label = "Crop",
-                                                selected = activeToolDrawer == ToolDrawerTab.CROP,
-                                                tag = "bottom_tool_crop",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.CROP) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Palette,
-                                                label = "Color",
-                                                selected = activeToolDrawer == ToolDrawerTab.COLOR,
-                                                tag = "bottom_tool_color",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Tune,
-                                                label = "Adjust",
-                                                selected = activeToolDrawer == ToolDrawerTab.ADJUST,
-                                                tag = "bottom_tool_adjust",
-                                                onClick = {
-                                                    viewModel.ensureImageLayerSelectedForAdjust()
-                                                    viewModel.openToolDrawer(ToolDrawerTab.ADJUST)
+                                val dockTools = when {
+                                    isInTextMode -> listOf(
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Edit,
+                                            label = "Edit",
+                                            selected = activeToolDrawer == ToolDrawerTab.TEXT,
+                                            tag = "bottom_tool_edit_text",
+                                            onClick = { viewModel.openTextToolDrawer() }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Palette,
+                                            label = "Color",
+                                            selected = activeToolDrawer == ToolDrawerTab.COLOR,
+                                            tag = "bottom_tool_color",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.FontDownload,
+                                            label = "Font",
+                                            selected = activeToolDrawer == ToolDrawerTab.FONT,
+                                            tag = "bottom_tool_font",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.FONT) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
+                                            label = "Rotate",
+                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
+                                            tag = "bottom_tool_rotate",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
+                                        )
+                                    )
+                                    isPhotoSelected -> listOf(
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Crop,
+                                            label = "Crop",
+                                            selected = activeToolDrawer == ToolDrawerTab.CROP,
+                                            tag = "bottom_tool_crop",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.CROP) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Palette,
+                                            label = "Color",
+                                            selected = activeToolDrawer == ToolDrawerTab.COLOR,
+                                            tag = "bottom_tool_color",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Tune,
+                                            label = "Adjust",
+                                            selected = activeToolDrawer == ToolDrawerTab.ADJUST,
+                                            tag = "bottom_tool_adjust",
+                                            onClick = {
+                                                viewModel.ensureImageLayerSelectedForAdjust()
+                                                viewModel.openToolDrawer(ToolDrawerTab.ADJUST)
+                                            }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
+                                            label = "Rotate",
+                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
+                                            tag = "bottom_tool_rotate",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
+                                        )
+                                    )
+                                    selectedLayer is ShapeLayer -> listOf(
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Category,
+                                            label = "Shapes",
+                                            selected = activeToolDrawer == ToolDrawerTab.SHAPES,
+                                            tag = "bottom_tool_shapes",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.AutoFixHigh,
+                                            label = "Points",
+                                            selected = shapeEditPointsMode,
+                                            tag = "bottom_tool_shape_points",
+                                            onClick = { viewModel.toggleShapeEditPointsMode() }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Palette,
+                                            label = "Color",
+                                            selected = activeToolDrawer == ToolDrawerTab.COLOR,
+                                            tag = "bottom_tool_color",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
+                                            label = "Rotate",
+                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
+                                            tag = "bottom_tool_rotate",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
+                                        )
+                                    )
+                                    selectedLayer is DrawLayer -> listOf(
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Brush,
+                                            label = "Draw",
+                                            selected = activeToolDrawer == ToolDrawerTab.DRAW,
+                                            tag = "bottom_tool_draw",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Palette,
+                                            label = "Color",
+                                            selected = activeToolDrawer == ToolDrawerTab.COLOR,
+                                            tag = "bottom_tool_color",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
+                                            label = "Rotate",
+                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
+                                            tag = "bottom_tool_rotate",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
+                                        )
+                                    )
+                                    selectedLayer is GroupLayer -> listOf(
+                                        DockToolSpec(
+                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
+                                            label = "Rotate",
+                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
+                                            tag = "bottom_tool_rotate",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
+                                        )
+                                    )
+                                    else -> listOf(
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Image,
+                                            label = "Photo",
+                                            selected = false,
+                                            tag = "bottom_tool_photo",
+                                            onClick = onPickPhotosDirect
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Title,
+                                            label = "Text+",
+                                            selected = activeToolDrawer == ToolDrawerTab.TEXT,
+                                            tag = "bottom_tool_text_plus",
+                                            onClick = { viewModel.startNewTextDraft() }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Category,
+                                            label = "Shapes",
+                                            selected = activeToolDrawer == ToolDrawerTab.SHAPES,
+                                            tag = "bottom_tool_shapes",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
+                                        ),
+                                        DockToolSpec(
+                                            icon = Icons.Rounded.Brush,
+                                            label = "Draw",
+                                            selected = activeToolDrawer == ToolDrawerTab.DRAW,
+                                            tag = "bottom_tool_draw",
+                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
+                                        )
+                                    )
+                                }
+
+                                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                                    val cols = (maxWidth / 76.dp).toInt().coerceIn(2, 6)
+                                    val maxSpareRows = if (activeToolDrawer != ToolDrawerTab.NONE) {
+                                        1
+                                    } else {
+                                        ((spareVerticalDp - 72.dp) / 60.dp).toInt().coerceIn(1, 3)
+                                    }
+                                    val neededRows = ceil(dockTools.size / cols.toFloat()).toInt().coerceAtLeast(1)
+                                    val rowsPerPage = minOf(neededRows, maxSpareRows).coerceAtLeast(1)
+                                    val pageSize = (cols * rowsPerPage).coerceAtLeast(1)
+                                    val pages = dockTools.chunked(pageSize)
+
+                                    if (pages.size <= 1) {
+                                        BottomDockPageGrid(
+                                            pageItems = dockTools,
+                                            cols = cols,
+                                            rows = rowsPerPage
+                                        )
+                                    } else {
+                                        val dockPagerState = rememberPagerState(pageCount = { pages.size })
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            HorizontalPager(
+                                                state = dockPagerState,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("bottom_tool_pager")
+                                            ) { pageIdx ->
+                                                BottomDockPageGrid(
+                                                    pageItems = pages[pageIdx],
+                                                    cols = cols,
+                                                    rows = rowsPerPage
+                                                )
+                                            }
+                                            Row(
+                                                modifier = Modifier.padding(bottom = 6.dp, top = 2.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                repeat(pages.size) { dotIdx ->
+                                                    val isCur = dockPagerState.currentPage == dotIdx
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(if (isCur) 7.dp else 5.dp)
+                                                            .clip(CircleShape)
+                                                            .background(
+                                                                if (isCur) StudioAzure
+                                                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                                                            )
+                                                            .clickable {
+                                                                scope.launch { dockPagerState.animateScrollToPage(dotIdx) }
+                                                            }
+                                                            .testTag("bottom_pager_dot_$dotIdx")
+                                                    )
                                                 }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                                label = "Rotate",
-                                                selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                                tag = "bottom_tool_rotate",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                            )
-                                        }
-                                        selectedLayer is ShapeLayer -> {
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Category,
-                                                label = "Shapes",
-                                                selected = activeToolDrawer == ToolDrawerTab.SHAPES,
-                                                tag = "bottom_tool_shapes",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.AutoFixHigh,
-                                                label = "Points",
-                                                selected = shapeEditPointsMode,
-                                                tag = "bottom_tool_shape_points",
-                                                onClick = { viewModel.toggleShapeEditPointsMode() }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Palette,
-                                                label = "Color",
-                                                selected = activeToolDrawer == ToolDrawerTab.COLOR,
-                                                tag = "bottom_tool_color",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                                label = "Rotate",
-                                                selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                                tag = "bottom_tool_rotate",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                            )
-                                        }
-                                        selectedLayer is DrawLayer -> {
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Brush,
-                                                label = "Draw",
-                                                selected = activeToolDrawer == ToolDrawerTab.DRAW,
-                                                tag = "bottom_tool_draw",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Palette,
-                                                label = "Color",
-                                                selected = activeToolDrawer == ToolDrawerTab.COLOR,
-                                                tag = "bottom_tool_color",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                                label = "Rotate",
-                                                selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                                tag = "bottom_tool_rotate",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                            )
-                                        }
-                                        selectedLayer is GroupLayer -> {
-                                            BottomToolItem(
-                                                icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                                label = "Rotate",
-                                                selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                                tag = "bottom_tool_rotate",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                            )
-                                        }
-                                        else -> {
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Image,
-                                                label = "Photo",
-                                                selected = false,
-                                                tag = "bottom_tool_photo",
-                                                onClick = onPickPhotosDirect
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Title,
-                                                label = "Text+",
-                                                selected = activeToolDrawer == ToolDrawerTab.TEXT,
-                                                tag = "bottom_tool_text_plus",
-                                                onClick = { viewModel.startNewTextDraft() }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Category,
-                                                label = "Shapes",
-                                                selected = activeToolDrawer == ToolDrawerTab.SHAPES,
-                                                tag = "bottom_tool_shapes",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
-                                            )
-                                            BottomToolItem(
-                                                icon = Icons.Rounded.Brush,
-                                                label = "Draw",
-                                                selected = activeToolDrawer == ToolDrawerTab.DRAW,
-                                                tag = "bottom_tool_draw",
-                                                onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
-                                            )
+                                            }
                                         }
                                     }
                                 }
@@ -1107,7 +1142,7 @@ fun EditorScreen(
                     }
                 }
 
-                if (isSpaciousLandscapeCanvas) {
+                if (isSpaciousLandscapeCanvas && activeToolDrawer == ToolDrawerTab.NONE) {
                     Spacer(modifier = Modifier.weight(0.72f))
                 }
             }
@@ -1340,6 +1375,155 @@ private fun FloatingCanvasCornerButton(
     }
 }
 
+private sealed class TopBarControlSpec {
+    data class Action(
+        val icon: ImageVector,
+        val label: String,
+        val enabled: Boolean = true,
+        val highlighted: Boolean = false,
+        val highlightColor: Color = StudioAmber,
+        val tag: String,
+        val onClick: () -> Unit
+    ) : TopBarControlSpec()
+
+    data class Lock(
+        val shortCode: String,
+        val label: String,
+        val isLocked: Boolean,
+        val tag: String,
+        val onClick: () -> Unit
+    ) : TopBarControlSpec()
+}
+
+private data class DockToolSpec(
+    val icon: ImageVector,
+    val label: String,
+    val selected: Boolean,
+    val tag: String,
+    val onClick: () -> Unit
+)
+
+@Composable
+private fun TopActionPageGrid(
+    pageItems: List<TopBarControlSpec>,
+    cols: Int,
+    rows: Int
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        val rowChunks = pageItems.chunked(cols)
+        for (r in 0 until rows) {
+            val rowItems = rowChunks.getOrNull(r) ?: emptyList()
+            if (rowItems.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    rowItems.forEach { item ->
+                        when (item) {
+                            is TopBarControlSpec.Action -> TopActionItem(
+                                icon = item.icon,
+                                label = item.label,
+                                enabled = item.enabled,
+                                highlighted = item.highlighted,
+                                highlightColor = item.highlightColor,
+                                tag = item.tag,
+                                onClick = item.onClick
+                            )
+                            is TopBarControlSpec.Lock -> TransformLockTopItem(
+                                shortCode = item.shortCode,
+                                label = item.label,
+                                isLocked = item.isLocked,
+                                tag = item.tag,
+                                onClick = item.onClick
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomDockPageGrid(
+    pageItems: List<DockToolSpec>,
+    cols: Int,
+    rows: Int
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        val rowChunks = pageItems.chunked(cols)
+        for (r in 0 until rows) {
+            val rowItems = rowChunks.getOrNull(r) ?: emptyList()
+            if (rowItems.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    rowItems.forEach { item ->
+                        BottomToolItem(
+                            icon = item.icon,
+                            label = item.label,
+                            selected = item.selected,
+                            tag = item.tag,
+                            onClick = item.onClick
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Fires [onTap] ONLY when a single-finger press releases inside touch slop without ANY
+ * child clickable, slider, drag handle, pager, or canvas viewport consuming it.
+ */
+private fun Modifier.detectUnconsumedTap(
+    key: Any = Unit,
+    onTap: () -> Unit
+): Modifier = pointerInput(key) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Main)
+        var anyConsumedOrMulti = down.isConsumed
+        var totalMove = Offset.Zero
+        var pastSlop = false
+        var cleanUp = false
+        while (true) {
+            val event = awaitPointerEvent(pass = PointerEventPass.Main)
+            if (event.changes.count { it.pressed } >= 2 || event.changes.any { it.isConsumed }) {
+                anyConsumedOrMulti = true
+                break
+            }
+            val active = event.changes.firstOrNull { it.id == down.id } ?: event.changes.firstOrNull()
+            if (active == null || !active.pressed) {
+                if (active != null && !active.isConsumed) {
+                    cleanUp = true
+                }
+                break
+            }
+            totalMove += (active.position - active.previousPosition)
+            if (totalMove.getDistance() >= viewConfiguration.touchSlop) {
+                pastSlop = true
+            }
+        }
+        if (!anyConsumedOrMulti && !pastSlop && cleanUp) {
+            onTap()
+        }
+    }
+}
+
 @Composable
 private fun TopActionItem(
     icon: ImageVector,
@@ -1347,7 +1531,6 @@ private fun TopActionItem(
     enabled: Boolean = true,
     highlighted: Boolean = false,
     highlightColor: Color = StudioAmber,
-    compact: Boolean = false,
     tag: String,
     onClick: () -> Unit
 ) {
@@ -1358,15 +1541,16 @@ private fun TopActionItem(
     }
     Column(
         modifier = Modifier
+            .widthIn(min = 56.dp)
             .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .minimumInteractiveComponentSize()
-            .padding(horizontal = if (compact) 4.dp else 8.dp, vertical = 4.dp)
+            .padding(horizontal = 6.dp, vertical = 4.dp)
             .testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 18.dp else 20.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
@@ -1382,7 +1566,6 @@ private fun TransformLockTopItem(
     shortCode: String,
     label: String,
     isLocked: Boolean,
-    compact: Boolean = false,
     tag: String,
     onClick: () -> Unit
 ) {
@@ -1390,11 +1573,12 @@ private fun TransformLockTopItem(
     val bgColor = if (isLocked) Color.White.copy(alpha = 0.2f) else Color.Transparent
     Column(
         modifier = Modifier
+            .widthIn(min = 56.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
             .clickable(onClick = onClick)
             .minimumInteractiveComponentSize()
-            .padding(horizontal = if (compact) 5.dp else 10.dp, vertical = 4.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
             .testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -1407,7 +1591,7 @@ private fun TransformLockTopItem(
                 imageVector = if (isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
                 contentDescription = "$label ${if (isLocked) "Locked" else "Unlocked"}",
                 tint = tint,
-                modifier = Modifier.size(if (compact) 14.dp else 16.dp)
+                modifier = Modifier.size(16.dp)
             )
             Text(
                 text = shortCode,
@@ -1438,11 +1622,12 @@ private fun BottomToolItem(
     val tint = if (selected) StudioAzure else MaterialTheme.colorScheme.onSurface
     Column(
         modifier = Modifier
+            .widthIn(min = 68.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) StudioAzure.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClick = onClick)
             .minimumInteractiveComponentSize()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
             .testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center

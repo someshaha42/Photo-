@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -193,12 +195,14 @@ fun FloatingThreeDControllerPanel(
     var showMoreMenu by remember { mutableStateOf(false) }
 
     val density = LocalDensity.current
-    val panelHeightDp = 248.dp
-    val panelHeightPx = with(density) { panelHeightDp.toPx() }
     val peekVisiblePx = with(density) { 64.dp.toPx() }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val maxAvailH = constraints.maxHeight.toFloat().coerceAtLeast(panelHeightPx)
+        val maxAvailH = constraints.maxHeight.toFloat().coerceAtLeast(with(density) { 180.dp.toPx() })
+        val panelHeightDp = with(density) {
+            minOf(248.dp.toPx(), (maxAvailH - 4.dp.toPx()).coerceAtLeast(180.dp.toPx())).toDp()
+        }
+        val panelHeightPx = with(density) { panelHeightDp.toPx() }
         val maxLiftUp = -(maxAvailH - panelHeightPx - with(density) { 12.dp.toPx() }).coerceAtLeast(0f)
         val maxTuckDown = (panelHeightPx - peekVisiblePx).coerceAtLeast(0f)
         var panelOffsetY by remember { mutableFloatStateOf(0f) }
@@ -220,6 +224,7 @@ fun FloatingThreeDControllerPanel(
                     color = Color.White.copy(alpha = 0.08f),
                     shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 12.dp, bottomEnd = 12.dp)
                 )
+                .pointerInput(Unit) { detectTapGestures { } }
                 .testTag("three_d_floating_panel")
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -446,10 +451,14 @@ fun FloatingThreeDControllerPanel(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.SpaceEvenly
                     ) {
+                        val railBtnModifier = Modifier
+                            .weight(1f, fill = false)
+                            .sizeIn(minWidth = 36.dp, minHeight = 36.dp, maxWidth = 46.dp, maxHeight = 46.dp)
                         RightRailModeButton(
                             selected = activeMode == ThreeDSubMode.MOVE,
                             tag = "three_d_mode_move",
-                            onClick = { activeMode = ThreeDSubMode.MOVE }
+                            onClick = { activeMode = ThreeDSubMode.MOVE },
+                            modifier = railBtnModifier
                         ) { tint ->
                             Icon(
                                 imageVector = Icons.Rounded.OpenWith,
@@ -462,7 +471,8 @@ fun FloatingThreeDControllerPanel(
                         RightRailModeButton(
                             selected = activeMode == ThreeDSubMode.ROTATE,
                             tag = "three_d_mode_rotate",
-                            onClick = { activeMode = ThreeDSubMode.ROTATE }
+                            onClick = { activeMode = ThreeDSubMode.ROTATE },
+                            modifier = railBtnModifier
                         ) { tint ->
                             RotateBoxIcon(tint = tint, modifier = Modifier.size(22.dp))
                         }
@@ -470,7 +480,8 @@ fun FloatingThreeDControllerPanel(
                         RightRailModeButton(
                             selected = activeMode == ThreeDSubMode.SCALE,
                             tag = "three_d_mode_scale",
-                            onClick = { activeMode = ThreeDSubMode.SCALE }
+                            onClick = { activeMode = ThreeDSubMode.SCALE },
+                            modifier = railBtnModifier
                         ) { tint ->
                             ScaleBoxIcon(tint = tint, modifier = Modifier.size(21.dp))
                         }
@@ -478,7 +489,8 @@ fun FloatingThreeDControllerPanel(
                         RightRailModeButton(
                             selected = activeMode == ThreeDSubMode.SKEW,
                             tag = "three_d_mode_skew",
-                            onClick = { activeMode = ThreeDSubMode.SKEW }
+                            onClick = { activeMode = ThreeDSubMode.SKEW },
+                            modifier = railBtnModifier
                         ) { tint ->
                             SkewBoxIcon(tint = tint, modifier = Modifier.size(21.dp))
                         }
@@ -1067,11 +1079,13 @@ private fun RightRailModeButton(
     selected: Boolean,
     tag: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     content: @Composable (tint: Color) -> Unit
 ) {
     Box(
-        modifier = Modifier
-            .size(46.dp)
+        modifier = modifier
+            .sizeIn(minWidth = 34.dp, minHeight = 34.dp, maxWidth = 46.dp, maxHeight = 46.dp)
+            .fillMaxSize()
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) AmActiveModeBg else Color.Transparent)
             .clickable(onClick = onClick)

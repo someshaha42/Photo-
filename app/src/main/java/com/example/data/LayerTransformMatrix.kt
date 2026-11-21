@@ -124,17 +124,99 @@ object LayerTransformMatrix {
         transform3D: Layer3DTransform,
         cornerPin: CornerPinOffsets
     ): FloatArray {
+        return mapQuadForRect(
+            left = 0f,
+            top = 0f,
+            right = boxW,
+            bottom = boxH,
+            boxW = boxW,
+            boxH = boxH,
+            transform3D = transform3D,
+            cornerPin = cornerPin
+        )
+    }
+
+    fun mapQuadForRect(
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ): FloatArray {
         val w = boxW.coerceAtLeast(1f)
         val h = boxH.coerceAtLeast(1f)
         val pts = floatArrayOf(
-            0f, 0f,
-            w, 0f,
-            w, h,
-            0f, h
+            left, top,
+            right, top,
+            right, bottom,
+            left, bottom
         )
         val m = computeLocalEffectMatrix(w, h, transform3D, cornerPin)
         m.mapPoints(pts)
         return pts
+    }
+
+    fun mapPoints(
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets,
+        pts: FloatArray
+    ): FloatArray {
+        val out = pts.copyOf()
+        val m = computeLocalEffectMatrix(boxW.coerceAtLeast(1f), boxH.coerceAtLeast(1f), transform3D, cornerPin)
+        m.mapPoints(out)
+        return out
+    }
+
+    fun mapPath(
+        source: android.graphics.Path,
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ): android.graphics.Path {
+        val out = android.graphics.Path(source)
+        val m = computeLocalEffectMatrix(boxW.coerceAtLeast(1f), boxH.coerceAtLeast(1f), transform3D, cornerPin)
+        out.transform(m)
+        return out
+    }
+
+    data class LocalBounds(
+        val minX: Float,
+        val minY: Float,
+        val maxX: Float,
+        val maxY: Float
+    ) {
+        val width: Float get() = (maxX - minX).coerceAtLeast(1f)
+        val height: Float get() = (maxY - minY).coerceAtLeast(1f)
+    }
+
+    fun computeQuadBoundingBox(
+        quadPts: FloatArray,
+        paddingPx: Float = 0f
+    ): LocalBounds {
+        var minX = quadPts[0]
+        var maxX = quadPts[0]
+        var minY = quadPts[1]
+        var maxY = quadPts[1]
+        for (i in 1 until 4) {
+            val x = quadPts[i * 2]
+            val y = quadPts[i * 2 + 1]
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+        }
+        return LocalBounds(
+            minX = minX - paddingPx,
+            minY = minY - paddingPx,
+            maxX = maxX + paddingPx,
+            maxY = maxY + paddingPx
+        )
     }
 
     /**

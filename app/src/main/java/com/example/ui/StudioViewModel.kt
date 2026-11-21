@@ -313,6 +313,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         endTransformTransaction()
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
+        } else if (_activeToolDrawer.value == ToolDrawerTab.TEXT &&
+            _document.value.selectedLayerId == null &&
+            _draftText.value.isNotBlank()
+        ) {
+            addTextLayer(_draftText.value)
         }
         _showStrokeControls.value = false
         _shapeEditPointsMode.value = false

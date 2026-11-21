@@ -94,24 +94,13 @@ fun PendingPhotoCropOverlay(
 
     fun computeFinalCropRect(): ImageCropRect {
         val invScale = 1f / imgScale.coerceAtLeast(1f)
-        val origLeft = (0.5f + (frame.left - 0.5f - panXNorm) * invScale).coerceIn(0f, 0.85f)
-        val origTop = (0.5f + (frame.top - 0.5f - panYNorm) * invScale).coerceIn(0f, 0.85f)
+        val origLeft = (0.5f + (frame.left - 0.5f - panXNorm) * invScale).coerceIn(0f, 0.88f)
+        val origTop = (0.5f + (frame.top - 0.5f - panYNorm) * invScale).coerceIn(0f, 0.88f)
         val origRight = (0.5f + (frame.right - 0.5f - panXNorm) * invScale)
-            .coerceIn((origLeft + 0.15f).coerceAtMost(1f), 1f)
+            .coerceIn((origLeft + 0.12f).coerceAtMost(1f), 1f)
         val origBottom = (0.5f + (frame.bottom - 0.5f - panYNorm) * invScale)
-            .coerceIn((origTop + 0.15f).coerceAtMost(1f), 1f)
+            .coerceIn((origTop + 0.12f).coerceAtMost(1f), 1f)
         return ImageCropRect(origLeft, origTop, origRight, origBottom).normalized()
-    }
-
-    fun applyCornerZoom(cornerXSign: Float, cornerYSign: Float, dxPx: Float, dyPx: Float) {
-        val avgDim = ((boxW + boxH) * 0.5f).coerceAtLeast(1f)
-        // Dragging corner dot zooms the photo smoothly
-        val radialDelta = (dxPx * cornerXSign + dyPx * cornerYSign) / avgDim
-        val nextScale = (imgScale * (1f + radialDelta * 1.45f)).coerceIn(1f, 8f)
-        val maxPan = ((nextScale - 1f) * 0.5f).coerceAtLeast(0f)
-        imgScale = nextScale
-        panXNorm = panXNorm.coerceIn(-maxPan, maxPan)
-        panYNorm = panYNorm.coerceIn(-maxPan, maxPan)
     }
 
     Surface(
@@ -153,14 +142,6 @@ fun PendingPhotoCropOverlay(
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
-                    if (imgScale > 1.01f) {
-                        Text(
-                            text = "${(imgScale * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = StudioEmerald,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
                 }
 
                 Button(
@@ -175,7 +156,7 @@ fun PendingPhotoCropOverlay(
                 }
             }
 
-            // Interactive Direct-Manipulation Crop Box (Corners = Zoom, Sides = Single-Edge Crop, Center = Move/Pan)
+            // Interactive Direct-Manipulation Crop Box (4 Corners = Free Crop Resize, 4 Sides = Single-Edge Crop, Center = Move Frame)
             BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
@@ -203,7 +184,7 @@ fun PendingPhotoCropOverlay(
                             boxH = sz.height.toFloat().coerceAtLeast(1f)
                         }
                 ) {
-                    // Clipped image + crop frame box (supports center drag pan/move + 2-finger pinch zoom)
+                    // Clipped image + crop frame box (supports dragging crop frame & optional 2-finger pinch/pan)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -240,7 +221,7 @@ fun PendingPhotoCropOverlay(
                                                 val f = liveFrame
                                                 val isFullFree = (f.right - f.left) >= 0.98f && (f.bottom - f.top) >= 0.98f
                                                 val insideFrame = nx in f.left..f.right && ny in f.top..f.bottom
-                                                movingFrame = !isFullFree && imgScale <= 1.01f && insideFrame
+                                                movingFrame = !isFullFree && insideFrame
                                             }
                                             if (decided && pan != Offset.Zero) {
                                                 val dxN = pan.x / size.width.coerceAtLeast(1)
@@ -314,7 +295,7 @@ fun PendingPhotoCropOverlay(
                         }
                     }
 
-                    // 4 Side Edge Handles (strictly crop ONLY that single dragged edge!) + 4 Corner Dots (Zoom!)
+                    // 4 Side Edge Handles (strictly single-edge crop) + 4 Corner Dots (free corner crop resize!)
                     val density = LocalDensity.current
                     val lDp = with(density) { (frame.left * boxW).toDp() }
                     val tDp = with(density) { (frame.top * boxH).toDp() }
@@ -326,36 +307,52 @@ fun PendingPhotoCropOverlay(
                     // Top edge: crops ONLY top edge
                     ImportCropEdgeHandle(cxDp, tDp, isHorizontal = true, tag = "import_crop_edge_top") { _, dy ->
                         val cur = liveFrame
-                        frame = cur.copy(top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.15f))
+                        frame = cur.copy(top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.12f))
                     }
                     // Bottom edge: crops ONLY bottom edge
                     ImportCropEdgeHandle(cxDp, bDp, isHorizontal = true, tag = "import_crop_edge_bottom") { _, dy ->
                         val cur = liveFrame
-                        frame = cur.copy(bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.15f, 1f))
+                        frame = cur.copy(bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.12f, 1f))
                     }
                     // Left edge: crops ONLY left edge
                     ImportCropEdgeHandle(lDp, cyDp, isHorizontal = false, tag = "import_crop_edge_left") { dx, _ ->
                         val cur = liveFrame
-                        frame = cur.copy(left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.15f))
+                        frame = cur.copy(left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.12f))
                     }
                     // Right edge: crops ONLY right edge
                     ImportCropEdgeHandle(rDp, cyDp, isHorizontal = false, tag = "import_crop_edge_right") { dx, _ ->
                         val cur = liveFrame
-                        frame = cur.copy(right = (cur.right + dx / boxW).coerceIn(cur.left + 0.15f, 1f))
+                        frame = cur.copy(right = (cur.right + dx / boxW).coerceIn(cur.left + 0.12f, 1f))
                     }
 
-                    // 4 Corner Pins: Dragging any corner dot zooms the photo smoothly!
+                    // 4 Corner Dots: Dragging any corner dot freely resizes that corner of the crop area
                     ImportCropCornerHandle(lDp, tDp, "import_crop_corner_tl") { dx, dy ->
-                        applyCornerZoom(-1f, -1f, dx, dy)
+                        val cur = liveFrame
+                        frame = cur.copy(
+                            left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.12f),
+                            top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.12f)
+                        )
                     }
                     ImportCropCornerHandle(rDp, tDp, "import_crop_corner_tr") { dx, dy ->
-                        applyCornerZoom(1f, -1f, dx, dy)
+                        val cur = liveFrame
+                        frame = cur.copy(
+                            right = (cur.right + dx / boxW).coerceIn(cur.left + 0.12f, 1f),
+                            top = (cur.top + dy / boxH).coerceIn(0f, cur.bottom - 0.12f)
+                        )
                     }
                     ImportCropCornerHandle(lDp, bDp, "import_crop_corner_bl") { dx, dy ->
-                        applyCornerZoom(-1f, 1f, dx, dy)
+                        val cur = liveFrame
+                        frame = cur.copy(
+                            left = (cur.left + dx / boxW).coerceIn(0f, cur.right - 0.12f),
+                            bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.12f, 1f)
+                        )
                     }
                     ImportCropCornerHandle(rDp, bDp, "import_crop_corner_br") { dx, dy ->
-                        applyCornerZoom(1f, 1f, dx, dy)
+                        val cur = liveFrame
+                        frame = cur.copy(
+                            right = (cur.right + dx / boxW).coerceIn(cur.left + 0.12f, 1f),
+                            bottom = (cur.bottom + dy / boxH).coerceIn(cur.top + 0.12f, 1f)
+                        )
                     }
                 }
             }

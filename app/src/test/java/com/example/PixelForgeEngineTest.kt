@@ -1402,6 +1402,95 @@ class PixelForgeEngineTest {
         }
     }
 
+    @Test
+    fun layerTransformMatrixMapsQuadPointsPathAndBoundingBoxAccurately() {
+        val boxW = 200f
+        val boxH = 100f
+        val cornerPin = CornerPinOffsets(tlDx = 0.15f, tlDy = 0.2f, brDx = -0.1f, brDy = -0.15f)
+        val transform3D = Layer3DTransform(rotationYDeg = 15f, skewXDeg = 10f)
+
+        val quad = LayerTransformMatrix.mapQuadForRect(
+            left = 20f,
+            top = 10f,
+            right = 180f,
+            bottom = 90f,
+            boxW = boxW,
+            boxH = boxH,
+            transform3D = transform3D,
+            cornerPin = cornerPin
+        )
+        assertEquals(8, quad.size)
+        // Top-left and bottom-right points must shift significantly away from unwarped (20,10) / (180,90)
+        assertTrue(kotlin.math.abs(quad[0] - 20f) > 5f || kotlin.math.abs(quad[1] - 10f) > 5f)
+        assertTrue(kotlin.math.abs(quad[4] - 180f) > 5f || kotlin.math.abs(quad[5] - 90f) > 5f)
+
+        val mappedPts = LayerTransformMatrix.mapPoints(
+            boxW = boxW,
+            boxH = boxH,
+            transform3D = transform3D,
+            cornerPin = cornerPin,
+            pts = floatArrayOf(100f, 50f, 20f, 10f)
+        )
+        assertEquals(quad[0], mappedPts[2], 0.01f)
+        assertEquals(quad[1], mappedPts[3], 0.01f)
+
+        val srcPath = android.graphics.Path().apply {
+            addRect(20f, 10f, 180f, 90f, android.graphics.Path.Direction.CW)
+        }
+        val mappedPath = LayerTransformMatrix.mapPath(
+            source = srcPath,
+            boxW = boxW,
+            boxH = boxH,
+            transform3D = transform3D,
+            cornerPin = cornerPin
+        )
+        val pathBounds = android.graphics.RectF()
+        mappedPath.computeBounds(pathBounds, true)
+        assertFalse(pathBounds.isEmpty)
+
+        val padding = 20f
+        val bbox = LayerTransformMatrix.computeQuadBoundingBox(quad, paddingPx = padding)
+        for (i in 0 until 4) {
+            val px = quad[i * 2]
+            val py = quad[i * 2 + 1]
+            assertTrue("Bounding box must enclose corner $i x", px >= bbox.minX + padding - 0.01f && px <= bbox.maxX - padding + 0.01f)
+            assertTrue("Bounding box must enclose corner $i y", py >= bbox.minY + padding - 0.01f && py <= bbox.maxY - padding + 0.01f)
+        }
+    }
+
+    @Test
+    fun dismissAllOverlaysAndSelectionCommitsDraftTextAndPreservesEdits() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+
+        // Start a new text draft and type non-blank text, then dismiss globally
+        vm.startNewTextDraft()
+        vm.updateDraftText("Saved Global Dismiss")
+        assertEquals(ToolDrawerTab.TEXT, vm.activeToolDrawer.value)
+
+        vm.dismissAllOverlaysAndSelection()
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        assertEquals(null, vm.document.value.selectedLayerId)
+        assertEquals(1, vm.document.value.layers.size)
+        val createdText = vm.document.value.layers.first() as TextLayer
+        assertEquals("Saved Global Dismiss", createdText.text)
+
+        // Select layer, edit 3D + CornerPin, then dismiss globally -> edits stay & mode closes
+        vm.selectLayer(createdText.id)
+        vm.openToolDrawer(ToolDrawerTab.THREE_D)
+        vm.updateSelectedLayer3DTransient { it.copy(rotationXDeg = 28f) }
+        vm.openToolDrawer(ToolDrawerTab.CORNER_PIN)
+        vm.updateSelectedLayerCornerPinTransient(createdText.id, cornerIndex = 0, deltaDxRatio = 0.12f, deltaDyRatio = 0.08f)
+
+        vm.dismissAllOverlaysAndSelection()
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        assertEquals(null, vm.document.value.selectedLayerId)
+        val persisted = StudioViewModel.findLayerRecursive(vm.document.value.layers, createdText.id) as TextLayer
+        assertEquals(28f, persisted.transform3D.rotationXDeg, 0.001f)
+        assertEquals(0.12f, persisted.cornerPin.tlDx, 0.001f)
+        assertEquals(0.08f, persisted.cornerPin.tlDy, 0.001f)
+    }
+
     private fun buildMinimalOtfBytes(): ByteArray {
         val tags = listOf("CFF ", "head", "maxp", "cmap")
         val numTables = tags.size

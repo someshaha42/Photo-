@@ -2,12 +2,18 @@ package com.example
 
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -16,6 +22,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.ProjectEntity
 import com.example.fonts.FontDiagnosticsSnapshot
@@ -53,6 +60,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -612,5 +620,163 @@ class ComposeRegressionTest {
         composeRule.onNodeWithTag("top_tool_corner_pin").assertExists()
         composeRule.onNodeWithTag("top_lock_stretch_button").assertExists()
     }
+
+    @Test
+    fun pendingPhotoCropCornerDotsResizeCropFrameInsteadOfZooming() {
+        val bmp = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
+        val pending = PendingImportPhoto(
+            uriString = "/tmp/sample_corner.png",
+            displayName = "sample_corner",
+            originalWidth = 200,
+            originalHeight = 200,
+            previewBitmap = bmp
+        )
+        var committedCrop: ImageCropRect? = null
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                PendingPhotoCropOverlay(
+                    pendingPhoto = pending,
+                    onDelete = {},
+                    onDone = { c, _ -> committedCrop = c }
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("import_crop_corner_br").performTouchInput {
+            down(center)
+            moveBy(Offset(-60f, -60f))
+            up()
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("import_crop_done_button").performClick()
+        assertEquals(0f, committedCrop?.left ?: -1f, 0.01f)
+        assertEquals(0f, committedCrop?.top ?: -1f, 0.01f)
+        assertTrue("BR corner drag inward must crop right edge (< 0.95)", (committedCrop?.right ?: 1f) < 0.95f)
+        assertTrue("BR corner drag inward must crop bottom edge (< 0.95)", (committedCrop?.bottom ?: 1f) < 0.95f)
+        bmp.recycle()
+    }
+
+    @Test
+    fun tappingEmptyThemeBackgroundDismissesOpenToolsAndReturnsMainOptionsWithSavedEdits() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val textId = vm.addTextLayer("Background Tap")!!
+        vm.openToolDrawer(ToolDrawerTab.COLOR)
+        vm.applyColorToSelectedLayer(0xFFFF4D4FL)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tool_drawer_container").assertIsDisplayed()
+
+        val bgBounds = composeRule.onNodeWithTag("editor_root_theme_background").getBoundsInRoot()
+        val drawerBounds = composeRule.onNodeWithTag("tool_drawer_container").getBoundsInRoot()
+
+        // Tap outer top-left empty theme background outside the canvas and drawer
+        composeRule.onNodeWithTag("editor_root_theme_background").performTouchInput {
+            click(Offset(6f, 6f))
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(
+            "Expected deselected layer after tap; bg=$bgBounds drawer=$drawerBounds drawerTab=${vm.activeToolDrawer.value}",
+            null,
+            vm.document.value.selectedLayerId
+        )
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        composeRule.onNodeWithTag("bottom_tool_photo").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_text_plus").assertIsDisplayed()
+        val updated = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+        assertEquals(0xFFFF4D4FL, updated.colorArgb)
+    }
+
+    @Test
+    fun portrait916ActivatesTopPagerWithFullSizeControlsAndNarrowBottomBarPaginates() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        vm.selectCanvasPreset(CanvasDimensions.PORTRAIT_9_16)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                Box(modifier = Modifier.width(240.dp)) {
+                    EditorScreen(
+                        viewModel = vm,
+                        onNavigateBack = {},
+                        onPickPhotosDirect = {},
+                        onPickBackgroundImageDirect = {},
+                        onOpenFontLibrary = {}
+                    )
+                }
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("top_row2_pager").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_pager_dot_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_pager_dot_1").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("bottom_tool_pager").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_pager_dot_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_pager_dot_1").assertIsDisplayed()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun warpedShapeLayerShiftsSelectionHandlesWithCornerPinDeformation() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        vm.addShapeLayer(LayerShapeType.CIRCLE)
+        // Switch from Edit Points mode to Bounds mode so SelectionDotHandlesOverlay is rendered
+        vm.toggleShapeEditPointsMode()
+        val shapeId = vm.document.value.selectedLayerId!!
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        val unwarpedDeleteBounds = composeRule.onNodeWithTag("selection_delete_cross_button").getBoundsInRoot()
+        val unwarpedZoomBounds = composeRule.onNodeWithTag("corner_zoom_icon_handle").getBoundsInRoot()
+
+        composeRule.runOnUiThread {
+            vm.updateSelectedLayerCornerPinTransient(shapeId, cornerIndex = 0, deltaDxRatio = 0.30f, deltaDyRatio = 0.25f)
+            vm.updateSelectedLayerCornerPinTransient(shapeId, cornerIndex = 2, deltaDxRatio = -0.25f, deltaDyRatio = -0.20f)
+        }
+        composeRule.waitForIdle()
+
+        val warpedDeleteBounds = composeRule.onNodeWithTag("selection_delete_cross_button").getBoundsInRoot()
+        val warpedZoomBounds = composeRule.onNodeWithTag("corner_zoom_icon_handle").getBoundsInRoot()
+
+        assertTrue(
+            "Delete handle must follow warped TL corner inward/downward",
+            warpedDeleteBounds.left > unwarpedDeleteBounds.left && warpedDeleteBounds.top > unwarpedDeleteBounds.top
+        )
+        assertTrue(
+            "Zoom handle must follow warped BR corner inward/upward",
+            warpedZoomBounds.left < unwarpedZoomBounds.left && warpedZoomBounds.top < unwarpedZoomBounds.top
+        )
+    }
 }
+
 
