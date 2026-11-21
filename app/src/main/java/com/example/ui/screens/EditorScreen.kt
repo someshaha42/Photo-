@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Crop
@@ -178,6 +179,9 @@ fun EditorScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val drawColorArgb by viewModel.drawColorArgb.collectAsStateWithLifecycle()
     val drawBrushSizeNorm by viewModel.drawBrushSizeNorm.collectAsStateWithLifecycle()
+    val drawStrokeStyle by viewModel.drawStrokeStyle.collectAsStateWithLifecycle()
+    val showStrokeControls by viewModel.showStrokeControls.collectAsStateWithLifecycle()
+    val shapeEditPointsMode by viewModel.shapeEditPointsMode.collectAsStateWithLifecycle()
     val transformLocks by viewModel.transformLocks.collectAsStateWithLifecycle()
     val pendingCropQueue by viewModel.pendingCropQueue.collectAsStateWithLifecycle()
 
@@ -256,6 +260,9 @@ fun EditorScreen(
     val activeFont = fonts.firstOrNull { it.id == (selectedTextLayer?.fontId ?: selectedFontId) }
     val hasDrawContent = (selectedLayer as? DrawLayer)?.strokes?.isNotEmpty() == true ||
         document.layers.filterIsInstance<DrawLayer>().any { it.strokes.isNotEmpty() }
+    val selectedDrawLayerCount = remember(document.layers, document.selectedLayerId, document.selectionOrder) {
+        viewModel.selectedDrawLayerIds().size
+    }
     val isClearTypingMode = isImeVisible && activeToolDrawer == ToolDrawerTab.TEXT
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -532,7 +539,13 @@ fun EditorScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = if (isClearTypingMode) 140.dp else 265.dp)
+                                .heightIn(
+                                    max = when {
+                                        isClearTypingMode -> 140.dp
+                                        showStrokeControls || activeToolDrawer == ToolDrawerTab.SHAPES -> 340.dp
+                                        else -> 265.dp
+                                    }
+                                )
                         ) {
                             // Drag handle collapses while typing so canvas remains maximally visible
                             AnimatedVisibility(visible = !isClearTypingMode) {
@@ -636,6 +649,8 @@ fun EditorScreen(
                                     ToolDrawerTab.SHAPES -> {
                                         ShapesToolPanel(
                                             selectedShapeLayer = selectedShapeLayer,
+                                            isEditPointsMode = shapeEditPointsMode,
+                                            onToggleEditPointsMode = { viewModel.toggleShapeEditPointsMode() },
                                             onAddShape = { viewModel.addShapeLayer(it) },
                                             onUpdateShape = { viewModel.updateSelectedShapeLayer(it) },
                                             onUpdateShapeTransient = { viewModel.updateSelectedShapeLayerTransient(it) },
@@ -662,9 +677,17 @@ fun EditorScreen(
                                         DrawToolPanel(
                                             brushColorArgb = drawColorArgb,
                                             brushSizeNorm = drawBrushSizeNorm,
+                                            strokeStyle = drawStrokeStyle,
+                                            showStrokeControls = showStrokeControls,
+                                            selectedDrawLayerCount = selectedDrawLayerCount,
                                             canUndoStroke = hasDrawContent,
                                             onSelectColor = { viewModel.setDrawColor(it) },
                                             onSetBrushSize = { viewModel.setDrawBrushSizeNorm(it) },
+                                            onToggleStrokeControls = { viewModel.toggleStrokeControls() },
+                                            onStartNewStrokeSession = { viewModel.startNewDrawLayerSession() },
+                                            onUpdateStrokeStyleTransient = { viewModel.updateStrokeStyleTransient(it) },
+                                            onUpdateStrokeStyleCommit = { viewModel.updateStrokeStyle(it) },
+                                            onEndTransaction = { viewModel.endTransformTransaction() },
                                             onUndoStroke = { viewModel.undoLastDrawStroke() },
                                             onClearDraw = { viewModel.clearActiveDrawLayer() },
                                             onDone = { viewModel.closeToolDrawer() }
@@ -883,6 +906,13 @@ fun EditorScreen(
                                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
                                         )
                                         BottomToolItem(
+                                            icon = Icons.Rounded.AutoFixHigh,
+                                            label = "Points",
+                                            selected = shapeEditPointsMode,
+                                            tag = "bottom_tool_shape_points",
+                                            onClick = { viewModel.toggleShapeEditPointsMode() }
+                                        )
+                                        BottomToolItem(
                                             icon = Icons.Rounded.Palette,
                                             label = "Color",
                                             selected = activeToolDrawer == ToolDrawerTab.COLOR,
@@ -985,8 +1015,10 @@ fun EditorScreen(
                 isCropMode = activeToolDrawer == ToolDrawerTab.CROP,
                 isDrawMode = activeToolDrawer == ToolDrawerTab.DRAW,
                 isCornerPinMode = activeToolDrawer == ToolDrawerTab.CORNER_PIN,
+                isShapeEditPointsMode = shapeEditPointsMode,
                 drawColorArgb = drawColorArgb,
                 drawBrushSizeNorm = drawBrushSizeNorm,
+                drawStrokeStyle = drawStrokeStyle,
                 transformLocks = transformLocks,
                 canvasZoom = canvasZoom,
                 canvasPan = canvasPan,
@@ -1006,6 +1038,9 @@ fun EditorScreen(
                 },
                 onCornerPinDrag = { id, cornerIndex, dxRatio, dyRatio ->
                     viewModel.updateSelectedLayerCornerPinTransient(id, cornerIndex, dxRatio, dyRatio)
+                },
+                onShapeHandleDrag = { id, handleId, dxPx, dyPx, basePx ->
+                    viewModel.applyShapeVectorHandleDragTransient(id, handleId, dxPx, dyPx, basePx)
                 },
                 onBeginTransformTransaction = { viewModel.beginTransformTransaction() },
                 onEndTransformTransaction = { viewModel.endTransformTransaction() },

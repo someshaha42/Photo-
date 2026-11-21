@@ -96,6 +96,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -107,6 +108,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.example.data.VectorShapeEngine
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
@@ -130,7 +132,7 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val LAYER_COLORS = listOf(
+internal val LAYER_COLORS = listOf(
     0xFFFFFFFF, 0xFF000000, 0xFFFF4D4F, 0xFFFFB020,
     0xFF22C55E, 0xFF2D8CFF, 0xFF00D4B4, 0xFF9333EA
 )
@@ -312,29 +314,14 @@ private fun LayerMiniThumbnail(
             is ShapeLayer -> {
                 Canvas(modifier = Modifier.size(30.dp)) {
                     val fill = Color(layer.fillColorArgb.toInt())
-                    when (layer.shapeType) {
-                        LayerShapeType.RECTANGLE -> drawRect(fill)
-                        LayerShapeType.ROUNDED_RECT -> drawRoundRect(fill, cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f))
-                        LayerShapeType.CIRCLE -> drawCircle(fill)
-                        LayerShapeType.STAR, LayerShapeType.BADGE -> {
-                            val pts = if (layer.shapeType == LayerShapeType.STAR) 5 else 8
-                            val inner = if (layer.shapeType == LayerShapeType.STAR) 0.45f else 0.78f
-                            val path = Path()
-                            val cx = size.width / 2f
-                            val cy = size.height / 2f
-                            val outerR = size.minDimension / 2f
-                            val total = pts * 2
-                            for (i in 0 until total) {
-                                val rad = if (i % 2 == 0) outerR else outerR * inner
-                                val ang = Math.toRadians((i * 360.0 / total) - 90.0)
-                                val px = cx + (rad * cos(ang)).toFloat()
-                                val py = cy + (rad * sin(ang)).toFloat()
-                                if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
-                            }
-                            path.close()
-                            drawPath(path, color = fill)
-                        }
-                    }
+                    val shapePath = VectorShapeEngine.buildShapePath(
+                        shapeType = layer.shapeType,
+                        params = layer.vectorParams,
+                        baseSizePx = size.minDimension * 0.85f,
+                        cx = size.width * 0.5f,
+                        cy = size.height * 0.5f
+                    ).asComposePath()
+                    drawPath(shapePath, color = fill)
                 }
             }
             is DrawLayer -> {
@@ -1199,69 +1186,6 @@ fun AdjustToolPanel(
                 onValueChangeFinished = onEndTransaction,
                 valueRange = activeParam.min..activeParam.max,
                 modifier = Modifier.testTag("adjust_slider")
-            )
-        }
-    }
-}
-
-@Composable
-fun ShapesToolPanel(
-    selectedShapeLayer: ShapeLayer?,
-    onAddShape: (LayerShapeType) -> Unit,
-    onUpdateShape: ((ShapeLayer) -> ShapeLayer) -> Unit,
-    onUpdateShapeTransient: ((ShapeLayer) -> ShapeLayer) -> Unit = onUpdateShape,
-    onEndTransaction: () -> Unit = {}
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            LayerShapeType.entries.forEach { shape ->
-                OutlinedButton(onClick = { onAddShape(shape) }) {
-                    Text(shape.label)
-                }
-            }
-        }
-
-        if (selectedShapeLayer != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                LAYER_COLORS.forEach { argb ->
-                    val selected = selectedShapeLayer.fillColorArgb == argb
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(Color(argb.toInt()))
-                            .border(
-                                width = if (selected) 2.5.dp else 1.dp,
-                                color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
-                                shape = CircleShape
-                            )
-                            .clickable { onUpdateShape { it.copy(fillColorArgb = argb) } }
-                    )
-                }
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Stroke", style = MaterialTheme.typography.labelLarge)
-                Text("${selectedShapeLayer.strokeWidth.roundToInt()}", style = MaterialTheme.typography.labelLarge)
-            }
-            Slider(
-                value = selectedShapeLayer.strokeWidth,
-                onValueChange = { w -> onUpdateShapeTransient { it.copy(strokeWidth = w) } },
-                onValueChangeFinished = onEndTransaction,
-                valueRange = 0f..16f
             )
         }
     }

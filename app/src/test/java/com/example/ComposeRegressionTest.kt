@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.example.fonts.FontDiagnosticsSnapshot
@@ -20,11 +21,16 @@ import com.example.fonts.FontImportProgress
 import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
 import com.example.fonts.FontSource
+import com.example.model.DrawPoint
+import com.example.model.DrawStroke
 import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
+import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
+import com.example.model.ShapeLayer
 import com.example.model.TextLayer
+import com.example.model.VectorStrokePattern
 import com.example.ui.PendingImportPhoto
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
@@ -327,5 +333,130 @@ class ComposeRegressionTest {
         composeRule.waitForIdle()
         assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
         assertFalse(vm.transformLocks.value.positionLocked)
+    }
+
+    @Test
+    fun shapesTabDisplaysAlightWhiteShapeGridTogglesEditPointsAndOpensVectorControls() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("bottom_tool_shapes").performClick()
+        composeRule.waitForIdle()
+
+        // Shape picker grid shows white silhouette tiles
+        composeRule.onNodeWithTag("shape_picker_grid").assertIsDisplayed()
+        composeRule.onNodeWithTag("shape_pick_circle").assertIsDisplayed()
+        composeRule.onNodeWithTag("shape_pick_triangle").assertIsDisplayed()
+        composeRule.onNodeWithTag("shape_pick_star").assertIsDisplayed()
+
+        // Tapping Triangle adds a white Triangle shape and switches bottom bar + Edit Points ON
+        composeRule.onNodeWithTag("shape_pick_triangle").performClick()
+        composeRule.waitForIdle()
+        val added = StudioViewModel.findLayerRecursive(vm.document.value.layers, vm.document.value.selectedLayerId) as ShapeLayer
+        assertEquals(LayerShapeType.TRIANGLE, added.shapeType)
+        assertEquals(0xFFFFFFFFL, added.fillColorArgb)
+        assertTrue(vm.shapeEditPointsMode.value)
+        composeRule.onNodeWithTag("shape_edit_points_toggle").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_shape_points").assertIsDisplayed()
+
+        // Toggle between Edit Points and Bounds mode
+        composeRule.onNodeWithTag("shape_edit_points_toggle").performClick()
+        composeRule.waitForIdle()
+        assertFalse(vm.shapeEditPointsMode.value)
+    }
+
+    @Test
+    fun drawStrokeControlsPanelSupportsAllNineSectionsContextSyncAndWidthPoints() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // Open Draw tool panel -> Size dots + Stroke controls toggle visible
+        composeRule.onNodeWithTag("bottom_tool_draw").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("draw_size_dot_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("draw_stroke_controls_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("stroke_controls_panel").assertIsDisplayed()
+        composeRule.onNodeWithText("New Stroke Defaults").assertIsDisplayed()
+
+        // All 9 collapsible section headers exist
+        listOf(
+            "stroke_section_thickness",
+            "stroke_section_taper",
+            "stroke_section_cap_and_join",
+            "stroke_section_stroke_style",
+            "stroke_section_opacity",
+            "stroke_section_smoothing",
+            "stroke_section_width_profile",
+            "stroke_section_pressure",
+            "stroke_section_advanced"
+        ).forEach { tag ->
+            composeRule.onNodeWithTag(tag).assertExists()
+        }
+
+        // Toggle linked/unlinked in Thickness (initially expanded)
+        composeRule.onNodeWithTag("stroke_link_widths_toggle").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertFalse(vm.drawStrokeStyle.value.widthsLinked)
+
+        // Expand Stroke Style and choose Dashed
+        composeRule.onNodeWithTag("stroke_section_stroke_style").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("stroke_pattern_dashed").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals(VectorStrokePattern.DASHED, vm.drawStrokeStyle.value.pattern)
+
+        // Draw a stroke -> badge automatically switches to Editing Selected Layer and adds non-destructively
+        composeRule.runOnUiThread {
+            vm.addDrawStroke(
+                DrawStroke(
+                    colorArgb = 0xFFFF4D4FL,
+                    strokeWidthNorm = 0.02f,
+                    rawPoints = listOf(DrawPoint(0.2f, 0.2f), DrawPoint(0.8f, 0.8f)),
+                    points = listOf(DrawPoint(0.2f, 0.2f), DrawPoint(0.8f, 0.8f)),
+                    style = vm.drawStrokeStyle.value
+                )
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Editing Selected Layer").performScrollTo().assertIsDisplayed()
+
+        // Expand Width Profile section & add/remove an individual width point
+        composeRule.onNodeWithTag("stroke_section_width_profile").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("add_width_point_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, vm.drawStrokeStyle.value.widthPoints.size)
+
+        composeRule.onNodeWithTag("remove_width_point_0").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals(0, vm.drawStrokeStyle.value.widthPoints.size)
     }
 }

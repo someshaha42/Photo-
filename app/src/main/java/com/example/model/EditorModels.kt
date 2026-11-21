@@ -292,12 +292,53 @@ enum class TextAlignOption(val label: String) {
 
 @Serializable
 enum class LayerShapeType(val label: String) {
-    RECTANGLE("Rect"),
-    ROUNDED_RECT("Rounded"),
     CIRCLE("Circle"),
+    ROUNDED_RECT("Rounded"),
+    RECTANGLE("Square"),
+    TRIANGLE("Triangle"),
     STAR("Star"),
+    HEXAGON("Hexagon"),
+    PIE("Pie"),
+    ARROW("Arrow"),
+    QUAD("Quad"),
     BADGE("Badge")
 }
+
+@Serializable
+data class NormalizedPoint(
+    val x: Float,
+    val y: Float
+)
+
+@Serializable
+data class ShapeVectorParams(
+    val cornerRadiusFrac: Float = 0.20f,
+    val starInnerRatio: Float = 0.45f,
+    val starPoints: Int = 5,
+    val polygonSides: Int = 6,
+    val pieStartDeg: Float = 45f,
+    val pieSweepDeg: Float = 270f,
+    val triangleApexX: Float = 0f,
+    val triangleApexY: Float = -0.5f,
+    val triangleLeftX: Float = -0.5f,
+    val triangleLeftY: Float = 0.5f,
+    val triangleRightX: Float = 0.5f,
+    val triangleRightY: Float = 0.5f,
+    val arrowTipX: Float = 0.42f,
+    val arrowTipY: Float = -0.42f,
+    val arrowTailX: Float = -0.42f,
+    val arrowTailY: Float = 0.42f,
+    val arrowHeadLengthFrac: Float = 0.36f,
+    val arrowShaftWidthFrac: Float = 0.22f,
+    val quadVertices: List<NormalizedPoint> = listOf(
+        NormalizedPoint(-0.46f, -0.44f),
+        NormalizedPoint(0.36f, -0.44f),
+        NormalizedPoint(0.48f, 0.46f),
+        NormalizedPoint(-0.46f, 0.46f)
+    ),
+    val boxWidthScale: Float = 1f,
+    val boxHeightScale: Float = 1f
+)
 
 @Serializable
 sealed interface EditorLayer {
@@ -451,9 +492,10 @@ data class ShapeLayer(
     override val id: String = UUID.randomUUID().toString(),
     override val name: String = "Shape",
     val shapeType: LayerShapeType = LayerShapeType.ROUNDED_RECT,
-    val fillColorArgb: Long = 0xFF2D8CFF,
-    val strokeColorArgb: Long = 0xFFFFFFFF,
-    val strokeWidth: Float = 4f,
+    val fillColorArgb: Long = 0xFFFFFFFFL,
+    val strokeColorArgb: Long = 0xFF2D8CFFL,
+    val strokeWidth: Float = 0f,
+    val vectorParams: ShapeVectorParams = ShapeVectorParams(),
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
@@ -544,15 +586,118 @@ data class GroupLayer(
 @Serializable
 data class DrawPoint(
     val xNorm: Float,
-    val yNorm: Float
+    val yNorm: Float,
+    val pressure: Float = 1f
 )
+
+@Serializable
+enum class VectorLineCap(val label: String) {
+    BUTT("Butt"),
+    ROUND("Round"),
+    SQUARE("Square")
+}
+
+@Serializable
+enum class VectorLineJoin(val label: String) {
+    MITER("Miter"),
+    ROUND("Round"),
+    BEVEL("Bevel")
+}
+
+@Serializable
+enum class VectorStrokePattern(val label: String) {
+    SOLID("Solid"),
+    DASHED("Dashed"),
+    DOTTED("Dotted"),
+    DASH_DOT("Dash-Dot")
+}
+
+@Serializable
+enum class VectorStrokeAlignment(val label: String) {
+    CENTER("Center"),
+    INSIDE("Inside"),
+    OUTSIDE("Outside")
+}
+
+@Serializable
+enum class WidthPointTransition(val label: String) {
+    SMOOTH("Smooth"),
+    SHARP("Sharp")
+}
+
+@Serializable
+data class WidthProfilePoint(
+    val id: String = UUID.randomUUID().toString(),
+    val positionNorm: Float,
+    val widthMultiplier: Float,
+    val transition: WidthPointTransition = WidthPointTransition.SMOOTH
+)
+
+@Serializable
+data class VectorStrokeStyle(
+    val overallWidthNorm: Float = 0.014f,
+    val startWidthFactor: Float = 1f,
+    val endWidthFactor: Float = 1f,
+    val widthsLinked: Boolean = true,
+    val startTaperLength: Float = 0f,
+    val startTaperIntensity: Float = 1f,
+    val endTaperLength: Float = 0f,
+    val endTaperIntensity: Float = 1f,
+    val startRoundness: Float = 1f,
+    val endRoundness: Float = 1f,
+    val lineCap: VectorLineCap = VectorLineCap.ROUND,
+    val lineJoin: VectorLineJoin = VectorLineJoin.ROUND,
+    val pattern: VectorStrokePattern = VectorStrokePattern.SOLID,
+    val dashLengthNorm: Float = 0.032f,
+    val dashSpacingNorm: Float = 0.020f,
+    val dotSpacingNorm: Float = 0.018f,
+    val strokeSpacingNorm: Float = 0f,
+    val strokeOpacity: Float = 1f,
+    val smoothing: Float = 0.25f,
+    val variableWidthEnabled: Boolean = false,
+    val widthProfile: List<WidthProfilePoint> = defaultWidthProfile(),
+    val widthPoints: List<WidthProfilePoint> = emptyList(),
+    val pressureEnabled: Boolean = true,
+    val pressureSensitivity: Float = 0.65f,
+    val miterLimit: Float = 4f,
+    val strokeOffsetNorm: Float = 0f,
+    val strokeAlignment: VectorStrokeAlignment = VectorStrokeAlignment.CENTER
+) {
+    fun requiresVariableGeometry(): Boolean {
+        return variableWidthEnabled ||
+            startWidthFactor != 1f ||
+            endWidthFactor != 1f ||
+            startTaperLength > 0.001f ||
+            endTaperLength > 0.001f ||
+            widthPoints.isNotEmpty() ||
+            (pressureEnabled && pressureSensitivity > 0.01f) ||
+            strokeOffsetNorm != 0f ||
+            strokeAlignment != VectorStrokeAlignment.CENTER
+    }
+
+    companion object {
+        fun defaultWidthProfile(): List<WidthProfilePoint> = listOf(
+            WidthProfilePoint(id = "wp_start", positionNorm = 0f, widthMultiplier = 1f),
+            WidthProfilePoint(id = "wp_mid", positionNorm = 0.5f, widthMultiplier = 1f),
+            WidthProfilePoint(id = "wp_end", positionNorm = 1f, widthMultiplier = 1f)
+        )
+    }
+}
 
 @Serializable
 data class DrawStroke(
     val colorArgb: Long = 0xFFFF4D4FL,
-    val strokeWidthNorm: Float = 0.012f,
-    val points: List<DrawPoint> = emptyList()
-)
+    val strokeWidthNorm: Float = 0.014f,
+    val points: List<DrawPoint> = emptyList(),
+    val rawPoints: List<DrawPoint> = emptyList(),
+    val style: VectorStrokeStyle = VectorStrokeStyle()
+) {
+    val resolvedRawPoints: List<DrawPoint>
+        get() = if (rawPoints.isNotEmpty()) rawPoints else points
+
+    val effectiveOverallWidthNorm: Float
+        get() = if (style.overallWidthNorm > 0f) style.overallWidthNorm else strokeWidthNorm
+}
 
 @Serializable
 @SerialName("draw")

@@ -4,6 +4,9 @@ import android.content.Context
 import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.MediaStorageManager
+import com.example.data.ShapeHandleKind
+import com.example.data.VectorShapeEngine
+import com.example.data.VectorStrokeEngine
 import com.example.fonts.ColorTableType
 import com.example.fonts.FontArchiveExtractor
 import com.example.fonts.FontClassification
@@ -27,15 +30,25 @@ import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.Layer3DTransform
+import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
+import com.example.model.VectorLineCap
+import com.example.model.VectorLineJoin
+import com.example.model.VectorStrokeAlignment
+import com.example.model.VectorStrokePattern
+import com.example.model.VectorStrokeStyle
+import com.example.model.WidthPointTransition
+import com.example.model.WidthProfilePoint
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
 import com.example.ui.TransformLockState
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -1077,6 +1090,198 @@ class PixelForgeEngineTest {
             rendered.recycle()
             sourceFile.delete()
             assertTrue("Perspective/3D photo and text must render visible non-blank pixels", visiblePixels > 150)
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun alightStyleShapesDefaultWhiteHaveMinimalHandlesAndRenderCleanly() {
+        runBlocking {
+            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+            vm.createNewProject()
+
+            // Circle & Rectangle strictly have 4 minimal cardinal dots; Rounded Rect adds 1 radius pill; Triangle has 3 vertex rings
+            val circleLayer = ShapeLayer(shapeType = LayerShapeType.CIRCLE)
+            assertEquals(0xFFFFFFFFL, circleLayer.fillColorArgb)
+            val circleHandles = VectorShapeEngine.computeControlHandles(circleLayer, 200f)
+            assertEquals(4, circleHandles.size)
+            assertTrue(circleHandles.all { it.kind == ShapeHandleKind.CARDINAL_DOT })
+
+            val rectHandles = VectorShapeEngine.computeControlHandles(ShapeLayer(shapeType = LayerShapeType.RECTANGLE), 200f)
+            assertEquals(4, rectHandles.size)
+            assertTrue(rectHandles.all { it.kind == ShapeHandleKind.CARDINAL_DOT })
+
+            val roundedHandles = VectorShapeEngine.computeControlHandles(
+                ShapeLayer(shapeType = LayerShapeType.ROUNDED_RECT, vectorParams = VectorShapeEngine.defaultParamsFor(LayerShapeType.ROUNDED_RECT)),
+                200f
+            )
+            assertEquals(5, roundedHandles.size)
+            assertEquals(1, roundedHandles.count { it.kind == ShapeHandleKind.RADIUS_PILL })
+
+            val triLayer = ShapeLayer(shapeType = LayerShapeType.TRIANGLE)
+            val triHandles = VectorShapeEngine.computeControlHandles(triLayer, 200f)
+            assertEquals(3, triHandles.size)
+            assertTrue(triHandles.all { it.kind == ShapeHandleKind.VERTEX_RING })
+
+            // Dragging triangle apex stretches vertex upward non-destructively
+            val draggedTri = VectorShapeEngine.applyHandleDrag(triLayer, "tri_apex", dxPx = 0f, dyPx = -40f, baseSizePx = 200f)
+            assertTrue(draggedTri.vectorParams.triangleApexY < triLayer.vectorParams.triangleApexY)
+
+            // ViewModel addShapeLayer defaults to white and turns on Edit Points mode
+            vm.addShapeLayer(LayerShapeType.STAR)
+            val added = StudioViewModel.findLayerRecursive(vm.document.value.layers, vm.document.value.selectedLayerId) as ShapeLayer
+            assertEquals(0xFFFFFFFFL, added.fillColorArgb)
+            assertTrue(vm.shapeEditPointsMode.value)
+
+            // Render every new vector shape type onto native bitmap
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+            listOf(
+                LayerShapeType.TRIANGLE,
+                LayerShapeType.HEXAGON,
+                LayerShapeType.PIE,
+                LayerShapeType.ARROW,
+                LayerShapeType.QUAD
+            ).forEach { shapeType ->
+                val shapeDoc = ProjectDocument(
+                    canvas = CanvasDimensions.SQUARE_1_1,
+                    background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                    layers = listOf(
+                        ShapeLayer(
+                            shapeType = shapeType,
+                            fillColorArgb = 0xFFFFFFFFL,
+                            vectorParams = VectorShapeEngine.defaultParamsFor(shapeType)
+                        )
+                    )
+                )
+                val bmp = mediaManager.renderProjectToBitmap(shapeDoc, renderEngine, 180, 180)
+                var whitePx = 0
+                for (y in 20 until 160) {
+                    for (x in 20 until 160) {
+                        val c = bmp.getPixel(x, y)
+                        if (Color.alpha(c) > 200 && Color.red(c) > 200) whitePx++
+                    }
+                }
+                bmp.recycle()
+                assertTrue("Shape $shapeType must render visible white vector pixels (got $whitePx)", whitePx > 40)
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun vectorStrokeEngineSupportsSmoothingTaperProfileWidthPointsPressureAndNonDestructiveEdit() {
+        runBlocking {
+            val jagged = listOf(
+                DrawPoint(0.10f, 0.50f, pressure = 0.4f),
+                DrawPoint(0.25f, 0.35f, pressure = 0.7f),
+                DrawPoint(0.45f, 0.65f, pressure = 1.0f),
+                DrawPoint(0.70f, 0.38f, pressure = 0.9f),
+                DrawPoint(0.90f, 0.50f, pressure = 0.5f)
+            )
+            val smoothed = VectorStrokeEngine.smoothPoints(jagged, smoothingIntensity = 0.8f)
+            assertEquals(jagged.first().xNorm, smoothed.first().xNorm, 0.0001f)
+            assertEquals(jagged.last().xNorm, smoothed.last().xNorm, 0.0001f)
+            assertTrue(smoothed.size >= jagged.size)
+
+            // Evaluate linked vs unlinked widths, taper, roundness, pressure, widthProfile & widthPoints
+            val linkedStyle = VectorStrokeStyle(widthsLinked = true, startWidthFactor = 1.4f, endWidthFactor = 0.5f)
+            assertEquals(1.4f, VectorStrokeEngine.evaluateWidthMultiplier(1f, 1.0f, linkedStyle), 0.02f)
+
+            val unlinkedTaperedStyle = VectorStrokeStyle(
+                widthsLinked = false,
+                startWidthFactor = 1.0f,
+                endWidthFactor = 1.8f,
+                startTaperLength = 0.3f,
+                startTaperIntensity = 0.9f,
+                startRoundness = 0.8f,
+                variableWidthEnabled = true,
+                widthProfile = listOf(
+                    WidthProfilePoint(id = "p0", positionNorm = 0f, widthMultiplier = 1f),
+                    WidthProfilePoint(id = "p1", positionNorm = 0.5f, widthMultiplier = 1.6f),
+                    WidthProfilePoint(id = "p2", positionNorm = 1f, widthMultiplier = 1f)
+                ),
+                widthPoints = listOf(
+                    WidthProfilePoint(id = "w0", positionNorm = 0.5f, widthMultiplier = 1.25f, transition = WidthPointTransition.SHARP)
+                ),
+                pressureEnabled = true,
+                pressureSensitivity = 0.8f
+            )
+            val atStart = VectorStrokeEngine.evaluateWidthMultiplier(0f, 1.0f, unlinkedTaperedStyle)
+            val atMidHighPressure = VectorStrokeEngine.evaluateWidthMultiplier(0.5f, 1.3f, unlinkedTaperedStyle)
+            val atMidLowPressure = VectorStrokeEngine.evaluateWidthMultiplier(0.5f, 0.2f, unlinkedTaperedStyle)
+            assertTrue("Start taper must narrow tip ($atStart < $atMidHighPressure)", atStart < atMidHighPressure * 0.4f)
+            assertTrue("Pressure sensitivity must scale width ($atMidHighPressure > $atMidLowPressure)", atMidHighPressure > atMidLowPressure)
+
+            // End-to-end ViewModel pre-draw -> draw -> deselect -> select -> non-destructive post-draw edit + undo/redo + batch edit
+            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+            vm.createNewProject()
+            vm.updateStrokeStyle {
+                it.copy(
+                    overallWidthNorm = 0.03f,
+                    pattern = VectorStrokePattern.DASHED,
+                    lineCap = VectorLineCap.SQUARE,
+                    lineJoin = VectorLineJoin.BEVEL,
+                    smoothing = 0.2f,
+                    strokeOpacity = 0.85f,
+                    miterLimit = 6f,
+                    strokeOffsetNorm = 0.006f,
+                    strokeAlignment = VectorStrokeAlignment.OUTSIDE
+                )
+            }
+            vm.addDrawStroke(
+                DrawStroke(
+                    colorArgb = 0xFFFF4D4FL,
+                    strokeWidthNorm = 0.03f,
+                    rawPoints = jagged,
+                    points = VectorStrokeEngine.smoothPoints(jagged, 0.2f),
+                    style = vm.drawStrokeStyle.value
+                )
+            )
+            val layer1Id = vm.document.value.selectedLayerId!!
+
+            // Switch to new session (deselects) -> defaults stay clean/new -> reselect loads layer1's saved style
+            vm.startNewDrawLayerSession()
+            assertEquals(null, vm.document.value.selectedLayerId)
+            vm.selectLayer(layer1Id)
+            assertEquals(VectorStrokePattern.DASHED, vm.drawStrokeStyle.value.pattern)
+            assertEquals(VectorStrokeAlignment.OUTSIDE, vm.drawStrokeStyle.value.strokeAlignment)
+
+            // Non-destructive post-draw edit recomputes smoothed points from preserved rawPoints without flattening
+            vm.updateStrokeStyle { it.copy(smoothing = 0.9f, pattern = VectorStrokePattern.DASH_DOT, variableWidthEnabled = true) }
+            val updatedLayer = StudioViewModel.findLayerRecursive(vm.document.value.layers, layer1Id) as DrawLayer
+            val updatedStroke = updatedLayer.strokes.first()
+            assertEquals(jagged.size, updatedStroke.rawPoints.size)
+            assertEquals(VectorStrokePattern.DASH_DOT, updatedStroke.style.pattern)
+            assertTrue(updatedStroke.points.size >= updatedStroke.rawPoints.size)
+
+            // Undo reverses post-draw style edit back to DASHED
+            vm.undo()
+            val afterUndo = StudioViewModel.findLayerRecursive(vm.document.value.layers, layer1Id) as DrawLayer
+            assertEquals(VectorStrokePattern.DASHED, afterUndo.strokes.first().style.pattern)
+            vm.redo()
+
+            // JSON round-trip preserves rawPoints and VectorStrokeStyle
+            val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; classDiscriminator = "layerType" }
+            val encoded = json.encodeToString(vm.document.value)
+            val decoded = json.decodeFromString<ProjectDocument>(encoded)
+            val decodedStroke = (decoded.layers.first() as DrawLayer).strokes.first()
+            assertEquals(VectorStrokePattern.DASH_DOT, decodedStroke.style.pattern)
+            assertEquals(jagged.size, decodedStroke.rawPoints.size)
+
+            // Render stroke bitmap cleanly via MediaStorageManager
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+            val rendered = mediaManager.renderProjectToBitmap(decoded, renderEngine, 200, 200)
+            var redInkPx = 0
+            for (y in 20 until 180) {
+                for (x in 10 until 190) {
+                    val px = rendered.getPixel(x, y)
+                    if (Color.alpha(px) > 100 && Color.red(px) > 180) redInkPx++
+                }
+            }
+            rendered.recycle()
+            assertTrue("Variable-width + dashed + offset stroke must render visible ink pixels ($redInkPx)", redInkPx > 30)
         }
     }
 

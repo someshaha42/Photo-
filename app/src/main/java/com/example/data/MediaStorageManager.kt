@@ -412,7 +412,7 @@ class MediaStorageManager(private val context: Context) {
                 }
             }
             is ShapeLayer -> {
-                drawShapeOnCanvas(canvas, layer.copy(opacity = effectiveOpacity), targetWidth)
+                drawShapeOnCanvas(canvas, layer.copy(opacity = effectiveOpacity), targetWidth, targetHeight)
             }
             is TextLayer -> {
                 val resolutionFactor = targetWidth / 360f
@@ -487,38 +487,18 @@ class MediaStorageManager(private val context: Context) {
         targetWidth: Int,
         targetHeight: Int
     ) {
-        val minDim = min(targetWidth, targetHeight).toFloat().coerceAtLeast(1f)
+        val w = targetWidth.toFloat().coerceAtLeast(1f)
+        val h = targetHeight.toFloat().coerceAtLeast(1f)
         for (stroke in layer.strokes) {
-            if (stroke.points.isEmpty()) continue
-            val strokeInt = stroke.colorArgb.toInt()
-            val paintAlpha = ((android.graphics.Color.alpha(strokeInt) / 255f) * layer.opacity * 255f)
-                .roundToInt().coerceIn(0, 255)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-                color = strokeInt
-                alpha = paintAlpha
-                strokeWidth = (stroke.strokeWidthNorm * minDim).coerceAtLeast(1f)
-            }
-            if (stroke.points.size == 1) {
-                val pt = stroke.points.first()
-                paint.style = Paint.Style.FILL
-                canvas.drawCircle(
-                    (pt.xNorm - 0.5f) * targetWidth,
-                    (pt.yNorm - 0.5f) * targetHeight,
-                    paint.strokeWidth / 2f,
-                    paint
-                )
-            } else {
-                val path = android.graphics.Path()
-                stroke.points.forEachIndexed { idx, pt ->
-                    val px = (pt.xNorm - 0.5f) * targetWidth
-                    val py = (pt.yNorm - 0.5f) * targetHeight
-                    if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
-                }
-                canvas.drawPath(path, paint)
-            }
+            VectorStrokeEngine.drawVectorStroke(
+                canvas = canvas,
+                stroke = stroke,
+                areaWidthPx = w,
+                areaHeightPx = h,
+                layerOpacity = layer.opacity,
+                originOffsetX = -w * 0.5f,
+                originOffsetY = -h * 0.5f
+            )
         }
     }
 
@@ -642,54 +622,22 @@ class MediaStorageManager(private val context: Context) {
         }
     }
 
-    private fun drawShapeOnCanvas(canvas: Canvas, layer: ShapeLayer, targetWidth: Int) {
-        val baseSize = targetWidth * 0.28f
-        val half = baseSize / 2f
-        val fillColorInt = layer.fillColorArgb.toInt()
-        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = fillColorInt
-            alpha = ((android.graphics.Color.alpha(fillColorInt) / 255f) * layer.opacity * 255f)
-                .roundToInt().coerceIn(0, 255)
-        }
-        val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            color = layer.strokeColorArgb.toInt()
-            strokeWidth = layer.strokeWidth * (targetWidth / 360f)
-            alpha = (layer.opacity * 255f).roundToInt().coerceIn(0, 255)
-        }
-        val rect = android.graphics.RectF(-half, -half, half, half)
-        when (layer.shapeType) {
-            LayerShapeType.RECTANGLE -> {
-                canvas.drawRect(rect, fillPaint)
-                if (layer.strokeWidth > 0f) canvas.drawRect(rect, strokePaint)
-            }
-            LayerShapeType.ROUNDED_RECT -> {
-                val r = baseSize * 0.18f
-                canvas.drawRoundRect(rect, r, r, fillPaint)
-                if (layer.strokeWidth > 0f) canvas.drawRoundRect(rect, r, r, strokePaint)
-            }
-            LayerShapeType.CIRCLE -> {
-                canvas.drawCircle(0f, 0f, half, fillPaint)
-                if (layer.strokeWidth > 0f) canvas.drawCircle(0f, 0f, half, strokePaint)
-            }
-            LayerShapeType.STAR, LayerShapeType.BADGE -> {
-                val points = if (layer.shapeType == LayerShapeType.STAR) 5 else 8
-                val innerRatio = if (layer.shapeType == LayerShapeType.STAR) 0.45f else 0.78f
-                val path = android.graphics.Path()
-                val total = points * 2
-                for (i in 0 until total) {
-                    val radius = if (i % 2 == 0) half else half * innerRatio
-                    val angle = Math.toRadians((i * 360.0 / total) - 90.0)
-                    val x = (radius * cos(angle)).toFloat()
-                    val y = (radius * sin(angle)).toFloat()
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
-                path.close()
-                canvas.drawPath(path, fillPaint)
-                if (layer.strokeWidth > 0f) canvas.drawPath(path, strokePaint)
-            }
-        }
+    private fun drawShapeOnCanvas(
+        canvas: Canvas,
+        layer: ShapeLayer,
+        targetWidth: Int,
+        targetHeight: Int
+    ) {
+        val baseSize = min(targetWidth, targetHeight) * 0.34f
+        val strokeScale = min(targetWidth, targetHeight) / 360f
+        VectorShapeEngine.drawShapeOnCanvas(
+            canvas = canvas,
+            layer = layer,
+            baseSizePx = baseSize,
+            cx = 0f,
+            cy = 0f,
+            strokeScaleFactor = strokeScale
+        )
     }
 
     private fun drawVignetteOnRect(

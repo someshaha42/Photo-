@@ -69,6 +69,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -89,6 +90,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.data.LayerTransformMatrix
 import com.example.data.MediaStorageManager
+import com.example.data.ShapeHandleKind
+import com.example.data.VectorShapeEngine
+import com.example.data.VectorStrokeEngine
 import com.example.fonts.FontRenderEngine
 import com.example.model.BackgroundTab
 import com.example.model.DrawLayer
@@ -104,6 +108,7 @@ import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
 import com.example.model.TextLayer
+import com.example.model.VectorStrokeStyle
 import com.example.ui.StudioViewModel
 import com.example.ui.TransformLockState
 import com.example.ui.theme.CheckerDark1
@@ -130,9 +135,11 @@ fun EditorCanvasViewport(
     isCropMode: Boolean = false,
     isDrawMode: Boolean = false,
     isCornerPinMode: Boolean = false,
+    isShapeEditPointsMode: Boolean = false,
     transformLocks: TransformLockState = TransformLockState(),
     drawColorArgb: Long = 0xFFFF4D4FL,
-    drawBrushSizeNorm: Float = 0.012f,
+    drawBrushSizeNorm: Float = 0.014f,
+    drawStrokeStyle: VectorStrokeStyle = VectorStrokeStyle(),
     canvasZoom: Float,
     canvasPan: Pair<Float, Float>,
     isEyedropperActive: Boolean,
@@ -162,6 +169,7 @@ fun EditorCanvasViewport(
         canvasHpx: Float
     ) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
     onCornerPinDrag: (layerId: String, cornerIndex: Int, deltaDxRatio: Float, deltaDyRatio: Float) -> Unit = { _, _, _, _ -> },
+    onShapeHandleDrag: (layerId: String, handleId: String, dxPx: Float, dyPx: Float, baseSizePx: Float) -> Unit = { _, _, _, _, _ -> },
     onBeginTransformTransaction: () -> Unit = {},
     onEndTransformTransaction: () -> Unit = {},
     onUpdateCropTransient: ((ImageCropRect) -> ImageCropRect) -> Unit = {},
@@ -448,6 +456,7 @@ fun EditorCanvasViewport(
                         isCropMode = isCropMode,
                         isDrawMode = isDrawMode,
                         isCornerPinMode = isCornerPinMode,
+                        isShapeEditPointsMode = isShapeEditPointsMode,
                         transformLocks = transformLocks,
                         isEyedropperActive = isEyedropperActive,
                         onSelectLayer = onSelectLayer,
@@ -456,6 +465,7 @@ fun EditorCanvasViewport(
                         onTransformLayer = onTransformLayer,
                         onAnchoredStretch = onAnchoredStretch,
                         onCornerPinDrag = onCornerPinDrag,
+                        onShapeHandleDrag = onShapeHandleDrag,
                         onBeginTransformTransaction = onBeginTransformTransaction,
                         onEndTransformTransaction = onEndTransformTransaction,
                         onUpdateCropTransient = onUpdateCropTransient,
@@ -463,11 +473,12 @@ fun EditorCanvasViewport(
                     )
                 }
 
-                // 4. Interactive Freehand Draw Overlay (instant pointer capture with zero touch-slop jump)
+                // 4. Interactive Freehand Draw Overlay (captures coordinates & pointer/stylus pressure with zero touch-slop jump)
                 if (isDrawMode && !isZoomMode && !isEyedropperActive) {
                     val livePoints = remember { mutableStateListOf<DrawPoint>() }
                     val latestColor by rememberUpdatedState(drawColorArgb)
                     val latestBrushNorm by rememberUpdatedState(drawBrushSizeNorm)
+                    val latestStyle by rememberUpdatedState(drawStrokeStyle)
 
                     Canvas(
                         modifier = Modifier
@@ -482,7 +493,8 @@ fun EditorCanvasViewport(
                                     livePoints.add(
                                         DrawPoint(
                                             xNorm = (down.position.x / w).coerceIn(0f, 1f),
-                                            yNorm = (down.position.y / h).coerceIn(0f, 1f)
+                                            yNorm = (down.position.y / h).coerceIn(0f, 1f),
+                                            pressure = if (down.pressure > 0.01f) down.pressure else 1f
                                         )
                                     )
                                     while (true) {
@@ -496,17 +508,22 @@ fun EditorCanvasViewport(
                                             livePoints.add(
                                                 DrawPoint(
                                                     xNorm = (change.position.x / w).coerceIn(0f, 1f),
-                                                    yNorm = (change.position.y / h).coerceIn(0f, 1f)
+                                                    yNorm = (change.position.y / h).coerceIn(0f, 1f),
+                                                    pressure = if (change.pressure > 0.01f) change.pressure else 1f
                                                 )
                                             )
                                         }
                                     }
                                     if (livePoints.isNotEmpty()) {
+                                        val capturedRaw = livePoints.toList()
+                                        val effectiveStyle = latestStyle.copy(overallWidthNorm = latestBrushNorm)
                                         onAddDrawStroke(
                                             DrawStroke(
                                                 colorArgb = latestColor,
                                                 strokeWidthNorm = latestBrushNorm,
-                                                points = livePoints.toList()
+                                                points = capturedRaw,
+                                                rawPoints = capturedRaw,
+                                                style = effectiveStyle
                                             )
                                         )
                                     }
@@ -516,30 +533,24 @@ fun EditorCanvasViewport(
                             .testTag("canvas_draw_overlay")
                     ) {
                         if (livePoints.isNotEmpty()) {
-                            val strokePx = (latestBrushNorm * size.minDimension).coerceAtLeast(2f)
-                            val col = Color(latestColor.toInt())
-                            if (livePoints.size == 1) {
-                                val pt = livePoints.first()
-                                drawCircle(
-                                    color = col,
-                                    radius = strokePx / 2f,
-                                    center = Offset(pt.xNorm * size.width, pt.yNorm * size.height)
-                                )
-                            } else {
-                                val p = Path()
-                                livePoints.forEachIndexed { idx, pt ->
-                                    val x = pt.xNorm * size.width
-                                    val y = pt.yNorm * size.height
-                                    if (idx == 0) p.moveTo(x, y) else p.lineTo(x, y)
-                                }
-                                drawPath(
-                                    path = p,
-                                    color = col,
-                                    style = Stroke(
-                                        width = strokePx,
-                                        cap = StrokeCap.Round,
-                                        join = StrokeJoin.Round
-                                    )
+                            val effectiveStyle = latestStyle.copy(overallWidthNorm = latestBrushNorm)
+                            val previewSmoothed = VectorStrokeEngine.smoothPoints(livePoints.toList(), effectiveStyle.smoothing)
+                            val liveStroke = DrawStroke(
+                                colorArgb = latestColor,
+                                strokeWidthNorm = latestBrushNorm,
+                                points = previewSmoothed,
+                                rawPoints = livePoints.toList(),
+                                style = effectiveStyle
+                            )
+                            drawIntoCanvas { canvas ->
+                                VectorStrokeEngine.drawVectorStroke(
+                                    canvas = canvas.nativeCanvas,
+                                    stroke = liveStroke,
+                                    areaWidthPx = size.width,
+                                    areaHeightPx = size.height,
+                                    layerOpacity = 1f,
+                                    originOffsetX = 0f,
+                                    originOffsetY = 0f
                                 )
                             }
                         }
@@ -587,6 +598,7 @@ private fun RenderCanvasLayerNode(
     isCropMode: Boolean,
     isDrawMode: Boolean,
     isCornerPinMode: Boolean,
+    isShapeEditPointsMode: Boolean,
     transformLocks: TransformLockState,
     isEyedropperActive: Boolean,
     onSelectLayer: (String?) -> Unit,
@@ -613,6 +625,7 @@ private fun RenderCanvasLayerNode(
         canvasHpx: Float
     ) -> Unit,
     onCornerPinDrag: (layerId: String, cornerIndex: Int, deltaDxRatio: Float, deltaDyRatio: Float) -> Unit,
+    onShapeHandleDrag: (layerId: String, handleId: String, dxPx: Float, dyPx: Float, baseSizePx: Float) -> Unit,
     onBeginTransformTransaction: () -> Unit,
     onEndTransformTransaction: () -> Unit,
     onUpdateCropTransient: ((ImageCropRect) -> ImageCropRect) -> Unit,
@@ -728,6 +741,7 @@ private fun RenderCanvasLayerNode(
                             isCropMode = isCropMode,
                             isDrawMode = isDrawMode,
                             isCornerPinMode = isCornerPinMode,
+                            isShapeEditPointsMode = isShapeEditPointsMode,
                             transformLocks = transformLocks,
                             isEyedropperActive = isEyedropperActive,
                             onSelectLayer = onSelectLayer,
@@ -736,6 +750,7 @@ private fun RenderCanvasLayerNode(
                             onTransformLayer = onTransformLayer,
                             onAnchoredStretch = onAnchoredStretch,
                             onCornerPinDrag = onCornerPinDrag,
+                            onShapeHandleDrag = onShapeHandleDrag,
                             onBeginTransformTransaction = onBeginTransformTransaction,
                             onEndTransformTransaction = onEndTransformTransaction,
                             onUpdateCropTransient = onUpdateCropTransient,
@@ -1050,46 +1065,19 @@ private fun RenderCanvasLayerNode(
                 val shapeDp = with(LocalDensity.current) { shapePx.toDp() }
                 Box(modifier = Modifier.size(shapeDp).then(bodyGestureModifier)) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val fill = Color(layer.fillColorArgb.toInt())
-                        val stroke = Color(layer.strokeColorArgb.toInt())
-                        val strokeW = layer.strokeWidth.dp.toPx()
-                        when (layer.shapeType) {
-                            LayerShapeType.RECTANGLE -> {
-                                drawRect(color = fill)
-                                if (strokeW > 0f) drawRect(color = stroke, style = Stroke(strokeW))
-                            }
-                            LayerShapeType.ROUNDED_RECT -> {
-                                val r = size.minDimension * 0.18f
-                                drawRoundRect(color = fill, cornerRadius = CornerRadius(r, r))
-                                if (strokeW > 0f) drawRoundRect(color = stroke, cornerRadius = CornerRadius(r, r), style = Stroke(strokeW))
-                            }
-                            LayerShapeType.CIRCLE -> {
-                                drawCircle(color = fill)
-                                if (strokeW > 0f) drawCircle(color = stroke, style = Stroke(strokeW))
-                            }
-                            LayerShapeType.STAR, LayerShapeType.BADGE -> {
-                                val pts = if (layer.shapeType == LayerShapeType.STAR) 5 else 8
-                                val inner = if (layer.shapeType == LayerShapeType.STAR) 0.45f else 0.78f
-                                val path = Path()
-                                val cx = size.width / 2f
-                                val cy = size.height / 2f
-                                val outerR = size.minDimension / 2f
-                                val total = pts * 2
-                                for (i in 0 until total) {
-                                    val rad = if (i % 2 == 0) outerR else outerR * inner
-                                    val ang = Math.toRadians((i * 360.0 / total) - 90.0)
-                                    val px = cx + (rad * cos(ang)).toFloat()
-                                    val py = cy + (rad * sin(ang)).toFloat()
-                                    if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
-                                }
-                                path.close()
-                                drawPath(path, color = fill)
-                                if (strokeW > 0f) drawPath(path, color = stroke, style = Stroke(strokeW))
-                            }
+                        drawIntoCanvas { canvas ->
+                            VectorShapeEngine.drawShapeOnCanvas(
+                                canvas = canvas.nativeCanvas,
+                                layer = layer.copy(opacity = 1f),
+                                baseSizePx = size.minDimension,
+                                cx = size.width * 0.5f,
+                                cy = size.height * 0.5f,
+                                strokeScaleFactor = density
+                            )
                         }
                     }
 
-                    if (showDots && parentGroup == null) {
+                    if (showDots && parentGroup == null && (!isShapeEditPointsMode || !isPrimarySelected)) {
                         SelectionDotHandlesOverlay(
                             boxModifier = Modifier.fillMaxSize(),
                             dotColor = dotAccent,
@@ -1124,6 +1112,21 @@ private fun RenderCanvasLayerNode(
                             }
                         )
                     }
+                }
+
+                if (showDots && parentGroup == null && isShapeEditPointsMode && isPrimarySelected && !effectiveLocked) {
+                    VectorShapeHandlesOverlay(
+                        targetLayer = layer,
+                        shapePx = shapePx,
+                        canvasWpx = canvasWpx,
+                        canvasHpx = canvasHpx,
+                        canvasZoom = canvasZoom,
+                        onBeginTransaction = onBeginTransformTransaction,
+                        onEndTransaction = onEndTransformTransaction,
+                        onHandleDrag = { handleId, dxPx, dyPx ->
+                            onShapeHandleDrag(layer.id, handleId, dxPx, dyPx, shapePx)
+                        }
+                    )
                 }
             }
 
@@ -1364,33 +1367,16 @@ private fun RenderCanvasLayerNode(
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val minDim = size.minDimension.coerceAtLeast(1f)
-                        layer.strokes.forEach { stroke ->
-                            if (stroke.points.isEmpty()) return@forEach
-                            val strokePx = (stroke.strokeWidthNorm * minDim).coerceAtLeast(2f)
-                            val col = Color(stroke.colorArgb.toInt())
-                            if (stroke.points.size == 1) {
-                                val pt = stroke.points.first()
-                                drawCircle(
-                                    color = col,
-                                    radius = strokePx / 2f,
-                                    center = Offset(pt.xNorm * size.width, pt.yNorm * size.height)
-                                )
-                            } else {
-                                val path = Path()
-                                stroke.points.forEachIndexed { idx, pt ->
-                                    val px = pt.xNorm * size.width
-                                    val py = pt.yNorm * size.height
-                                    if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
-                                }
-                                drawPath(
-                                    path = path,
-                                    color = col,
-                                    style = Stroke(
-                                        width = strokePx,
-                                        cap = StrokeCap.Round,
-                                        join = StrokeJoin.Round
-                                    )
+                        drawIntoCanvas { canvas ->
+                            layer.strokes.forEach { stroke ->
+                                VectorStrokeEngine.drawVectorStroke(
+                                    canvas = canvas.nativeCanvas,
+                                    stroke = stroke,
+                                    areaWidthPx = size.width,
+                                    areaHeightPx = size.height,
+                                    layerOpacity = 1f,
+                                    originOffsetX = 0f,
+                                    originOffsetY = 0f
                                 )
                             }
                         }
@@ -1774,6 +1760,155 @@ private fun CornerPinHandlesOverlay(
                         .background(StudioAmber)
                         .border(2.5.dp, Color.White, CircleShape)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Alight-Motion-Style Parametric Vector Shape Handles Overlay:
+ * Renders the crisp white outline, small center origin ring, minimal cardinal dots (1..4 dots
+ * for Circle/Square), corner/inner-radius `||` pills, and double-ring vertex handles for
+ * Triangle, Star, Arrow, Pie, and Quad.
+ */
+@Composable
+private fun VectorShapeHandlesOverlay(
+    targetLayer: ShapeLayer,
+    shapePx: Float,
+    canvasWpx: Float,
+    canvasHpx: Float,
+    canvasZoom: Float,
+    onBeginTransaction: () -> Unit,
+    onEndTransaction: () -> Unit,
+    onHandleDrag: (handleId: String, dxPx: Float, dyPx: Float) -> Unit
+) {
+    val liveLayer by rememberUpdatedState(targetLayer)
+    val liveCanvasZoom by rememberUpdatedState(canvasZoom)
+    val originX = (canvasWpx - shapePx) * 0.5f
+    val originY = (canvasHpx - shapePx) * 0.5f
+    val invScaleX = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+    val invScaleY = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+    val handleBoxSize = 40.dp
+    val handleHalfPx = with(LocalDensity.current) { (handleBoxSize / 2f).toPx() }
+    val handles = remember(liveLayer.shapeType, liveLayer.vectorParams, shapePx) {
+        VectorShapeEngine.computeControlHandles(liveLayer, shapePx)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("vector_shape_handles_overlay")
+    ) {
+        // White Alight Motion outline + small center crosshair circle
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val outlinePath = VectorShapeEngine.buildShapePath(
+                shapeType = liveLayer.shapeType,
+                params = liveLayer.vectorParams,
+                baseSizePx = shapePx,
+                cx = canvasWpx * 0.5f,
+                cy = canvasHpx * 0.5f
+            ).asComposePath()
+            drawPath(
+                path = outlinePath,
+                color = Color.White.copy(alpha = 0.9f),
+                style = Stroke(width = 1.6.dp.toPx() * min(invScaleX, invScaleY))
+            )
+            // Small center dot / ring
+            drawCircle(
+                color = Color.Black.copy(alpha = 0.45f),
+                radius = 4.dp.toPx() * min(invScaleX, invScaleY),
+                center = Offset(canvasWpx * 0.5f, canvasHpx * 0.5f),
+                style = Stroke(width = 1.2.dp.toPx() * min(invScaleX, invScaleY))
+            )
+        }
+
+        handles.forEach { handle ->
+            val hx = originX + handle.xPx
+            val hy = originY + handle.yPx
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            (hx - handleHalfPx).roundToInt(),
+                            (hy - handleHalfPx).roundToInt()
+                        )
+                    }
+                    .size(handleBoxSize)
+                    .graphicsLayer { scaleX = invScaleX; scaleY = invScaleY }
+                    .pointerInput(liveLayer.id, handle.id) {
+                        detectScaleAwareDragGestures(
+                            effectiveScaleProvider = {
+                                val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                                val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                                liveCanvasZoom * max(
+                                    liveLayer.scale * liveLayer.stretchX * lx,
+                                    liveLayer.scale * liveLayer.stretchY * ly
+                                )
+                            },
+                            onDragStart = { onBeginTransaction() },
+                            onDragEnd = { onEndTransaction() }
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val lx = (1f / (liveLayer.scale * liveLayer.stretchX)).coerceIn(0.01f, 4f)
+                            val ly = (1f / (liveLayer.scale * liveLayer.stretchY)).coerceIn(0.01f, 4f)
+                            val realDx = dragAmount.x * lx
+                            val realDy = dragAmount.y * ly
+                            onHandleDrag(handle.id, realDx, realDy)
+                        }
+                    }
+                    .testTag("shape_handle_${handle.id}"),
+                contentAlignment = Alignment.Center
+            ) {
+                when (handle.kind) {
+                    ShapeHandleKind.CARDINAL_DOT -> {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                                .border(1.8.dp, Color(0xFF1F2937), CircleShape)
+                        )
+                    }
+                    ShapeHandleKind.VERTEX_RING -> {
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                                .border(2.dp, StudioAzure, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(StudioAzure)
+                            )
+                        }
+                    }
+                    ShapeHandleKind.RADIUS_PILL -> {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier
+                                .size(width = 20.dp, height = 15.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.White)
+                                .border(1.5.dp, Color(0xFF1F2937), RoundedCornerShape(4.dp)),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 2.dp, height = 8.dp)
+                                    .background(Color(0xFF1F2937))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 2.dp, height = 8.dp)
+                                    .background(Color(0xFF1F2937))
+                            )
+                        }
+                    }
+                }
             }
         }
     }

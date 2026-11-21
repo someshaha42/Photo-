@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -31,10 +32,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,11 +53,13 @@ import com.example.data.MediaStorageManager
 import com.example.model.CanvasDimensions
 import com.example.model.ExportImageFormat
 import com.example.model.ExportResolutionPreset
+import com.example.model.VectorStrokeStyle
 import com.example.ui.ExportFeedbackState
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
 import com.example.ui.theme.StudioTeal
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val DRAW_PALETTE_COLORS = listOf(
@@ -70,17 +73,40 @@ private val DRAW_PALETTE_COLORS = listOf(
     0xFF9333EAL
 )
 
+private val DRAW_QUICK_SIZES = listOf(0.036f, 0.026f, 0.018f, 0.014f, 0.010f, 0.006f, 0.004f)
+
 @Composable
 fun DrawToolPanel(
     brushColorArgb: Long,
     brushSizeNorm: Float,
+    strokeStyle: VectorStrokeStyle = VectorStrokeStyle(),
+    showStrokeControls: Boolean = false,
+    selectedDrawLayerCount: Int = 0,
     canUndoStroke: Boolean,
     onSelectColor: (Long) -> Unit,
     onSetBrushSize: (Float) -> Unit,
+    onToggleStrokeControls: () -> Unit = {},
+    onStartNewStrokeSession: () -> Unit = {},
+    onUpdateStrokeStyleTransient: ((VectorStrokeStyle) -> VectorStrokeStyle) -> Unit = {},
+    onUpdateStrokeStyleCommit: ((VectorStrokeStyle) -> VectorStrokeStyle) -> Unit = {},
+    onEndTransaction: () -> Unit = {},
     onUndoStroke: () -> Unit,
     onClearDraw: () -> Unit,
     onDone: () -> Unit
 ) {
+    if (showStrokeControls) {
+        StrokeControlsPanel(
+            style = strokeStyle,
+            selectedDrawLayerCount = selectedDrawLayerCount,
+            onStartNewStrokeSession = onStartNewStrokeSession,
+            onUpdateStyleTransient = onUpdateStrokeStyleTransient,
+            onUpdateStyleCommit = onUpdateStrokeStyleCommit,
+            onEndTransaction = onEndTransaction,
+            onClosePanel = onToggleStrokeControls
+        )
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -98,7 +124,7 @@ fun DrawToolPanel(
             ) {
                 Icon(Icons.Rounded.Brush, contentDescription = null, tint = StudioCoral, modifier = Modifier.size(18.dp))
                 Text(
-                    text = "Draw on Canvas",
+                    text = "Draw",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -106,19 +132,26 @@ fun DrawToolPanel(
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(
+                    onClick = onToggleStrokeControls,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("draw_stroke_controls_button")
+                ) {
+                    Icon(Icons.Rounded.Tune, contentDescription = "Stroke Controls", modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Stroke")
+                }
+                OutlinedButton(
                     onClick = onUndoStroke,
                     enabled = canUndoStroke,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.testTag("draw_undo_button")
                 ) {
                     Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = "Undo Stroke", modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Undo")
                 }
                 OutlinedButton(
                     onClick = onClearDraw,
                     enabled = canUndoStroke,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.testTag("draw_clear_button")
                 ) {
                     Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear Draw", tint = StudioCoral, modifier = Modifier.size(16.dp))
@@ -126,7 +159,7 @@ fun DrawToolPanel(
                 Button(
                     onClick = onDone,
                     colors = ButtonDefaults.buttonColors(containerColor = StudioEmerald),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     modifier = Modifier.testTag("draw_done_button")
                 ) {
                     Icon(Icons.Rounded.Check, contentDescription = "Done Drawing", modifier = Modifier.size(16.dp))
@@ -136,7 +169,7 @@ fun DrawToolPanel(
             }
         }
 
-        // Brush Color Swatches
+        // Clean Brush Color Swatches (with Red selected indicator box matching screenshot)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -155,30 +188,51 @@ fun DrawToolPanel(
                             shape = CircleShape
                         )
                         .clickable { onSelectColor(argb) }
+                        .testTag("draw_color_${argb.toString(16)}")
                 )
             }
         }
 
-        // Brush Size Slider
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Brush", style = MaterialTheme.typography.labelLarge)
-            Slider(
-                value = brushSizeNorm.coerceIn(0.004f, 0.06f),
-                onValueChange = onSetBrushSize,
-                valueRange = 0.004f..0.06f,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("draw_brush_size_slider")
-            )
-            Text(
-                text = "${(brushSizeNorm * 1000).roundToInt()}pt",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold
-            )
+        // Clean Size Dots Strip (Screenshots 3 & 4 style: large-to-small white dots + selected circle)
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Size", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    text = "${(brushSizeNorm * 1000).roundToInt()}pt · ${strokeStyle.pattern.label}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DRAW_QUICK_SIZES.forEachIndexed { idx, sizeVal ->
+                    val isSelected = abs(brushSizeNorm - sizeVal) <= 0.002f
+                    val dotDp = (6f + (DRAW_QUICK_SIZES.size - idx) * 2.4f).dp
+                    Box(
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(CircleShape)
+                            .background(if (isSelected) StudioCoral.copy(alpha = 0.25f) else Color.Transparent)
+                            .clickable { onSetBrushSize(sizeVal) }
+                            .testTag("draw_size_dot_$idx"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(dotDp)
+                                .clip(CircleShape)
+                                .background(if (isSelected) StudioCoral else MaterialTheme.colorScheme.onSurface)
+                        )
+                    }
+                }
+            }
         }
     }
 }
