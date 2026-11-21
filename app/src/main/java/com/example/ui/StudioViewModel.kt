@@ -21,6 +21,7 @@ import com.example.fonts.ImportHistoryEntry
 import com.example.model.BackgroundConfig
 import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
+import com.example.model.CornerPinOffsets
 import com.example.model.DrawLayer
 import com.example.model.DrawStroke
 import com.example.model.EditorLayer
@@ -32,6 +33,7 @@ import com.example.model.ImageAdjustments
 import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
+import com.example.model.Layer3DTransform
 import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
@@ -68,7 +70,9 @@ enum class ToolDrawerTab(val label: String) {
     ADJUST("Adjust"),
     SHAPES("Shapes"),
     ROTATE("Rotate"),
-    DRAW("Draw")
+    DRAW("Draw"),
+    CORNER_PIN("Corner Pin"),
+    THREE_D("3D")
 }
 
 enum class EyedropperTarget {
@@ -133,6 +137,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     private val undoStack = ArrayDeque<ProjectDocument>()
     private val redoStack = ArrayDeque<ProjectDocument>()
+    private var activeTransactionBaseline: ProjectDocument? = null
+    private var locksBeforeCornerPin: TransformLockState? = null
 
     private val _canUndo = MutableStateFlow(false)
     val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
@@ -234,10 +240,30 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openToolDrawer(tab: ToolDrawerTab) {
-        _activeToolDrawer.value = if (_activeToolDrawer.value == tab) ToolDrawerTab.NONE else tab
+        endTransformTransaction()
+        val prevTab = _activeToolDrawer.value
+        val nextTab = if (prevTab == tab) ToolDrawerTab.NONE else tab
+        if (prevTab == ToolDrawerTab.CORNER_PIN && nextTab != ToolDrawerTab.CORNER_PIN) {
+            restoreLocksAfterCornerPin()
+        } else if (nextTab == ToolDrawerTab.CORNER_PIN && prevTab != ToolDrawerTab.CORNER_PIN) {
+            if (locksBeforeCornerPin == null) {
+                locksBeforeCornerPin = _transformLocks.value
+            }
+            _transformLocks.value = TransformLockState(
+                stretchLocked = true,
+                zoomLocked = true,
+                rotationLocked = true,
+                positionLocked = true
+            )
+        }
+        _activeToolDrawer.value = nextTab
     }
 
     fun closeToolDrawer() {
+        endTransformTransaction()
+        if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
+            restoreLocksAfterCornerPin()
+        }
         _activeToolDrawer.value = ToolDrawerTab.NONE
         val selected = findLayerRecursive(_document.value.layers, _document.value.selectedLayerId)
         if (selected !is TextLayer) {
@@ -246,7 +272,26 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun confirmCornerPin() {
+        endTransformTransaction()
+        if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
+            restoreLocksAfterCornerPin()
+            _activeToolDrawer.value = ToolDrawerTab.NONE
+        }
+    }
+
+    private fun restoreLocksAfterCornerPin() {
+        locksBeforeCornerPin?.let { saved ->
+            _transformLocks.value = saved
+        }
+        locksBeforeCornerPin = null
+    }
+
     fun dismissAllOverlaysAndSelection() {
+        endTransformTransaction()
+        if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
+            restoreLocksAfterCornerPin()
+        }
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _showLayersDrawer.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
@@ -351,6 +396,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun createNewProject() {
+        activeTransactionBaseline = null
+        restoreLocksAfterCornerPin()
         undoStack.clear()
         redoStack.clear()
         _canUndo.value = false
@@ -382,6 +429,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     suspend fun openProjectFromHistory(projectId: String): Boolean {
         val loaded = projectRepository.loadDocument(projectId) ?: return false
+        activeTransactionBaseline = null
+        restoreLocksAfterCornerPin()
         undoStack.clear()
         redoStack.clear()
         _canUndo.value = false
@@ -443,11 +492,32 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         return out
     }
 
+    fun beginTransformTransaction() {
+        if (activeTransactionBaseline == null) {
+            activeTransactionBaseline = _document.value
+        }
+    }
+
+    fun endTransformTransaction() {
+        val baseline = activeTransactionBaseline ?: return
+        activeTransactionBaseline = null
+        val current = _document.value
+        if (baseline != current) {
+            undoStack.addLast(baseline)
+            if (undoStack.size > 40) undoStack.removeFirst()
+            redoStack.clear()
+            _canUndo.value = undoStack.isNotEmpty()
+            _canRedo.value = false
+            syncPinnedFonts()
+        }
+    }
+
     private fun commitChange(transform: (ProjectDocument) -> ProjectDocument) {
-        val prev = _document.value
-        val next = transform(prev)
-        if (prev == next) return
-        undoStack.addLast(prev)
+        val baseline = activeTransactionBaseline ?: _document.value
+        activeTransactionBaseline = null
+        val next = transform(_document.value)
+        if (baseline == next) return
+        undoStack.addLast(baseline)
         if (undoStack.size > 40) undoStack.removeFirst()
         redoStack.clear()
         _canUndo.value = undoStack.isNotEmpty()
@@ -457,6 +527,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun undo() {
+        endTransformTransaction()
         if (undoStack.isEmpty()) return
         val current = _document.value
         val prev = undoStack.removeLast()
@@ -470,6 +541,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun redo() {
+        endTransformTransaction()
         if (redoStack.isEmpty()) return
         val current = _document.value
         val next = redoStack.removeLast()
@@ -490,8 +562,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectLayer(layerId: String?) {
+        endTransformTransaction()
         lastAppliedCaseMode = null
         if (layerId == null) {
+            if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
+                restoreLocksAfterCornerPin()
+                _activeToolDrawer.value = ToolDrawerTab.NONE
+            }
             _isMultiSelectMode.value = false
             _document.value = _document.value.copy(
                 selectedLayerId = null,
@@ -511,6 +588,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         if (layer is TextLayer) {
             fontRepository.selectFont(layer.fontId)
             _draftTextStyle.value = layer
+        } else if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN && layer !is ImageLayer) {
+            restoreLocksAfterCornerPin()
+            _activeToolDrawer.value = ToolDrawerTab.NONE
+        } else if (_activeToolDrawer.value == ToolDrawerTab.THREE_D && layer !is ImageLayer && layer !is TextLayer) {
+            _activeToolDrawer.value = ToolDrawerTab.NONE
         }
     }
 
@@ -523,7 +605,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             is TextLayer -> {
                 if (currentTab != ToolDrawerTab.COLOR &&
                     currentTab != ToolDrawerTab.FONT &&
-                    currentTab != ToolDrawerTab.ROTATE
+                    currentTab != ToolDrawerTab.ROTATE &&
+                    currentTab != ToolDrawerTab.CORNER_PIN &&
+                    currentTab != ToolDrawerTab.THREE_D
                 ) {
                     _activeToolDrawer.value = ToolDrawerTab.TEXT
                 }
@@ -538,11 +622,16 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             is ShapeLayer -> {
+                if (currentTab == ToolDrawerTab.CORNER_PIN) {
+                    restoreLocksAfterCornerPin()
+                }
                 if (currentTab == ToolDrawerTab.TEXT ||
                     currentTab == ToolDrawerTab.FONT ||
                     currentTab == ToolDrawerTab.CROP ||
                     currentTab == ToolDrawerTab.ADJUST ||
-                    currentTab == ToolDrawerTab.DRAW
+                    currentTab == ToolDrawerTab.DRAW ||
+                    currentTab == ToolDrawerTab.CORNER_PIN ||
+                    currentTab == ToolDrawerTab.THREE_D
                 ) {
                     _activeToolDrawer.value = ToolDrawerTab.NONE
                 }
@@ -858,6 +947,24 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateSelectedTextLayerTransient(transform: (TextLayer) -> TextLayer) {
+        val selId = _document.value.selectedLayerId
+        val existing = findLayerRecursive(_document.value.layers, selId)
+        if (selId == null || existing !is TextLayer) {
+            updateDraftStyle(transform)
+            return
+        }
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                if (layer is TextLayer) {
+                    val updated = transform(layer)
+                    updated.copy(name = updated.text.take(14).ifBlank { "Text" })
+                } else layer
+            }
+        )
+    }
+
     fun updateSelectedTextTransient(text: String) {
         lastAppliedCaseMode = null
         val selId = _document.value.selectedLayerId
@@ -866,6 +973,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             _draftText.value = text
             return
         }
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
                 if (layer is TextLayer) {
@@ -906,6 +1014,16 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         return nextMode
     }
 
+    fun updateSelectedShapeLayerTransient(transform: (ShapeLayer) -> ShapeLayer) {
+        val selId = _document.value.selectedLayerId ?: return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                if (layer is ShapeLayer) transform(layer) else layer
+            }
+        )
+    }
+
     fun updateSelectedShapeLayer(transform: (ShapeLayer) -> ShapeLayer) {
         val selId = _document.value.selectedLayerId ?: return
         commitChange { doc ->
@@ -933,6 +1051,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateSelectedImageAdjustments(transform: (ImageAdjustments) -> ImageAdjustments) {
         val target = ensureImageLayerSelectedForAdjust() ?: return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
                 if (layer is ImageLayer) {
@@ -957,6 +1076,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateSelectedImageCropTransient(transform: (ImageCropRect) -> ImageCropRect) {
         val target = ensureImageLayerSelectedForAdjust() ?: return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
                 if (layer is ImageLayer) {
@@ -1055,6 +1175,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun setSelectedImageOpacity(opacity: Float) {
         val target = ensureImageLayerSelectedForAdjust() ?: return
         val clamped = opacity.coerceIn(0f, 1f)
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
                 if (layer is ImageLayer) layer.copy(opacity = clamped) else layer
@@ -1064,6 +1185,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSelectedLayerColorTransient(colorArgb: Long?) {
         val selId = _document.value.selectedLayerId ?: return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = applyColorTransformToLayers(_document.value.layers, selId, colorArgb)
         )
@@ -1157,6 +1279,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val effStretchX = if (locks.stretchLocked) 1f else stretchXFactor
         val effStretchY = if (locks.stretchLocked) 1f else stretchYFactor
 
+        if (effDx == 0f && effDy == 0f && effScaleFactor == 1f && effRotDelta == 0f && effStretchX == 1f && effStretchY == 1f) {
+            return
+        }
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) ?: return
+        if (targetLayer.locked) return
+
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
                 if (!layer.locked) {
@@ -1185,10 +1314,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         canvasHpx: Float
     ) {
         if (_transformLocks.value.stretchLocked) return
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) ?: return
+        if (targetLayer.locked) return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
                 if (layer.locked) return@mapLayerRecursive layer
-                val updated = computeAnchoredStretchTransform(
+                computeAnchoredStretchTransform(
                     layer = layer,
                     signX = signX,
                     signY = signY,
@@ -1199,13 +1331,148 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     canvasWpx = canvasWpx,
                     canvasHpx = canvasHpx
                 )
-                updated
             }
         )
     }
 
+    fun updateSelectedLayerCornerPinTransient(
+        layerId: String,
+        cornerIndex: Int,
+        deltaDxRatio: Float,
+        deltaDyRatio: Float
+    ) {
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) ?: return
+        if (targetLayer.locked) return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
+                if (layer.locked) return@mapLayerRecursive layer
+                val cp = layer.cornerPin
+                val nextCp = when (cornerIndex) {
+                    0 -> cp.copy(
+                        tlDx = (cp.tlDx + deltaDxRatio).coerceIn(-1.6f, 1.6f),
+                        tlDy = (cp.tlDy + deltaDyRatio).coerceIn(-1.6f, 1.6f)
+                    )
+                    1 -> cp.copy(
+                        trDx = (cp.trDx + deltaDxRatio).coerceIn(-1.6f, 1.6f),
+                        trDy = (cp.trDy + deltaDyRatio).coerceIn(-1.6f, 1.6f)
+                    )
+                    2 -> cp.copy(
+                        brDx = (cp.brDx + deltaDxRatio).coerceIn(-1.6f, 1.6f),
+                        brDy = (cp.brDy + deltaDyRatio).coerceIn(-1.6f, 1.6f)
+                    )
+                    3 -> cp.copy(
+                        blDx = (cp.blDx + deltaDxRatio).coerceIn(-1.6f, 1.6f),
+                        blDy = (cp.blDy + deltaDyRatio).coerceIn(-1.6f, 1.6f)
+                    )
+                    else -> cp
+                }
+                layer.withExtraTransforms(cornerPin = nextCp)
+            }
+        )
+    }
+
+    fun updateSelectedLayer3DTransient(transform: (Layer3DTransform) -> Layer3DTransform) {
+        val selId = _document.value.selectedLayerId ?: return
+        val existing = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (existing.locked) return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                if (layer.locked) layer else layer.withExtraTransforms(transform3D = transform(layer.transform3D))
+            }
+        )
+    }
+
+    fun moveSelectedLayerXYTransient(deltaXNorm: Float, deltaYNorm: Float) {
+        val selId = _document.value.selectedLayerId ?: return
+        val existing = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (existing.locked) return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                if (layer.locked) layer else layer.withBaseTransform(
+                    offsetXNorm = (layer.offsetXNorm + deltaXNorm).coerceIn(-0.98f, 0.98f),
+                    offsetYNorm = (layer.offsetYNorm + deltaYNorm).coerceIn(-0.98f, 0.98f)
+                )
+            }
+        )
+    }
+
+    fun scaleSelectedLayer3DTransient(
+        scaleFactor: Float? = null,
+        stretchXFactor: Float? = null,
+        stretchYFactor: Float? = null
+    ) {
+        val selId = _document.value.selectedLayerId ?: return
+        val existing = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (existing.locked) return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                if (layer.locked) layer else layer.withBaseTransform(
+                    scale = if (scaleFactor != null) (layer.scale * scaleFactor).coerceIn(0.05f, 100f) else layer.scale,
+                    stretchX = if (stretchXFactor != null) (layer.stretchX * stretchXFactor).coerceIn(0.15f, 8f) else layer.stretchX,
+                    stretchY = if (stretchYFactor != null) (layer.stretchY * stretchYFactor).coerceIn(0.15f, 8f) else layer.stretchY
+                )
+            }
+        )
+    }
+
+    fun resetSelectedLayer3DMode(modeIndex: Int) {
+        val selId = _document.value.selectedLayerId ?: return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                    if (layer.locked) return@mapLayerRecursive layer
+                    when (modeIndex) {
+                        0 -> layer.withBaseTransform(offsetXNorm = 0f, offsetYNorm = 0f)
+                            .withExtraTransforms(transform3D = layer.transform3D.copy(positionZ = 0f))
+                        1 -> layer.withBaseTransform(rotationDeg = 0f)
+                            .withExtraTransforms(transform3D = layer.transform3D.copy(rotationXDeg = 0f, rotationYDeg = 0f))
+                        2 -> layer.withBaseTransform(scale = 1f, stretchX = 1f, stretchY = 1f)
+                        3 -> layer.withExtraTransforms(transform3D = layer.transform3D.copy(skewXDeg = 0f, skewYDeg = 0f))
+                        else -> layer
+                    }
+                }
+            )
+        }
+    }
+
+    fun centerSelectedLayer() {
+        val selId = _document.value.selectedLayerId ?: return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                    if (layer.locked) layer else layer.withBaseTransform(offsetXNorm = 0f, offsetYNorm = 0f)
+                }
+            )
+        }
+    }
+
+    fun resetAllSelectedLayer3D() {
+        val selId = _document.value.selectedLayerId ?: return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                    if (layer.locked) layer else layer.withBaseTransform(
+                        offsetXNorm = 0f,
+                        offsetYNorm = 0f,
+                        scale = 1f,
+                        stretchX = 1f,
+                        stretchY = 1f,
+                        rotationDeg = 0f
+                    ).withExtraTransforms(transform3D = Layer3DTransform())
+                }
+            )
+        }
+    }
+
     fun setSelectedLayerRotation(deg: Float) {
         val selId = _document.value.selectedLayerId ?: return
+        val existing = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (existing.locked) return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
                 if (!layer.locked) layer.withBaseTransform(rotationDeg = deg) else layer
@@ -1228,6 +1495,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSelectedLayerScale(scale: Float) {
         val selId = _document.value.selectedLayerId ?: return
+        val existing = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (existing.locked) return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
                 if (!layer.locked) layer.withBaseTransform(scale = scale.coerceIn(0.05f, 100f)) else layer
@@ -1237,6 +1507,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSelectedLayerOpacity(opacity: Float) {
         val selId = _document.value.selectedLayerId ?: return
+        findLayerRecursive(_document.value.layers, selId) ?: return
+        beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
                 layer.withBaseTransform(opacity = opacity.coerceIn(0f, 1f))

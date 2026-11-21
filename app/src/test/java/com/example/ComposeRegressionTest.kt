@@ -22,9 +22,12 @@ import com.example.fonts.FontRepository
 import com.example.fonts.FontSource
 import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
+import com.example.model.ImageLayer
+import com.example.model.ProjectDocument
 import com.example.model.TextLayer
 import com.example.ui.PendingImportPhoto
 import com.example.ui.StudioViewModel
+import com.example.ui.ToolDrawerTab
 import com.example.ui.components.FontLibrarySheet
 import com.example.ui.components.PendingPhotoCropOverlay
 import com.example.ui.components.TextToolPanel
@@ -244,5 +247,85 @@ class ComposeRegressionTest {
         composeRule.onNodeWithTag("import_crop_delete_button").performClick()
         assertTrue(deleted)
         bmp.recycle()
+    }
+
+    @Test
+    fun photoAndTextBottomPagerExposesCornerPinAnd3DControllersWithoutKeyframes() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val textId = vm.addTextLayer("Hello 3D")!!
+        vm.selectLayer(textId)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // Page 0 of Text bottom bar shows Edit | Color | Font | Rotate
+        composeRule.onNodeWithTag("bottom_tool_edit_text").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_rotate").assertIsDisplayed()
+
+        // Swipe / tap dot 1 -> Page 1 shows Corner Pin & 3D
+        composeRule.onNodeWithTag("bottom_pager_dot_1").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("bottom_tool_corner_pin").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_3d").assertIsDisplayed()
+
+        // Open 3D Floating Panel
+        composeRule.onNodeWithTag("bottom_tool_3d").performClick()
+        composeRule.waitForIdle()
+        assertEquals(ToolDrawerTab.THREE_D, vm.activeToolDrawer.value)
+        composeRule.onNodeWithTag("three_d_floating_panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_drag_handle").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_undo_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_redo_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_more_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_mode_move").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_mode_rotate").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_mode_scale").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_mode_skew").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_move_axis_xy").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_move_axis_z").assertIsDisplayed()
+        // Ensure zero Keyframe UI exists
+        composeRule.onNodeWithText("Keyframe").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Keyframe").assertDoesNotExist()
+
+        // Switch 3D mode to Scale & toggle linked/unlinked
+        composeRule.onNodeWithTag("three_d_mode_scale").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("three_d_scale_ruler_linked").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_scale_link_toggle").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("three_d_scale_ruler_w").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_scale_ruler_h").assertIsDisplayed()
+
+        // Switch to Skew mode
+        composeRule.onNodeWithTag("three_d_mode_skew").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("three_d_skew_ruler_x").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_skew_ruler_y").assertIsDisplayed()
+
+        // Open Corner Pin -> verifies Undo & Confirm buttons and locks active
+        composeRule.onNodeWithTag("bottom_tool_corner_pin").performClick()
+        composeRule.waitForIdle()
+        assertEquals(ToolDrawerTab.CORNER_PIN, vm.activeToolDrawer.value)
+        assertTrue(vm.transformLocks.value.positionLocked)
+        composeRule.onNodeWithTag("corner_pin_undo_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("corner_pin_confirm_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("three_d_floating_panel").assertDoesNotExist()
+
+        // Confirm closes Corner Pin and restores prior locks
+        composeRule.onNodeWithTag("corner_pin_confirm_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        assertFalse(vm.transformLocks.value.positionLocked)
     }
 }

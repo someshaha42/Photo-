@@ -198,6 +198,7 @@ fun FontBrowserToolPanel(
     renderEngine: FontRenderEngine,
     onSelectFont: (String) -> Unit,
     onUpdateTextSize: ((Float) -> Unit)? = null,
+    onUpdateTextSizeFinished: () -> Unit = {},
     onImportFontsClick: () -> Unit,
     onImportArchiveClick: () -> Unit,
     onOpenFullFontLibrary: () -> Unit
@@ -298,7 +299,10 @@ fun FontBrowserToolPanel(
                     modifier = Modifier.width(34.dp)
                 )
                 IconButton(
-                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp - 4f).coerceIn(8f, 400f)) },
+                    onClick = {
+                        onUpdateTextSize((activeStyle.fontSizeSp - 4f).coerceIn(8f, 400f))
+                        onUpdateTextSizeFinished()
+                    },
                     modifier = Modifier
                         .size(34.dp)
                         .testTag("text_size_decrease")
@@ -308,13 +312,17 @@ fun FontBrowserToolPanel(
                 Slider(
                     value = activeStyle.fontSizeSp.coerceIn(8f, 400f),
                     onValueChange = onUpdateTextSize,
+                    onValueChangeFinished = onUpdateTextSizeFinished,
                     valueRange = 8f..400f,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("text_size_slider")
                 )
                 IconButton(
-                    onClick = { onUpdateTextSize((activeStyle.fontSizeSp + 4f).coerceIn(8f, 400f)) },
+                    onClick = {
+                        onUpdateTextSize((activeStyle.fontSizeSp + 4f).coerceIn(8f, 400f))
+                        onUpdateTextSizeFinished()
+                    },
                     modifier = Modifier
                         .size(34.dp)
                         .testTag("text_size_increase")

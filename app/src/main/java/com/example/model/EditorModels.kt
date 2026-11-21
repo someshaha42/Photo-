@@ -224,6 +224,34 @@ enum class ImageCropShape {
 }
 
 @Serializable
+data class Layer3DTransform(
+    val positionZ: Float = 0f,
+    val rotationXDeg: Float = 0f,
+    val rotationYDeg: Float = 0f,
+    val skewXDeg: Float = 0f,
+    val skewYDeg: Float = 0f
+) {
+    fun isIdentity(): Boolean =
+        positionZ == 0f && rotationXDeg == 0f && rotationYDeg == 0f && skewXDeg == 0f && skewYDeg == 0f
+}
+
+@Serializable
+data class CornerPinOffsets(
+    val tlDx: Float = 0f,
+    val tlDy: Float = 0f,
+    val trDx: Float = 0f,
+    val trDy: Float = 0f,
+    val brDx: Float = 0f,
+    val brDy: Float = 0f,
+    val blDx: Float = 0f,
+    val blDy: Float = 0f
+) {
+    fun isIdentity(): Boolean =
+        tlDx == 0f && tlDy == 0f && trDx == 0f && trDy == 0f &&
+            brDx == 0f && brDy == 0f && blDx == 0f && blDy == 0f
+}
+
+@Serializable
 enum class BackgroundTab(val title: String) {
     TRANSPARENT("Transparent"),
     BLUR("Blur"),
@@ -284,6 +312,8 @@ sealed interface EditorLayer {
     val opacity: Float
     val visible: Boolean
     val locked: Boolean
+    val transform3D: Layer3DTransform
+    val cornerPin: CornerPinOffsets
 
     fun withBaseTransform(
         offsetXNorm: Float = this.offsetXNorm,
@@ -295,6 +325,11 @@ sealed interface EditorLayer {
         opacity: Float = this.opacity,
         visible: Boolean = this.visible,
         locked: Boolean = this.locked
+    ): EditorLayer
+
+    fun withExtraTransforms(
+        transform3D: Layer3DTransform = this.transform3D,
+        cornerPin: CornerPinOffsets = this.cornerPin
     ): EditorLayer
 }
 
@@ -318,7 +353,9 @@ data class ImageLayer(
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
-    override val locked: Boolean = false
+    override val locked: Boolean = false,
+    override val transform3D: Layer3DTransform = Layer3DTransform(),
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -341,6 +378,11 @@ data class ImageLayer(
         visible = visible,
         locked = locked
     )
+
+    override fun withExtraTransforms(
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
 }
 
 @Serializable
@@ -371,7 +413,9 @@ data class TextLayer(
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
-    override val locked: Boolean = false
+    override val locked: Boolean = false,
+    override val transform3D: Layer3DTransform = Layer3DTransform(),
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -394,6 +438,11 @@ data class TextLayer(
         visible = visible,
         locked = locked
     )
+
+    override fun withExtraTransforms(
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
 }
 
 @Serializable
@@ -413,7 +462,9 @@ data class ShapeLayer(
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
-    override val locked: Boolean = false
+    override val locked: Boolean = false,
+    override val transform3D: Layer3DTransform = Layer3DTransform(),
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -436,6 +487,11 @@ data class ShapeLayer(
         visible = visible,
         locked = locked
     )
+
+    override fun withExtraTransforms(
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
 }
 
 @Serializable
@@ -453,7 +509,9 @@ data class GroupLayer(
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
-    override val locked: Boolean = false
+    override val locked: Boolean = false,
+    override val transform3D: Layer3DTransform = Layer3DTransform(),
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -476,6 +534,11 @@ data class GroupLayer(
         visible = visible,
         locked = locked
     )
+
+    override fun withExtraTransforms(
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
 }
 
 @Serializable
@@ -505,7 +568,9 @@ data class DrawLayer(
     override val rotationDeg: Float = 0f,
     override val opacity: Float = 1f,
     override val visible: Boolean = true,
-    override val locked: Boolean = false
+    override val locked: Boolean = false,
+    override val transform3D: Layer3DTransform = Layer3DTransform(),
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -528,6 +593,11 @@ data class DrawLayer(
         visible = visible,
         locked = locked
     )
+
+    override fun withExtraTransforms(
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
 }
 
 enum class ExportImageFormat(val label: String, val ext: String, val mimeType: String) {

@@ -10,9 +10,11 @@ import com.example.fonts.FontClassification
 import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
 import com.example.fonts.TrueTypeTableParser
+import com.example.data.LayerTransformMatrix
 import com.example.model.BackgroundConfig
 import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
+import com.example.model.CornerPinOffsets
 import com.example.model.DrawLayer
 import com.example.model.DrawPoint
 import com.example.model.DrawStroke
@@ -24,6 +26,7 @@ import com.example.model.ImageAdjustments
 import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
+import com.example.model.Layer3DTransform
 import com.example.model.ProjectDocument
 import com.example.model.ShapeLayer
 import com.example.model.TextCaseMode
@@ -897,6 +900,183 @@ class PixelForgeEngineTest {
             assertEquals("Circle crop outside corner must be transparent", 0, Color.alpha(cornerPx))
             rendered.recycle()
             sourceFile.delete()
+        }
+    }
+
+    @Test
+    fun transactionUndoRedoReversesSmallEditsStepByStepWithoutRemovingLayer() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val id = vm.addTextLayer("Undo Step Test")!!
+
+        // Transaction 1: small multi-tick drag move collapses into 1 undo step
+        vm.beginTransformTransaction()
+        vm.transformLayerTransient(id, deltaXNorm = 0.04f, deltaYNorm = -0.02f, scaleFactor = 1f, rotationDelta = 0f)
+        vm.transformLayerTransient(id, deltaXNorm = 0.06f, deltaYNorm = -0.03f, scaleFactor = 1f, rotationDelta = 0f)
+        vm.endTransformTransaction()
+
+        // Transaction 2: zoom/rotation adjustment
+        vm.beginTransformTransaction()
+        vm.setSelectedLayerScale(1.8f)
+        vm.setSelectedLayerRotation(24f)
+        vm.endTransformTransaction()
+
+        // Transaction 3: 3D rotation/skew adjustment
+        vm.beginTransformTransaction()
+        vm.updateSelectedLayer3DTransient { it.copy(rotationYDeg = 35f, skewXDeg = 12f) }
+        vm.endTransformTransaction()
+
+        var layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(0.10f, layer.offsetXNorm, 0.001f)
+        assertEquals(1.8f, layer.scale, 0.001f)
+        assertEquals(24f, layer.rotationDeg, 0.001f)
+        assertEquals(35f, layer.transform3D.rotationYDeg, 0.001f)
+
+        // Undo 3D edit -> layer stays present and move/scale remain
+        vm.undo()
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(0f, layer.transform3D.rotationYDeg, 0.001f)
+        assertEquals(1.8f, layer.scale, 0.001f)
+
+        // Undo scale + rotation -> move remains
+        vm.undo()
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(1f, layer.scale, 0.001f)
+        assertEquals(0f, layer.rotationDeg, 0.001f)
+        assertEquals(0.10f, layer.offsetXNorm, 0.001f)
+
+        // Undo slight move -> returns cleanly to origin, layer still exists
+        vm.undo()
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(0f, layer.offsetXNorm, 0.001f)
+        assertEquals(0f, layer.offsetYNorm, 0.001f)
+
+        // Redo restores move -> scale+rotation -> 3D
+        vm.redo()
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(0.10f, layer.offsetXNorm, 0.001f)
+
+        vm.redo()
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(1.8f, layer.scale, 0.001f)
+        assertEquals(24f, layer.rotationDeg, 0.001f)
+
+        vm.redo()
+        layer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals(35f, layer.transform3D.rotationYDeg, 0.001f)
+        assertEquals(12f, layer.transform3D.skewXDeg, 0.001f)
+    }
+
+    @Test
+    fun cornerPinLocksAllTransformsAndRestoresPriorLocksOnConfirm() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val textId = vm.addTextLayer("Perspective Text")!!
+
+        // Configure custom lock state before entering Corner Pin
+        vm.toggleStretchLock() // now false
+        vm.toggleZoomLock()    // now true
+        val priorLocks = TransformLockState(
+            stretchLocked = false,
+            zoomLocked = true,
+            rotationLocked = false,
+            positionLocked = false
+        )
+        assertEquals(priorLocks, vm.transformLocks.value)
+
+        vm.openToolDrawer(ToolDrawerTab.CORNER_PIN)
+        assertEquals(ToolDrawerTab.CORNER_PIN, vm.activeToolDrawer.value)
+        assertEquals(
+            TransformLockState(
+                stretchLocked = true,
+                zoomLocked = true,
+                rotationLocked = true,
+                positionLocked = true
+            ),
+            vm.transformLocks.value
+        )
+
+        // Drag top-left corner pin and finalize transaction
+        vm.beginTransformTransaction()
+        vm.updateSelectedLayerCornerPinTransient(textId, cornerIndex = 0, deltaDxRatio = 0.2f, deltaDyRatio = 0.15f)
+        vm.endTransformTransaction()
+
+        val pinned = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+        assertEquals(0.2f, pinned.cornerPin.tlDx, 0.001f)
+        assertEquals(0.15f, pinned.cornerPin.tlDy, 0.001f)
+
+        // Confirm closes Corner Pin drawer & restores custom locks
+        vm.confirmCornerPin()
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+        assertEquals(priorLocks, vm.transformLocks.value)
+
+        // Corner pin remains applied, and Undo reverses only the corner pin move
+        val afterConfirm = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+        assertEquals(0.2f, afterConfirm.cornerPin.tlDx, 0.001f)
+        vm.undo()
+        val afterUndo = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+        assertEquals(0f, afterUndo.cornerPin.tlDx, 0.001f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun cornerPinAnd3DPerspectiveRenderCleanlyInExportBitmapForPhotoAndText() {
+        runBlocking {
+            val sourceFile = File(context.cacheDir, "perspective_photo_src.png")
+            val srcBmp = android.graphics.Bitmap.createBitmap(120, 120, android.graphics.Bitmap.Config.ARGB_8888)
+            srcBmp.eraseColor(Color.BLUE)
+            FileOutputStream(sourceFile).use { out ->
+                srcBmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            srcBmp.recycle()
+
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+            val mediaManager = MediaStorageManager(context)
+
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                layers = listOf(
+                    ImageLayer(
+                        uriString = sourceFile.absolutePath,
+                        originalWidth = 120,
+                        originalHeight = 120,
+                        cornerPin = CornerPinOffsets(tlDx = 0.12f, brDy = -0.10f),
+                        transform3D = Layer3DTransform(rotationYDeg = 22f, skewXDeg = 8f)
+                    ),
+                    TextLayer(
+                        text = "3D TEXT",
+                        fontId = repo.selectedFontId.value,
+                        fontSizeSp = 44f,
+                        colorArgb = 0xFFFFEB3BL,
+                        cornerPin = CornerPinOffsets(trDy = 0.1f, blDx = -0.08f),
+                        transform3D = Layer3DTransform(rotationXDeg = 18f, positionZ = 40f, skewYDeg = -6f)
+                    )
+                )
+            )
+
+            val m = LayerTransformMatrix.buildBitmapDrawMatrix(
+                bitmapWidth = 120,
+                bitmapHeight = 120,
+                boxW = 120f,
+                boxH = 120f,
+                transform3D = Layer3DTransform(rotationYDeg = 25f, skewXDeg = 10f),
+                cornerPin = CornerPinOffsets(tlDx = 0.1f)
+            )
+            assertFalse("3D + Corner Pin matrix must not be identity", m.isIdentity)
+
+            val rendered = mediaManager.renderProjectToBitmap(doc, renderEngine, 240, 240)
+            var visiblePixels = 0
+            for (y in 20 until 220) {
+                for (x in 20 until 220) {
+                    if (Color.alpha(rendered.getPixel(x, y)) > 150) visiblePixels++
+                }
+            }
+            rendered.recycle()
+            sourceFile.delete()
+            assertTrue("Perspective/3D photo and text must render visible non-blank pixels", visiblePixels > 150)
         }
     }
 

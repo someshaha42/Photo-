@@ -841,6 +841,8 @@ fun TextToolPanel(
     onCycleTextCase: () -> Unit,
     onOpenFontLibrary: () -> Unit,
     onUpdateTextLayer: ((TextLayer) -> TextLayer) -> Unit,
+    onUpdateTextLayerTransient: ((TextLayer) -> TextLayer) -> Unit = onUpdateTextLayer,
+    onEndTransaction: () -> Unit = {},
     isCompactImeMode: Boolean = false
 ) {
     val activeStyle = selectedTextLayer ?: draftStyle
@@ -991,7 +993,8 @@ fun TextToolPanel(
                     }
                     Slider(
                         value = activeStyle.shadowRadius.coerceIn(1f, 28f),
-                        onValueChange = { r -> onUpdateTextLayer { it.copy(shadowEnabled = true, shadowRadius = r) } },
+                        onValueChange = { r -> onUpdateTextLayerTransient { it.copy(shadowEnabled = true, shadowRadius = r) } },
+                        onValueChangeFinished = onEndTransaction,
                         valueRange = 1f..28f,
                         modifier = Modifier.testTag("text_shadow_slider")
                     )
@@ -1021,7 +1024,8 @@ fun TextToolPanel(
                     }
                     Slider(
                         value = activeStyle.strokeWidth.coerceIn(0f, 16f),
-                        onValueChange = { w -> onUpdateTextLayer { it.copy(strokeWidth = w) } },
+                        onValueChange = { w -> onUpdateTextLayerTransient { it.copy(strokeWidth = w) } },
+                        onValueChangeFinished = onEndTransaction,
                         valueRange = 0f..16f,
                         modifier = Modifier.testTag("text_stroke_slider")
                     )
@@ -1096,7 +1100,8 @@ fun AdjustToolPanel(
     selectedImageLayer: ImageLayer?,
     onUpdateAdjustments: ((ImageAdjustments) -> ImageAdjustments) -> Unit,
     onSetImageOpacity: (Float) -> Unit,
-    onResetAdjustments: () -> Unit
+    onResetAdjustments: () -> Unit,
+    onEndTransaction: () -> Unit = {}
 ) {
     var activeParam by remember { mutableStateOf(AdjustParam.EXPOSURE) }
 
@@ -1191,6 +1196,7 @@ fun AdjustToolPanel(
                         }
                     }
                 },
+                onValueChangeFinished = onEndTransaction,
                 valueRange = activeParam.min..activeParam.max,
                 modifier = Modifier.testTag("adjust_slider")
             )
@@ -1202,7 +1208,9 @@ fun AdjustToolPanel(
 fun ShapesToolPanel(
     selectedShapeLayer: ShapeLayer?,
     onAddShape: (LayerShapeType) -> Unit,
-    onUpdateShape: ((ShapeLayer) -> ShapeLayer) -> Unit
+    onUpdateShape: ((ShapeLayer) -> ShapeLayer) -> Unit,
+    onUpdateShapeTransient: ((ShapeLayer) -> ShapeLayer) -> Unit = onUpdateShape,
+    onEndTransaction: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -1251,7 +1259,8 @@ fun ShapesToolPanel(
             }
             Slider(
                 value = selectedShapeLayer.strokeWidth,
-                onValueChange = { w -> onUpdateShape { it.copy(strokeWidth = w) } },
+                onValueChange = { w -> onUpdateShapeTransient { it.copy(strokeWidth = w) } },
+                onValueChangeFinished = onEndTransaction,
                 valueRange = 0f..16f
             )
         }
@@ -1266,7 +1275,8 @@ fun RotateTransformPanel(
     onSetScale: (Float) -> Unit,
     onSetOpacity: (Float) -> Unit,
     onMoveOrder: (Int) -> Unit,
-    onDuplicate: () -> Unit
+    onDuplicate: () -> Unit,
+    onEndTransaction: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -1299,7 +1309,10 @@ fun RotateTransformPanel(
                     Spacer(Modifier.width(4.dp))
                     Text("+90°")
                 }
-                FilledTonalButton(onClick = { onSetRotation(0f) }) {
+                FilledTonalButton(onClick = {
+                    onSetRotation(0f)
+                    onEndTransaction()
+                }) {
                     Text("0°")
                 }
                 IconButton(onClick = { onMoveOrder(1) }) {
@@ -1320,6 +1333,7 @@ fun RotateTransformPanel(
             Slider(
                 value = selectedLayer.rotationDeg.coerceIn(-180f, 180f),
                 onValueChange = onSetRotation,
+                onValueChangeFinished = onEndTransaction,
                 valueRange = -180f..180f
             )
 
@@ -1330,6 +1344,7 @@ fun RotateTransformPanel(
             Slider(
                 value = selectedLayer.scale.coerceIn(0.1f, 50f),
                 onValueChange = onSetScale,
+                onValueChangeFinished = onEndTransaction,
                 valueRange = 0.1f..50f
             )
 
@@ -1340,6 +1355,7 @@ fun RotateTransformPanel(
             Slider(
                 value = selectedLayer.opacity.coerceIn(0f, 1f),
                 onValueChange = onSetOpacity,
+                onValueChangeFinished = onEndTransaction,
                 valueRange = 0f..1f
             )
         }

@@ -324,40 +324,87 @@ class MediaStorageManager(private val context: Context) {
                             colorFilter = ColorMatrixColorFilter(buildColorMatrix(layer.adjustments))
                         }
                     }
-                    val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
                     val layerAlpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
                     val tintArgb = layer.tintColorArgb
-                    val shapeClipSave = if (layer.cropShape == ImageCropShape.CIRCLE) {
-                        val c = canvas.save()
-                        val ovalPath = android.graphics.Path().apply {
-                            addOval(dst, android.graphics.Path.Direction.CW)
-                        }
-                        canvas.clipPath(ovalPath)
-                        c
-                    } else null
 
-                    if (tintArgb != null) {
-                        val saveCount = canvas.saveLayerAlpha(dst, layerAlpha)
-                        canvas.drawBitmap(bmp, srcRect, dst, paint)
-                        val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = tintArgb.toInt()
-                            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+                    if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                        val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
+                        val shapeClipSave = if (layer.cropShape == ImageCropShape.CIRCLE) {
+                            val c = canvas.save()
+                            val ovalPath = android.graphics.Path().apply {
+                                addOval(dst, android.graphics.Path.Direction.CW)
+                            }
+                            canvas.clipPath(ovalPath)
+                            c
+                        } else null
+
+                        if (tintArgb != null) {
+                            val saveCount = canvas.saveLayerAlpha(dst, layerAlpha)
+                            canvas.drawBitmap(bmp, srcRect, dst, paint)
+                            val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = tintArgb.toInt()
+                                xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+                            }
+                            canvas.drawRect(dst, tintPaint)
+                            if (layer.adjustments.vignette > 0.01f) {
+                                drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, 1f)
+                            }
+                            canvas.restoreToCount(saveCount)
+                        } else {
+                            paint.alpha = layerAlpha
+                            canvas.drawBitmap(bmp, srcRect, dst, paint)
+                            if (layer.adjustments.vignette > 0.01f) {
+                                drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
+                            }
                         }
-                        canvas.drawRect(dst, tintPaint)
-                        if (layer.adjustments.vignette > 0.01f) {
-                            drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, 1f)
+
+                        if (shapeClipSave != null) {
+                            canvas.restoreToCount(shapeClipSave)
                         }
-                        canvas.restoreToCount(saveCount)
                     } else {
-                        paint.alpha = layerAlpha
-                        canvas.drawBitmap(bmp, srcRect, dst, paint)
-                        if (layer.adjustments.vignette > 0.01f) {
-                            drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
+                        val maxPrep = 1440f
+                        val prepScale = min(1f, maxPrep / maxOf(drawW, drawH).coerceAtLeast(1f))
+                        val prepW = (drawW * prepScale).roundToInt().coerceIn(24, 1600)
+                        val prepH = (drawH * prepScale).roundToInt().coerceIn(24, 1600)
+                        val prepared = Bitmap.createBitmap(prepW, prepH, Bitmap.Config.ARGB_8888)
+                        val pc = Canvas(prepared)
+                        val prepDst = android.graphics.RectF(0f, 0f, prepW.toFloat(), prepH.toFloat())
+                        if (layer.cropShape == ImageCropShape.CIRCLE) {
+                            val ovalPath = android.graphics.Path().apply {
+                                addOval(prepDst, android.graphics.Path.Direction.CW)
+                            }
+                            pc.clipPath(ovalPath)
                         }
-                    }
-
-                    if (shapeClipSave != null) {
-                        canvas.restoreToCount(shapeClipSave)
+                        if (tintArgb != null) {
+                            val saveCount = pc.saveLayerAlpha(prepDst, layerAlpha)
+                            pc.drawBitmap(bmp, srcRect, prepDst, paint)
+                            val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = tintArgb.toInt()
+                                xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+                            }
+                            pc.drawRect(prepDst, tintPaint)
+                            if (layer.adjustments.vignette > 0.01f) {
+                                drawVignetteOnRect(pc, prepDst, layer.adjustments.vignette, 1f)
+                            }
+                            pc.restoreToCount(saveCount)
+                        } else {
+                            paint.alpha = layerAlpha
+                            pc.drawBitmap(bmp, srcRect, prepDst, paint)
+                            if (layer.adjustments.vignette > 0.01f) {
+                                drawVignetteOnRect(pc, prepDst, layer.adjustments.vignette, effectiveOpacity)
+                            }
+                        }
+                        val matrix = LayerTransformMatrix.buildBitmapDrawMatrix(
+                            bitmapWidth = prepW,
+                            bitmapHeight = prepH,
+                            boxW = drawW,
+                            boxH = drawH,
+                            transform3D = layer.transform3D,
+                            cornerPin = layer.cornerPin
+                        )
+                        matrix.postTranslate(-drawW / 2f, -drawH / 2f)
+                        canvas.drawBitmap(prepared, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                        prepared.recycle()
                     }
 
                     if (bmp !== rawBmp) bmp.recycle()
@@ -377,18 +424,50 @@ class MediaStorageManager(private val context: Context) {
                     emojiSourceMode = document.emojiSourceMode,
                     appEmojiFontId = document.appEmojiFontId
                 )
-                val renderScale = cumulativeScale.coerceIn(1f, (2048f / effPx.coerceAtLeast(1f)).coerceAtLeast(1f))
-                if (renderScale > 1.01f) {
-                    canvas.scale(1f / renderScale, 1f / renderScale)
+                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                    val renderScale = cumulativeScale.coerceIn(1f, (2048f / effPx.coerceAtLeast(1f)).coerceAtLeast(1f))
+                    if (renderScale > 1.01f) {
+                        canvas.scale(1f / renderScale, 1f / renderScale)
+                    }
+                    fontRenderEngine.drawTextLayerOnCanvas(
+                        canvas = canvas,
+                        layer = layer.copy(opacity = effectiveOpacity),
+                        effectiveFontSizePx = effPx * renderScale,
+                        maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f)) * renderScale,
+                        emojiSourceMode = document.emojiSourceMode,
+                        appEmojiFontId = document.appEmojiFontId
+                    )
+                } else {
+                    val boxW = measured.widthPx.coerceAtLeast(48f)
+                    val boxH = measured.heightPx.coerceAtLeast(48f)
+                    val texScale = cumulativeScale.coerceIn(1f, 6f)
+                        .coerceAtMost(1440f / maxOf(boxW, boxH).coerceAtLeast(1f))
+                        .coerceAtLeast(1f)
+                    val texW = (boxW * texScale).roundToInt().coerceIn(24, 1600)
+                    val texH = (boxH * texScale).roundToInt().coerceIn(24, 1600)
+                    val textBmp = Bitmap.createBitmap(texW, texH, Bitmap.Config.ARGB_8888)
+                    val tc = Canvas(textBmp)
+                    tc.translate(texW / 2f, texH / 2f)
+                    fontRenderEngine.drawTextLayerOnCanvas(
+                        canvas = tc,
+                        layer = layer.copy(opacity = effectiveOpacity),
+                        effectiveFontSizePx = effPx * texScale,
+                        maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f)) * texScale,
+                        emojiSourceMode = document.emojiSourceMode,
+                        appEmojiFontId = document.appEmojiFontId
+                    )
+                    val matrix = LayerTransformMatrix.buildBitmapDrawMatrix(
+                        bitmapWidth = texW,
+                        bitmapHeight = texH,
+                        boxW = boxW,
+                        boxH = boxH,
+                        transform3D = layer.transform3D,
+                        cornerPin = layer.cornerPin
+                    )
+                    matrix.postTranslate(-boxW / 2f, -boxH / 2f)
+                    canvas.drawBitmap(textBmp, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                    textBmp.recycle()
                 }
-                fontRenderEngine.drawTextLayerOnCanvas(
-                    canvas = canvas,
-                    layer = layer.copy(opacity = effectiveOpacity),
-                    effectiveFontSizePx = effPx * renderScale,
-                    maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f)) * renderScale,
-                    emojiSourceMode = document.emojiSourceMode,
-                    appEmojiFontId = document.appEmojiFontId
-                )
             }
             is DrawLayer -> {
                 drawVectorStrokesOnCanvas(
