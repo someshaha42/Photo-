@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -108,6 +110,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.example.data.ProjectEntity
 import com.example.data.VectorShapeEngine
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
@@ -128,6 +131,10 @@ import com.example.ui.theme.StudioEmerald
 import com.example.ui.theme.StudioPurple
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -1412,3 +1419,218 @@ fun EmojiSettingsPanel(
         }
     }
 }
+
+/**
+ * Right-side vertical My Projects Drawer opened from the 3-dot Menu -> "4. My Projects".
+ * Ordered oldest-to-newest (1, 2, 3...) so tapping any saved project auto-saves the
+ * current project first and switches cleanly in-place without losing any work.
+ */
+@Composable
+fun MyProjectsSideDrawer(
+    projects: List<ProjectEntity>,
+    currentProjectId: String,
+    onSelectProject: (String) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dateFormat = remember { SimpleDateFormat("dd MMM • hh:mm a", Locale.getDefault()) }
+    var drawerDragX by remember { mutableFloatStateOf(0f) }
+    val drawerDismissPx = with(LocalDensity.current) { 48.dp.toPx() }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+        tonalElevation = 8.dp,
+        shadowElevation = 10.dp,
+        shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
+        modifier = modifier
+            .fillMaxHeight()
+            .fillMaxWidth(0.64f)
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { drawerDragX = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        drawerDragX += dragAmount
+                        if (drawerDragX > drawerDismissPx) {
+                            drawerDragX = 0f
+                            onClose()
+                        }
+                    }
+                )
+            }
+            .testTag("my_projects_side_drawer")
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FolderCopy,
+                        contentDescription = null,
+                        tint = StudioAzure,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "My Projects (${projects.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(36.dp).testTag("close_projects_drawer_button")
+                ) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close My Projects", modifier = Modifier.size(18.dp))
+                }
+            }
+
+            Text(
+                text = "Tap any project to save current & switch",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+            if (projects.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No saved projects yet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(projects, key = { _, p -> p.id }) { idx, project ->
+                        val number = idx + 1
+                        val isActive = project.id == currentProjectId
+                        val thumbBmp = remember(project.thumbnailPath) {
+                            project.thumbnailPath?.takeIf { File(it).exists() }?.let { path ->
+                                BitmapFactory.decodeFile(path)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isActive) StudioEmerald.copy(alpha = 0.14f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                                )
+                                .border(
+                                    width = if (isActive) 1.5.dp else 1.dp,
+                                    color = if (isActive) StudioEmerald else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable { onSelectProject(project.id) }
+                                .padding(horizontal = 8.dp, vertical = 8.dp)
+                                .testTag("drawer_project_card_$number"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 24.dp, height = 24.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isActive) StudioEmerald else StudioAzure),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$number",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (thumbBmp != null) {
+                                    Image(
+                                        bitmap = thumbBmp.asImageBitmap(),
+                                        contentDescription = project.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.FolderCopy,
+                                        contentDescription = project.title,
+                                        tint = StudioAzure,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = project.title,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${project.aspectLabel} • ${project.layerCount} layers",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = dateFormat.format(Date(project.createdAtMillis)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            if (isActive) {
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = StudioEmerald
+                                ) {
+                                    Text(
+                                        text = "Active",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Crop169
+import androidx.compose.material.icons.rounded.CropPortrait
 import androidx.compose.material.icons.rounded.CropSquare
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,6 +49,9 @@ import com.example.ui.theme.StudioEmerald
 fun CanvasSettingsPanel(
     canvas: CanvasDimensions,
     onSelectSquare: () -> Unit,
+    onSelectPreset: (CanvasDimensions) -> Unit = { preset ->
+        if (preset == CanvasDimensions.SQUARE_1_1) onSelectSquare()
+    },
     onApplyCustom: (ratioInput: String, pixelInput: String, preferPixels: Boolean) -> Boolean
 ) {
     var showCustomInputs by remember(canvas.isCustom) { mutableStateOf(canvas.isCustom) }
@@ -54,6 +59,14 @@ fun CanvasSettingsPanel(
     var pixelText by remember(canvas) { mutableStateOf(canvas.pixelLabel) }
     var lastEditedPixels by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    val squareSelected = !showCustomInputs && !canvas.isCustom &&
+        canvas.ratioWidth == 1 && canvas.ratioHeight == 1
+    val wideSelected = !showCustomInputs && !canvas.isCustom &&
+        canvas.ratioWidth == 16 && canvas.ratioHeight == 9
+    val tallSelected = !showCustomInputs && !canvas.isCustom &&
+        canvas.ratioWidth == 9 && canvas.ratioHeight == 16
+    val customSelected = showCustomInputs || canvas.isCustom
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -90,103 +103,58 @@ fun CanvasSettingsPanel(
                 }
             }
 
-            // ONLY 2 Canvas Options: 1:1 (Default) and Custom
+            // Presets: 1:1 | 16:9 | 9:16 | Custom
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val squareSelected = !showCustomInputs && !canvas.isCustom
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            if (squareSelected) StudioAzure.copy(alpha = 0.16f)
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .border(
-                            width = if (squareSelected) 2.dp else 1.dp,
-                            color = if (squareSelected) StudioAzure else MaterialTheme.colorScheme.outline,
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                        .clickable {
-                            showCustomInputs = false
-                            errorMsg = null
-                            onSelectSquare()
-                        }
-                        .padding(vertical = 14.dp)
-                        .testTag("canvas_preset_1_1"),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.CropSquare,
-                        contentDescription = "1:1",
-                        tint = if (squareSelected) StudioAzure else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Text(
-                        text = "1:1",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (squareSelected) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = "Selected",
-                            tint = StudioAzure,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    } else {
-                        Spacer(modifier = Modifier.height(16.dp))
+                CanvasPresetCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Rounded.CropSquare,
+                    label = "1:1",
+                    selected = squareSelected,
+                    tag = "canvas_preset_1_1",
+                    onClick = {
+                        showCustomInputs = false
+                        errorMsg = null
+                        onSelectPreset(CanvasDimensions.SQUARE_1_1)
                     }
-                }
-
-                val customSelected = showCustomInputs || canvas.isCustom
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            if (customSelected) StudioAzure.copy(alpha = 0.16f)
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .border(
-                            width = if (customSelected) 2.dp else 1.dp,
-                            color = if (customSelected) StudioAzure else MaterialTheme.colorScheme.outline,
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                        .clickable {
-                            showCustomInputs = true
-                            errorMsg = null
-                        }
-                        .padding(vertical = 14.dp)
-                        .testTag("canvas_preset_custom"),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Tune,
-                        contentDescription = "Custom",
-                        tint = if (customSelected) StudioAzure else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Text(
-                        text = "Custom",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (customSelected) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = "Selected",
-                            tint = StudioAzure,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    } else {
-                        Spacer(modifier = Modifier.height(16.dp))
+                )
+                CanvasPresetCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Rounded.Crop169,
+                    label = "16:9",
+                    selected = wideSelected,
+                    tag = "canvas_preset_16_9",
+                    onClick = {
+                        showCustomInputs = false
+                        errorMsg = null
+                        onSelectPreset(CanvasDimensions.LANDSCAPE_16_9)
                     }
-                }
+                )
+                CanvasPresetCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Rounded.CropPortrait,
+                    label = "9:16",
+                    selected = tallSelected,
+                    tag = "canvas_preset_9_16",
+                    onClick = {
+                        showCustomInputs = false
+                        errorMsg = null
+                        onSelectPreset(CanvasDimensions.PORTRAIT_9_16)
+                    }
+                )
+                CanvasPresetCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Rounded.Tune,
+                    label = "Custom",
+                    selected = customSelected,
+                    tag = "canvas_preset_custom",
+                    onClick = {
+                        showCustomInputs = true
+                        errorMsg = null
+                    }
+                )
             }
 
             if (showCustomInputs) {
@@ -261,3 +229,56 @@ fun CanvasSettingsPanel(
         }
     }
 }
+
+@Composable
+private fun CanvasPresetCard(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    tag: String,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (selected) StudioAzure.copy(alpha = 0.16f)
+                else MaterialTheme.colorScheme.surfaceVariant
+            )
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(14.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 4.dp)
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (selected) StudioAzure else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        if (selected) {
+            Icon(
+                imageVector = Icons.Rounded.CheckCircle,
+                contentDescription = "Selected",
+                tint = StudioAzure,
+                modifier = Modifier.size(14.dp)
+            )
+        } else {
+            Spacer(modifier = Modifier.height(14.dp))
+        }
+    }
+}
+

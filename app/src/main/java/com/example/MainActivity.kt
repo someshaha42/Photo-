@@ -55,6 +55,8 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
     val fontImportHistory by viewModel.fontImportHistory.collectAsStateWithLifecycle()
     val diagnostics by viewModel.diagnostics.collectAsStateWithLifecycle()
 
+    val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
+
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
 
@@ -98,6 +100,8 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                 HomeScreen(
                     projects = projects,
                     isDarkTheme = settings.isDarkTheme,
+                    statusBanner = statusBanner,
+                    onClearBanner = { viewModel.clearBanner() },
                     onNewProjectClick = {
                         viewModel.createNewProject()
                         navController.navigate(EditorRoute)
@@ -109,7 +113,9 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                             }
                         }
                     },
+                    onSaveProject = { viewModel.saveHistoryProjectToDevice(it) },
                     onDeleteProject = { viewModel.deleteHistoryProject(it) },
+                    onDeleteProjects = { viewModel.deleteHistoryProjects(it) },
                     onToggleTheme = { viewModel.toggleTheme() },
                     onOpenSettings = { showSettingsDialog = true }
                 )

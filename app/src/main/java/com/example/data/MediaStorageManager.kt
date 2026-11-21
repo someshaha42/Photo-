@@ -283,18 +283,59 @@ class MediaStorageManager(private val context: Context) {
 
         when (layer) {
             is GroupLayer -> {
-                for (child in layer.children) {
-                    renderLayerToCanvas(
-                        canvas = canvas,
-                        layer = child,
-                        document = document,
-                        fontRenderEngine = fontRenderEngine,
-                        targetWidth = targetWidth,
-                        targetHeight = targetHeight,
-                        isNestedInGroup = true,
-                        parentOpacity = effectiveOpacity,
-                        parentScale = cumulativeScale
+                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                    for (child in layer.children) {
+                        renderLayerToCanvas(
+                            canvas = canvas,
+                            layer = child,
+                            document = document,
+                            fontRenderEngine = fontRenderEngine,
+                            targetWidth = targetWidth,
+                            targetHeight = targetHeight,
+                            isNestedInGroup = true,
+                            parentOpacity = effectiveOpacity,
+                            parentScale = cumulativeScale
+                        )
+                    }
+                } else {
+                    val boxPx = min(targetWidth, targetHeight) * 0.64f
+                    val padRatio = 2.2f
+                    val maxPrep = 1440f
+                    val prepScale = min(1f, maxPrep / (boxPx * padRatio).coerceAtLeast(1f))
+                    val prepSize = (boxPx * padRatio * prepScale).roundToInt().coerceIn(48, 1600)
+                    val groupBmp = Bitmap.createBitmap(prepSize, prepSize, Bitmap.Config.ARGB_8888)
+                    val gc = Canvas(groupBmp)
+                    gc.translate(prepSize / 2f, prepSize / 2f)
+                    gc.scale(prepScale, prepScale)
+                    for (child in layer.children) {
+                        renderLayerToCanvas(
+                            canvas = gc,
+                            layer = child,
+                            document = document,
+                            fontRenderEngine = fontRenderEngine,
+                            targetWidth = targetWidth,
+                            targetHeight = targetHeight,
+                            isNestedInGroup = true,
+                            parentOpacity = 1f,
+                            parentScale = cumulativeScale
+                        )
+                    }
+                    val matrix = LayerTransformMatrix.buildPaddedBitmapDrawMatrix(
+                        bitmapWidth = prepSize,
+                        bitmapHeight = prepSize,
+                        padRatioX = padRatio,
+                        padRatioY = padRatio,
+                        boxW = boxPx,
+                        boxH = boxPx,
+                        transform3D = layer.transform3D,
+                        cornerPin = layer.cornerPin
                     )
+                    matrix.postTranslate(-boxPx / 2f, -boxPx / 2f)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
+                    }
+                    canvas.drawBitmap(groupBmp, matrix, p)
+                    groupBmp.recycle()
                 }
             }
             is ImageLayer -> {
@@ -412,7 +453,42 @@ class MediaStorageManager(private val context: Context) {
                 }
             }
             is ShapeLayer -> {
-                drawShapeOnCanvas(canvas, layer.copy(opacity = effectiveOpacity), targetWidth, targetHeight)
+                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                    drawShapeOnCanvas(canvas, layer.copy(opacity = effectiveOpacity), targetWidth, targetHeight)
+                } else {
+                    val baseSize = min(targetWidth, targetHeight) * 0.34f
+                    val strokeScale = min(targetWidth, targetHeight) / 360f
+                    val padRatio = 2.0f
+                    val maxPrep = 1440f
+                    val prepScale = min(1f, maxPrep / (baseSize * padRatio).coerceAtLeast(1f))
+                    val prepSize = (baseSize * padRatio * prepScale).roundToInt().coerceIn(48, 1600)
+                    val shapeBmp = Bitmap.createBitmap(prepSize, prepSize, Bitmap.Config.ARGB_8888)
+                    val sc = Canvas(shapeBmp)
+                    VectorShapeEngine.drawShapeOnCanvas(
+                        canvas = sc,
+                        layer = layer.copy(opacity = 1f),
+                        baseSizePx = baseSize * prepScale,
+                        cx = prepSize / 2f,
+                        cy = prepSize / 2f,
+                        strokeScaleFactor = strokeScale * prepScale
+                    )
+                    val matrix = LayerTransformMatrix.buildPaddedBitmapDrawMatrix(
+                        bitmapWidth = prepSize,
+                        bitmapHeight = prepSize,
+                        padRatioX = padRatio,
+                        padRatioY = padRatio,
+                        boxW = baseSize,
+                        boxH = baseSize,
+                        transform3D = layer.transform3D,
+                        cornerPin = layer.cornerPin
+                    )
+                    matrix.postTranslate(-baseSize / 2f, -baseSize / 2f)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
+                    }
+                    canvas.drawBitmap(shapeBmp, matrix, p)
+                    shapeBmp.recycle()
+                }
             }
             is TextLayer -> {
                 val resolutionFactor = targetWidth / 360f
@@ -470,12 +546,58 @@ class MediaStorageManager(private val context: Context) {
                 }
             }
             is DrawLayer -> {
-                drawVectorStrokesOnCanvas(
-                    canvas = canvas,
-                    layer = layer.copy(opacity = effectiveOpacity),
-                    targetWidth = targetWidth,
-                    targetHeight = targetHeight
-                )
+                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                    drawVectorStrokesOnCanvas(
+                        canvas = canvas,
+                        layer = layer.copy(opacity = effectiveOpacity),
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight
+                    )
+                } else {
+                    val allPts = layer.strokes.flatMap { it.points }
+                    val minXNorm = (allPts.minOfOrNull { it.xNorm } ?: 0.25f).let { (it - 0.04f).coerceIn(0f, 0.92f) }
+                    val minYNorm = (allPts.minOfOrNull { it.yNorm } ?: 0.25f).let { (it - 0.04f).coerceIn(0f, 0.92f) }
+                    val maxXNorm = (allPts.maxOfOrNull { it.xNorm } ?: 0.75f).let { (it + 0.04f).coerceIn((minXNorm + 0.08f).coerceAtMost(1f), 1f) }
+                    val maxYNorm = (allPts.maxOfOrNull { it.yNorm } ?: 0.75f).let { (it + 0.04f).coerceIn((minYNorm + 0.08f).coerceAtMost(1f), 1f) }
+                    val wF = targetWidth.toFloat().coerceAtLeast(1f)
+                    val hF = targetHeight.toFloat().coerceAtLeast(1f)
+                    val boxOriginX = minXNorm * wF
+                    val boxOriginY = minYNorm * hF
+                    val boxW = ((maxXNorm - minXNorm) * wF).coerceAtLeast(48f)
+                    val boxH = ((maxYNorm - minYNorm) * hF).coerceAtLeast(48f)
+                    val maxPrep = 1440f
+                    val texScale = min(1f, maxPrep / maxOf(boxW, boxH).coerceAtLeast(1f)).coerceAtLeast(0.25f)
+                    val texW = (boxW * texScale).roundToInt().coerceIn(24, 1600)
+                    val texH = (boxH * texScale).roundToInt().coerceIn(24, 1600)
+                    val drawBmp = Bitmap.createBitmap(texW, texH, Bitmap.Config.ARGB_8888)
+                    val dc = Canvas(drawBmp)
+                    dc.translate(-boxOriginX * texScale, -boxOriginY * texScale)
+                    for (stroke in layer.strokes) {
+                        VectorStrokeEngine.drawVectorStroke(
+                            canvas = dc,
+                            stroke = stroke,
+                            areaWidthPx = wF * texScale,
+                            areaHeightPx = hF * texScale,
+                            layerOpacity = 1f,
+                            originOffsetX = 0f,
+                            originOffsetY = 0f
+                        )
+                    }
+                    val matrix = LayerTransformMatrix.buildBitmapDrawMatrix(
+                        bitmapWidth = texW,
+                        bitmapHeight = texH,
+                        boxW = boxW,
+                        boxH = boxH,
+                        transform3D = layer.transform3D,
+                        cornerPin = layer.cornerPin
+                    )
+                    matrix.postTranslate(boxOriginX - wF * 0.5f, boxOriginY - hF * 0.5f)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
+                    }
+                    canvas.drawBitmap(drawBmp, matrix, p)
+                    drawBmp.recycle()
+                }
             }
         }
         canvas.restore()

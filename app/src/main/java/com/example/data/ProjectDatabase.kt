@@ -33,6 +33,9 @@ interface ProjectDao {
     @Query("SELECT * FROM projects ORDER BY updatedAtMillis DESC")
     fun getAllProjectsDesc(): Flow<List<ProjectEntity>>
 
+    @Query("SELECT * FROM projects ORDER BY createdAtMillis ASC, rowid ASC")
+    fun getAllProjectsAsc(): Flow<List<ProjectEntity>>
+
     @Query("SELECT * FROM projects WHERE id = :id LIMIT 1")
     suspend fun getProjectById(id: String): ProjectEntity?
 
@@ -73,7 +76,7 @@ class ProjectRepository(
         classDiscriminator = "layerType"
     }
 
-    val projectsFlow: Flow<List<ProjectEntity>> = dao.getAllProjectsDesc()
+    val projectsFlow: Flow<List<ProjectEntity>> = dao.getAllProjectsAsc()
 
     suspend fun loadDocument(projectId: String): ProjectDocument? {
         val entity = dao.getProjectById(projectId) ?: return null
@@ -112,5 +115,11 @@ class ProjectRepository(
             runCatching { mediaDir.deleteRecursively() }
         }
         dao.deleteProjectById(projectId)
+    }
+
+    suspend fun deleteProjects(projectIds: Set<String>) {
+        for (id in projectIds) {
+            deleteProject(id)
+        }
     }
 }

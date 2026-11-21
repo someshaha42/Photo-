@@ -91,6 +91,33 @@ object LayerTransformMatrix {
         return effect
     }
 
+    /**
+     * Maps an oversized padded offscreen bitmap (of nominal boxW * padRatioX by boxH * padRatioY,
+     * centered on the nominal box) through the same Corner Pin & 3D effect matrix as buildBitmapDrawMatrix
+     * so stretched vertices or child layers extending beyond nominal bounds are never clipped.
+     */
+    fun buildPaddedBitmapDrawMatrix(
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        padRatioX: Float,
+        padRatioY: Float,
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ): Matrix {
+        val w = boxW.coerceAtLeast(1f)
+        val h = boxH.coerceAtLeast(1f)
+        val prX = padRatioX.coerceAtLeast(1f)
+        val prY = padRatioY.coerceAtLeast(1f)
+        val effect = computeLocalEffectMatrix(w, h, transform3D, cornerPin)
+        effect.preTranslate(-w * (prX - 1f) * 0.5f, -h * (prY - 1f) * 0.5f)
+        val sx = (w * prX) / bitmapWidth.coerceAtLeast(1).toFloat()
+        val sy = (h * prY) / bitmapHeight.coerceAtLeast(1).toFloat()
+        effect.preScale(sx, sy)
+        return effect
+    }
+
     fun mapCornerPoints(
         boxW: Float,
         boxH: Float,

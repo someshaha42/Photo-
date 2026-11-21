@@ -15,12 +15,15 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.ProjectEntity
 import com.example.fonts.FontDiagnosticsSnapshot
 import com.example.fonts.FontImportProgress
 import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
 import com.example.fonts.FontSource
+import com.example.model.CanvasDimensions
 import com.example.model.DrawPoint
 import com.example.model.DrawStroke
 import com.example.model.ImageCropRect
@@ -34,10 +37,12 @@ import com.example.model.VectorStrokePattern
 import com.example.ui.PendingImportPhoto
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
+import com.example.ui.components.CanvasSettingsPanel
 import com.example.ui.components.FontLibrarySheet
 import com.example.ui.components.PendingPhotoCropOverlay
 import com.example.ui.components.TextToolPanel
 import com.example.ui.screens.EditorScreen
+import com.example.ui.screens.HomeScreen
 import com.example.ui.theme.PixelForgeTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -154,7 +159,7 @@ class ComposeRegressionTest {
     }
 
     @Test
-    fun editorScreenTopPagerLocksAndContextSensitiveBottomBarsWorkCorrectly() {
+    fun editorScreenTopControlsLocksFloatingCanvasButtonsAndContextBarsWork() {
         val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
         vm.createNewProject()
         var directPhotoPickCount = 0
@@ -182,11 +187,14 @@ class ComposeRegressionTest {
         composeRule.onNodeWithTag("bottom_tool_photo").performClick()
         assertEquals(1, directPhotoPickCount)
 
-        // Top pager Page 0 -> switch to Page 1 -> verify S/Z/R/P locks & defaults
-        composeRule.onNodeWithTag("top_delete_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("top_pager_dot_1").performClick()
-        composeRule.waitForIdle()
+        // Zoom & Layers are vertically stacked in the canvas corner; top bar Row 2 is unwrapped (no pager dot)
+        composeRule.onNodeWithTag("top_zoom_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_layers_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_pager_dot_1").assertDoesNotExist()
 
+        composeRule.onNodeWithTag("top_delete_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_tool_corner_pin").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_tool_3d").assertIsDisplayed()
         assertTrue(vm.transformLocks.value.stretchLocked)
         assertFalse(vm.transformLocks.value.zoomLocked)
         composeRule.onNodeWithTag("top_lock_stretch_button").assertIsDisplayed()
@@ -212,7 +220,7 @@ class ComposeRegressionTest {
     }
 
     @Test
-    fun pendingPhotoCropOverlaySupportsFreeCircleAnd916Modes() {
+    fun pendingPhotoCropOverlayExposesCornersAndSingleEdgesWithoutModeButtons() {
         val bmp = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
         val pending = PendingImportPhoto(
             uriString = "/tmp/sample.png",
@@ -239,16 +247,33 @@ class ComposeRegressionTest {
         }
 
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("import_crop_mode_circle").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("import_crop_done_button").performClick()
-        assertEquals(ImageCropShape.CIRCLE, committedShape)
-        assertTrue((committedCrop?.right ?: 0f) > (committedCrop?.left ?: 1f))
+        // Old Free/Circle/9:16 preset buttons must be gone
+        composeRule.onNodeWithTag("import_crop_mode_free").assertDoesNotExist()
+        composeRule.onNodeWithTag("import_crop_mode_circle").assertDoesNotExist()
+        composeRule.onNodeWithTag("import_crop_mode_9_16").assertDoesNotExist()
 
-        composeRule.onNodeWithTag("import_crop_mode_9_16").performClick()
+        // 4 corner zoom pins + 4 single-edge crop handles exist
+        composeRule.onNodeWithTag("import_crop_corner_tl").assertExists()
+        composeRule.onNodeWithTag("import_crop_corner_tr").assertExists()
+        composeRule.onNodeWithTag("import_crop_corner_bl").assertExists()
+        composeRule.onNodeWithTag("import_crop_corner_br").assertExists()
+        composeRule.onNodeWithTag("import_crop_edge_top").assertExists()
+        composeRule.onNodeWithTag("import_crop_edge_bottom").assertExists()
+        composeRule.onNodeWithTag("import_crop_edge_left").assertExists()
+        composeRule.onNodeWithTag("import_crop_edge_right").assertExists()
+
+        // Dragging only the right edge leftwards crops ONLY the right edge
+        composeRule.onNodeWithTag("import_crop_edge_right").performTouchInput {
+            down(center)
+            moveBy(androidx.compose.ui.geometry.Offset(-60f, 0f))
+            up()
+        }
         composeRule.waitForIdle()
+
         composeRule.onNodeWithTag("import_crop_done_button").performClick()
         assertEquals(ImageCropShape.RECTANGLE, committedShape)
+        assertEquals(0f, committedCrop?.left ?: -1f, 0.01f)
+        assertTrue((committedCrop?.right ?: 1f) < 0.99f)
 
         composeRule.onNodeWithTag("import_crop_delete_button").performClick()
         assertTrue(deleted)
@@ -256,10 +281,12 @@ class ComposeRegressionTest {
     }
 
     @Test
-    fun photoAndTextBottomPagerExposesCornerPinAnd3DControllersWithoutKeyframes() {
+    fun allLayerTypesExposeTopBarCornerPinAnd3DControllersWithoutBottomPager() {
         val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
         vm.createNewProject()
         val textId = vm.addTextLayer("Hello 3D")!!
+        vm.addShapeLayer(LayerShapeType.STAR)
+        val shapeId = vm.document.value.selectedLayerId!!
         vm.selectLayer(textId)
 
         composeRule.setContent {
@@ -275,18 +302,19 @@ class ComposeRegressionTest {
         }
 
         composeRule.waitForIdle()
-        // Page 0 of Text bottom bar shows Edit | Color | Font | Rotate
+        // Bottom bar no longer contains Corner Pin, 3D, or a second pager page
         composeRule.onNodeWithTag("bottom_tool_edit_text").assertIsDisplayed()
         composeRule.onNodeWithTag("bottom_tool_rotate").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_pager").assertDoesNotExist()
+        composeRule.onNodeWithTag("bottom_tool_corner_pin").assertDoesNotExist()
+        composeRule.onNodeWithTag("bottom_tool_3d").assertDoesNotExist()
 
-        // Swipe / tap dot 1 -> Page 1 shows Corner Pin & 3D
-        composeRule.onNodeWithTag("bottom_pager_dot_1").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("bottom_tool_corner_pin").assertIsDisplayed()
-        composeRule.onNodeWithTag("bottom_tool_3d").assertIsDisplayed()
+        // Top Bar exposes Corner Pin & 3D directly
+        composeRule.onNodeWithTag("top_tool_corner_pin").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_tool_3d").assertIsDisplayed()
 
-        // Open 3D Floating Panel
-        composeRule.onNodeWithTag("bottom_tool_3d").performClick()
+        // Open 3D Floating Panel on TextLayer
+        composeRule.onNodeWithTag("top_tool_3d").performClick()
         composeRule.waitForIdle()
         assertEquals(ToolDrawerTab.THREE_D, vm.activeToolDrawer.value)
         composeRule.onNodeWithTag("three_d_floating_panel").assertIsDisplayed()
@@ -300,7 +328,6 @@ class ComposeRegressionTest {
         composeRule.onNodeWithTag("three_d_mode_skew").assertIsDisplayed()
         composeRule.onNodeWithTag("three_d_move_axis_xy").assertIsDisplayed()
         composeRule.onNodeWithTag("three_d_move_axis_z").assertIsDisplayed()
-        // Ensure zero Keyframe UI exists
         composeRule.onNodeWithText("Keyframe").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Keyframe").assertDoesNotExist()
 
@@ -319,8 +346,12 @@ class ComposeRegressionTest {
         composeRule.onNodeWithTag("three_d_skew_ruler_x").assertIsDisplayed()
         composeRule.onNodeWithTag("three_d_skew_ruler_y").assertIsDisplayed()
 
-        // Open Corner Pin -> verifies Undo & Confirm buttons and locks active
-        composeRule.onNodeWithTag("bottom_tool_corner_pin").performClick()
+        // Select ShapeLayer -> Corner Pin & 3D now also work for Shapes!
+        composeRule.runOnUiThread { vm.selectLayer(shapeId) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("three_d_floating_panel").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("top_tool_corner_pin").performClick()
         composeRule.waitForIdle()
         assertEquals(ToolDrawerTab.CORNER_PIN, vm.activeToolDrawer.value)
         assertTrue(vm.transformLocks.value.positionLocked)
@@ -399,8 +430,8 @@ class ComposeRegressionTest {
         // Open Draw tool panel -> Size dots + Stroke controls toggle visible
         composeRule.onNodeWithTag("bottom_tool_draw").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("draw_size_dot_0").assertIsDisplayed()
-        composeRule.onNodeWithTag("draw_stroke_controls_button").performClick()
+        composeRule.onNodeWithTag("draw_size_dot_0").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("draw_stroke_controls_button").performScrollTo().performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("stroke_controls_panel").assertIsDisplayed()
@@ -459,4 +490,127 @@ class ComposeRegressionTest {
         composeRule.waitForIdle()
         assertEquals(0, vm.drawStrokeStyle.value.widthPoints.size)
     }
+
+    @Test
+    fun homeScreenShowsOldestFirstSaveButtonHoldMultiSelectAndBatchDelete() {
+        val sampleProjects = listOf(
+            ProjectEntity(
+                id = "p_old",
+                title = "Oldest Poster",
+                thumbnailPath = null,
+                projectJson = "{}",
+                aspectLabel = "1:1",
+                layerCount = 2,
+                createdAtMillis = 1000L,
+                updatedAtMillis = 1000L
+            ),
+            ProjectEntity(
+                id = "p_new",
+                title = "Newest Banner",
+                thumbnailPath = null,
+                projectJson = "{}",
+                aspectLabel = "16:9",
+                layerCount = 4,
+                createdAtMillis = 2000L,
+                updatedAtMillis = 2000L
+            )
+        )
+        var savedId: String? = null
+        var openedId: String? = null
+        var deletedBatch: Set<String> = emptySet()
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                HomeScreen(
+                    projects = sampleProjects,
+                    isDarkTheme = true,
+                    onNewProjectClick = {},
+                    onOpenProject = { openedId = it },
+                    onSaveProject = { savedId = it },
+                    onDeleteProject = {},
+                    onDeleteProjects = { deletedBatch = it },
+                    onToggleTheme = {},
+                    onOpenSettings = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Oldest Poster").assertIsDisplayed()
+        composeRule.onNodeWithText("Newest Banner").assertIsDisplayed()
+        composeRule.onNodeWithTag("history_save_button_1").assertIsDisplayed().performClick()
+        assertEquals("p_old", savedId)
+
+        // 0.5s hold enters multi-select mode without opening the project
+        composeRule.onNodeWithTag("history_project_card_1").performTouchInput {
+            down(center)
+            advanceEventTime(580)
+            up()
+        }
+        composeRule.waitForIdle()
+        assertEquals(null, openedId)
+        composeRule.onNodeWithText("1 Selected").assertIsDisplayed()
+
+        // Tapping another card in selection mode adds it to the selection
+        composeRule.onNodeWithTag("history_project_card_2").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("2 Selected").assertIsDisplayed()
+
+        // Tapping delete button beside selected card deletes all selected projects together
+        composeRule.onNodeWithTag("history_delete_selected_button_1").performClick()
+        assertEquals(setOf("p_old", "p_new"), deletedBatch)
+    }
+
+    @Test
+    fun threeDotMenuOpensMyProjectsDrawerAndCanvasPresetsSupport169UnwrappedLayout() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickBackgroundImageDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // Open 3-dot menu -> 4. My Projects -> opens right-side drawer
+        composeRule.onNodeWithTag("three_dot_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("menu_my_projects").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("my_projects_side_drawer").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("close_projects_drawer_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("my_projects_side_drawer").assertDoesNotExist()
+
+        // Open 1. Canvas from 3-dot menu -> 1:1, 16:9, 9:16, Custom visible -> select 16:9
+        composeRule.onNodeWithTag("three_dot_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("1. Canvas").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("canvas_preset_1_1").assertIsDisplayed()
+        composeRule.onNodeWithTag("canvas_preset_16_9").assertIsDisplayed()
+        composeRule.onNodeWithTag("canvas_preset_9_16").assertIsDisplayed()
+        composeRule.onNodeWithTag("canvas_preset_custom").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("canvas_preset_16_9").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1920, vm.document.value.canvas.exportWidth)
+        assertEquals(1080, vm.document.value.canvas.exportHeight)
+        assertEquals("16:9", vm.document.value.canvas.label)
+
+        // Dismiss sheet & confirm unwrapped 2-row top controls & floating corner buttons remain visible
+        composeRule.onNodeWithText("16:9 • 1920x1080").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_tool_corner_pin").assertExists()
+        composeRule.onNodeWithTag("top_lock_stretch_button").assertExists()
+    }
 }
+

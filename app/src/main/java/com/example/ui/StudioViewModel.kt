@@ -156,6 +156,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _showLayersDrawer = MutableStateFlow(false)
     val showLayersDrawer: StateFlow<Boolean> = _showLayersDrawer.asStateFlow()
 
+    private val _showProjectsDrawer = MutableStateFlow(false)
+    val showProjectsDrawer: StateFlow<Boolean> = _showProjectsDrawer.asStateFlow()
+
     private val _isMultiSelectMode = MutableStateFlow(false)
     val isMultiSelectMode: StateFlow<Boolean> = _isMultiSelectMode.asStateFlow()
 
@@ -315,6 +318,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _shapeEditPointsMode.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _showLayersDrawer.value = false
+        _showProjectsDrawer.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
         _draftText.value = ""
         lastAppliedCaseMode = null
@@ -322,11 +326,25 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleLayersDrawer() {
-        _showLayersDrawer.value = !_showLayersDrawer.value
+        val next = !_showLayersDrawer.value
+        _showLayersDrawer.value = next
+        if (next) _showProjectsDrawer.value = false
     }
 
     fun setShowLayersDrawer(open: Boolean) {
         _showLayersDrawer.value = open
+        if (open) _showProjectsDrawer.value = false
+    }
+
+    fun toggleProjectsDrawer() {
+        val next = !_showProjectsDrawer.value
+        _showProjectsDrawer.value = next
+        if (next) _showLayersDrawer.value = false
+    }
+
+    fun setShowProjectsDrawer(open: Boolean) {
+        _showProjectsDrawer.value = open
+        if (open) _showLayersDrawer.value = false
     }
 
     fun toggleMultiSelectMode() {
@@ -428,6 +446,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _isZoomMode.value = false
         _isMultiSelectMode.value = false
         _showLayersDrawer.value = false
+        _showProjectsDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _showStrokeControls.value = false
         _shapeEditPointsMode.value = false
@@ -463,6 +482,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _isZoomMode.value = false
         _isMultiSelectMode.value = false
         _showLayersDrawer.value = false
+        _showProjectsDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _showStrokeControls.value = false
         _shapeEditPointsMode.value = false
@@ -475,9 +495,65 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         return true
     }
 
+    suspend fun switchProjectInEditor(targetProjectId: String): Boolean {
+        val currentDoc = _document.value
+        if (currentDoc.id == targetProjectId) {
+            _showProjectsDrawer.value = false
+            return true
+        }
+        // Auto-backup the currently open project so no work is ever lost or deleted
+        val thumbPath = mediaManager.saveProjectThumbnail(currentDoc, fontRenderEngine)
+        projectRepository.saveDocument(currentDoc, thumbPath)
+        val switched = openProjectFromHistory(targetProjectId)
+        if (switched) {
+            _statusBanner.value = "Switched to \"${_document.value.title}\" (previous saved)"
+        }
+        return switched
+    }
+
     fun deleteHistoryProject(projectId: String) {
         viewModelScope.launch {
             projectRepository.deleteProject(projectId)
+        }
+    }
+
+    fun deleteHistoryProjects(projectIds: Set<String>) {
+        if (projectIds.isEmpty()) return
+        viewModelScope.launch {
+            projectRepository.deleteProjects(projectIds)
+            _statusBanner.value = "Deleted ${projectIds.size} project${if (projectIds.size == 1) "" else "s"}"
+        }
+    }
+
+    fun saveHistoryProjectToDevice(projectId: String) {
+        viewModelScope.launch {
+            val doc = projectRepository.loadDocument(projectId)
+            if (doc == null) {
+                _statusBanner.value = "Unable to load project"
+                return@launch
+            }
+            val thumbPath = mediaManager.saveProjectThumbnail(doc, fontRenderEngine)
+            projectRepository.saveDocument(doc, thumbPath)
+            val s = settings.value
+            val (targetW, targetH) = MediaStorageManager.computeTargetResolution(
+                canvas = doc.canvas,
+                preset = s.exportResolutionPreset,
+                customWidth = s.exportCustomWidth,
+                customHeight = s.exportCustomHeight
+            )
+            val res = mediaManager.exportImageToAppAndGallery(
+                document = doc,
+                fontRenderEngine = fontRenderEngine,
+                format = s.exportFormat,
+                targetWidth = targetW,
+                targetHeight = targetH
+            )
+            res.onSuccess { (_, galleryUri) ->
+                val dest = if (galleryUri != null) "Pictures/PixelForge" else "App Exports"
+                _statusBanner.value = "Saved \"${doc.title}\" (${s.exportFormat.label}) to $dest"
+            }.onFailure { err ->
+                _statusBanner.value = err.localizedMessage ?: "Save failed"
+            }
         }
     }
 
@@ -593,6 +669,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
                 restoreLocksAfterCornerPin()
                 _activeToolDrawer.value = ToolDrawerTab.NONE
+            } else if (_activeToolDrawer.value == ToolDrawerTab.THREE_D) {
+                _activeToolDrawer.value = ToolDrawerTab.NONE
             }
             _shapeEditPointsMode.value = false
             _isMultiSelectMode.value = false
@@ -623,12 +701,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             _shapeEditPointsMode.value = false
         }
-        if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN && layer !is ImageLayer) {
-            restoreLocksAfterCornerPin()
-            _activeToolDrawer.value = ToolDrawerTab.NONE
-        } else if (_activeToolDrawer.value == ToolDrawerTab.THREE_D && layer !is ImageLayer && layer !is TextLayer) {
-            _activeToolDrawer.value = ToolDrawerTab.NONE
-        }
     }
 
     fun onCanvasLayerTapped(layerId: String) {
@@ -657,16 +729,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             is ShapeLayer -> {
-                if (currentTab == ToolDrawerTab.CORNER_PIN) {
-                    restoreLocksAfterCornerPin()
-                }
                 if (currentTab == ToolDrawerTab.TEXT ||
                     currentTab == ToolDrawerTab.FONT ||
                     currentTab == ToolDrawerTab.CROP ||
                     currentTab == ToolDrawerTab.ADJUST ||
-                    currentTab == ToolDrawerTab.DRAW ||
-                    currentTab == ToolDrawerTab.CORNER_PIN ||
-                    currentTab == ToolDrawerTab.THREE_D
+                    currentTab == ToolDrawerTab.DRAW
                 ) {
                     _activeToolDrawer.value = ToolDrawerTab.NONE
                 }
@@ -1876,10 +1943,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun selectSquareCanvas() {
+    fun selectCanvasPreset(preset: CanvasDimensions) {
         commitChange { doc ->
-            doc.copy(canvas = CanvasDimensions.SQUARE_1_1)
+            doc.copy(canvas = preset)
         }
+    }
+
+    fun selectSquareCanvas() {
+        selectCanvasPreset(CanvasDimensions.SQUARE_1_1)
     }
 
     fun applyCustomCanvas(ratioInput: String, pixelInput: String, preferPixels: Boolean): Boolean {

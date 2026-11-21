@@ -31,6 +31,22 @@ data class CanvasDimensions(
             exportHeight = 1080
         )
 
+        val LANDSCAPE_16_9 = CanvasDimensions(
+            isCustom = false,
+            ratioWidth = 16,
+            ratioHeight = 9,
+            exportWidth = 1920,
+            exportHeight = 1080
+        )
+
+        val PORTRAIT_9_16 = CanvasDimensions(
+            isCustom = false,
+            ratioWidth = 9,
+            ratioHeight = 16,
+            exportWidth = 1080,
+            exportHeight = 1920
+        )
+
         fun fromRatioInput(raw: String): CanvasDimensions? {
             val parts = raw.trim()
                 .replace('/', ':')

@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.MediaStorageManager
+import com.example.data.ProjectDatabase
+import com.example.data.ProjectRepository
 import com.example.data.ShapeHandleKind
 import com.example.data.VectorShapeEngine
 import com.example.data.VectorStrokeEngine
@@ -46,6 +48,7 @@ import com.example.model.WidthProfilePoint
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
 import com.example.ui.TransformLockState
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -1282,6 +1285,120 @@ class PixelForgeEngineTest {
             }
             rendered.recycle()
             assertTrue("Variable-width + dashed + offset stroke must render visible ink pixels ($redInkPx)", redInkPx > 30)
+        }
+    }
+
+    @Test
+    fun canvasPresetsProjectHistoryAscOrderBatchDeleteAndInEditorSwitchWorkCleanly() {
+        runBlocking {
+            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+            vm.createNewProject()
+
+            vm.selectCanvasPreset(CanvasDimensions.LANDSCAPE_16_9)
+            assertEquals("16:9", vm.document.value.canvas.label)
+            assertEquals(1920, vm.document.value.canvas.exportWidth)
+            assertEquals(1080, vm.document.value.canvas.exportHeight)
+
+            vm.selectCanvasPreset(CanvasDimensions.PORTRAIT_9_16)
+            assertEquals("9:16", vm.document.value.canvas.label)
+            assertEquals(1080, vm.document.value.canvas.exportWidth)
+            assertEquals(1920, vm.document.value.canvas.exportHeight)
+
+            val db = ProjectDatabase.getInstance(context)
+            val dao = db.projectDao()
+            val repo = ProjectRepository(context, dao)
+
+            // Clean any existing entries from test db
+            val existing = dao.getAllProjectsAsc().first().map { it.id }.toSet()
+            if (existing.isNotEmpty()) repo.deleteProjects(existing)
+
+            val doc1 = ProjectDocument(id = "proj_oldest", title = "First Old", canvas = CanvasDimensions.SQUARE_1_1)
+            val doc2 = ProjectDocument(id = "proj_middle", title = "Second Mid", canvas = CanvasDimensions.LANDSCAPE_16_9)
+            val doc3 = ProjectDocument(id = "proj_newest", title = "Third New", canvas = CanvasDimensions.PORTRAIT_9_16)
+
+            repo.saveDocument(doc1, thumbnailPath = null, createdAtMillis = 1000L)
+            repo.saveDocument(doc2, thumbnailPath = null, createdAtMillis = 2000L)
+            repo.saveDocument(doc3, thumbnailPath = null, createdAtMillis = 3000L)
+
+            val orderedAsc = dao.getAllProjectsAsc().first()
+            assertEquals(listOf("proj_oldest", "proj_middle", "proj_newest"), orderedAsc.map { it.id })
+
+            // Switch active editor document to proj_oldest, mutate it, then switch to proj_middle -> edits must auto-save!
+            assertTrue(vm.openProjectFromHistory("proj_oldest"))
+            assertEquals("proj_oldest", vm.document.value.id)
+            vm.addTextLayer("AutoSaved Text")
+
+            val switched = vm.switchProjectInEditor("proj_middle")
+            assertTrue(switched)
+            assertEquals("proj_middle", vm.document.value.id)
+            val reloadedOld = repo.loadDocument("proj_oldest")
+            assertNotNull(reloadedOld)
+            assertEquals(1, reloadedOld!!.layers.size)
+            assertEquals("AutoSaved Text", (reloadedOld.layers.first() as TextLayer).text)
+
+            // Batch delete 2 projects together
+            repo.deleteProjects(setOf("proj_oldest", "proj_newest"))
+            val remaining = dao.getAllProjectsAsc().first()
+            assertEquals(listOf("proj_middle"), remaining.map { it.id })
+            repo.deleteProjects(setOf("proj_middle"))
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun cornerPinAnd3DRenderCleanlyForShapeDrawAndCollapsedGroupLayers() {
+        runBlocking {
+            val renderEngine = FontRenderEngine(context)
+            val mediaManager = MediaStorageManager(context)
+
+            val shape = ShapeLayer(
+                shapeType = LayerShapeType.STAR,
+                fillColorArgb = 0xFF00E5FFL,
+                cornerPin = CornerPinOffsets(tlDx = 0.14f, brDy = -0.12f),
+                transform3D = Layer3DTransform(rotationYDeg = 24f, skewXDeg = 8f)
+            )
+            val draw = DrawLayer(
+                strokes = listOf(
+                    DrawStroke(
+                        colorArgb = 0xFFFF4D4FL,
+                        strokeWidthNorm = 0.06f,
+                        points = listOf(DrawPoint(0.2f, 0.3f), DrawPoint(0.8f, 0.7f))
+                    )
+                ),
+                cornerPin = CornerPinOffsets(trDy = 0.1f, blDx = -0.08f),
+                transform3D = Layer3DTransform(rotationXDeg = 18f, skewYDeg = -6f)
+            )
+            val collapsedGroup = GroupLayer(
+                name = "Warped Group",
+                isExpanded = false,
+                children = listOf(
+                    ShapeLayer(
+                        shapeType = LayerShapeType.CIRCLE,
+                        fillColorArgb = 0xFFFFEB3BL,
+                        scale = 0.8f
+                    )
+                ),
+                cornerPin = CornerPinOffsets(tlDy = 0.08f, brDx = -0.1f),
+                transform3D = Layer3DTransform(rotationYDeg = -20f, positionZ = 35f)
+            )
+
+            val doc = ProjectDocument(
+                canvas = CanvasDimensions.SQUARE_1_1,
+                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                layers = listOf(shape, draw, collapsedGroup)
+            )
+            val rendered = mediaManager.renderProjectToBitmap(doc, renderEngine, 240, 240)
+            var opaquePixels = 0
+            for (y in 10 until 230) {
+                for (x in 10 until 230) {
+                    if (Color.alpha(rendered.getPixel(x, y)) > 120) opaquePixels++
+                }
+            }
+            rendered.recycle()
+            assertTrue(
+                "Shape, Draw, and collapsed Group layers with Corner Pin & 3D must render visible output pixels ($opaquePixels)",
+                opaquePixels > 200
+            )
         }
     }
 
