@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
@@ -79,7 +80,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -390,6 +390,7 @@ fun LayersSideDrawer(
         modifier = modifier
             .fillMaxHeight()
             .fillMaxWidth(0.58f)
+            .pointerInput(Unit) { detectTapGestures { } }
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragStart = { drawerDragX = 0f },
@@ -545,7 +546,6 @@ private fun DrawerLayerRow(
     val scope = rememberCoroutineScope()
     val selIndex = selectionOrder.indexOf(layer.id)
     val isSelected = layer.id == selectedLayerId || selIndex >= 0
-    var holdProgress by remember(layer.id) { mutableFloatStateOf(0f) }
     val dragStepPx = with(LocalDensity.current) { 38.dp.toPx() }
     var dragAccumY by remember(layer.id) { mutableFloatStateOf(0f) }
     var lastReorderTime by remember(layer.id) { mutableLongStateOf(0L) }
@@ -576,26 +576,17 @@ private fun DrawerLayerRow(
                 shape = RoundedCornerShape(10.dp)
             )
             .pointerInput(layer.id) {
-                // Quick tap or 0.5s (500ms) long hold to enter multi-select mode immediately
+                // Quick tap or 0.5s (500ms) long hold to enter multi-select mode without linear progress bar
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     var triggeredHold = false
-                    val progressJob = scope.launch {
-                        val totalMs = 500L
-                        val stepMs = 40L
-                        var elapsed = 0L
-                        while (elapsed < totalMs) {
-                            delay(stepMs)
-                            elapsed += stepMs
-                            holdProgress = (elapsed.toFloat() / totalMs).coerceIn(0f, 1f)
-                        }
+                    val holdJob = scope.launch {
+                        delay(500L)
                         triggeredHold = true
-                        holdProgress = 0f
                         onHoldSelectMulti(layer.id)
                     }
                     val up = waitForUpOrCancellation()
-                    progressJob.cancel()
-                    holdProgress = 0f
+                    holdJob.cancel()
                     if (up != null && !triggeredHold) {
                         onSelectLayer(layer.id)
                     }
@@ -604,17 +595,6 @@ private fun DrawerLayerRow(
             .padding(horizontal = 6.dp, vertical = 6.dp)
             .testTag("drawer_layer_row_${layer.id}")
     ) {
-        if (holdProgress > 0f) {
-            LinearProgressIndicator(
-                progress = { holdProgress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .padding(bottom = 2.dp),
-                color = StudioPurple
-            )
-        }
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -758,7 +738,8 @@ private fun DrawerLayerRow(
 
 @Composable
 fun CropToolPanel(
-    selectedImageLayer: ImageLayer?,
+    selectedLayer: EditorLayer?,
+    onResetCrop: () -> Unit = {},
     onDone: () -> Unit = {}
 ) {
     Column(
@@ -767,24 +748,33 @@ fun CropToolPanel(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (selectedImageLayer == null) {
+        if (selectedLayer == null) {
             Text(
-                text = "Select a Photo to Crop",
+                text = "Select a Photo, Text, or Group layer to Crop",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Drag crop edges on canvas",
+                    text = "Drag crop edges on live layer",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
+                OutlinedButton(
+                    onClick = onResetCrop,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.testTag("crop_reset_button")
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "Reset Crop", modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Reset")
+                }
                 Button(
                     onClick = onDone,
                     colors = ButtonDefaults.buttonColors(containerColor = StudioEmerald),
@@ -1062,7 +1052,6 @@ private enum class AdjustParam(val label: String, val min: Float, val max: Float
     EXPOSURE("Exposure", -1f, 1f),
     CONTRAST("Contrast", -1f, 1f),
     SATURATION("Saturation", -1f, 1f),
-    OPACITY("Opacity", 0f, 1f),
     HUE("Hue", -180f, 180f),
     VIBRANCE("HSL", -1f, 1f),
     SHARPNESS("Sharpness", 0f, 1f),
@@ -1075,7 +1064,6 @@ private enum class AdjustParam(val label: String, val min: Float, val max: Float
 fun AdjustToolPanel(
     selectedImageLayer: ImageLayer?,
     onUpdateAdjustments: ((ImageAdjustments) -> ImageAdjustments) -> Unit,
-    onSetImageOpacity: (Float) -> Unit,
     onResetAdjustments: () -> Unit,
     onEndTransaction: () -> Unit = {}
 ) {
@@ -1100,7 +1088,6 @@ fun AdjustToolPanel(
                 AdjustParam.EXPOSURE -> adj.exposure
                 AdjustParam.CONTRAST -> adj.contrast
                 AdjustParam.SATURATION -> adj.saturation
-                AdjustParam.OPACITY -> selectedImageLayer.opacity
                 AdjustParam.HUE -> adj.hue
                 AdjustParam.VIBRANCE -> adj.vibrance
                 AdjustParam.SHARPNESS -> adj.sharpness
@@ -1132,7 +1119,6 @@ fun AdjustToolPanel(
             ) {
                 val formatted = when (activeParam) {
                     AdjustParam.HUE -> "${currentVal.roundToInt()}°"
-                    AdjustParam.OPACITY -> "${(currentVal * 100).roundToInt()}%"
                     else -> "${(currentVal * 100).roundToInt()}"
                 }
                 Text(
@@ -1140,10 +1126,7 @@ fun AdjustToolPanel(
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
-                TextButton(onClick = {
-                    onSetImageOpacity(1f)
-                    onResetAdjustments()
-                }) {
+                TextButton(onClick = onResetAdjustments) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Reset")
@@ -1153,22 +1136,17 @@ fun AdjustToolPanel(
             Slider(
                 value = currentVal,
                 onValueChange = { v ->
-                    if (activeParam == AdjustParam.OPACITY) {
-                        onSetImageOpacity(v)
-                    } else {
-                        onUpdateAdjustments { prev ->
-                            when (activeParam) {
-                                AdjustParam.EXPOSURE -> prev.copy(exposure = v)
-                                AdjustParam.CONTRAST -> prev.copy(contrast = v)
-                                AdjustParam.SATURATION -> prev.copy(saturation = v)
-                                AdjustParam.OPACITY -> prev
-                                AdjustParam.HUE -> prev.copy(hue = v)
-                                AdjustParam.VIBRANCE -> prev.copy(vibrance = v)
-                                AdjustParam.SHARPNESS -> prev.copy(sharpness = v)
-                                AdjustParam.VIGNETTE -> prev.copy(vignette = v)
-                                AdjustParam.BRIGHTNESS -> prev.copy(brightness = v)
-                                AdjustParam.WARMTH -> prev.copy(warmth = v)
-                            }
+                    onUpdateAdjustments { prev ->
+                        when (activeParam) {
+                            AdjustParam.EXPOSURE -> prev.copy(exposure = v)
+                            AdjustParam.CONTRAST -> prev.copy(contrast = v)
+                            AdjustParam.SATURATION -> prev.copy(saturation = v)
+                            AdjustParam.HUE -> prev.copy(hue = v)
+                            AdjustParam.VIBRANCE -> prev.copy(vibrance = v)
+                            AdjustParam.SHARPNESS -> prev.copy(sharpness = v)
+                            AdjustParam.VIGNETTE -> prev.copy(vignette = v)
+                            AdjustParam.BRIGHTNESS -> prev.copy(brightness = v)
+                            AdjustParam.WARMTH -> prev.copy(warmth = v)
                         }
                     }
                 },
@@ -1186,7 +1164,6 @@ fun RotateTransformPanel(
     onRotateBy: (Float) -> Unit,
     onSetRotation: (Float) -> Unit,
     onSetScale: (Float) -> Unit,
-    onSetOpacity: (Float) -> Unit,
     onMoveOrder: (Int) -> Unit,
     onDuplicate: () -> Unit,
     onEndTransaction: () -> Unit = {}
@@ -1259,17 +1236,6 @@ fun RotateTransformPanel(
                 onValueChange = onSetScale,
                 onValueChangeFinished = onEndTransaction,
                 valueRange = 0.1f..50f
-            )
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Opacity", style = MaterialTheme.typography.labelLarge)
-                Text("${(selectedLayer.opacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-            }
-            Slider(
-                value = selectedLayer.opacity.coerceIn(0f, 1f),
-                onValueChange = onSetOpacity,
-                onValueChangeFinished = onEndTransaction,
-                valueRange = 0f..1f
             )
         }
     }
@@ -1427,6 +1393,7 @@ fun MyProjectsSideDrawer(
         modifier = modifier
             .fillMaxHeight()
             .fillMaxWidth(0.64f)
+            .pointerInput(Unit) { detectTapGestures { } }
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragStart = { drawerDragX = 0f },
@@ -1505,7 +1472,7 @@ fun MyProjectsSideDrawer(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     itemsIndexed(projects, key = { _, p -> p.id }) { idx, project ->
-                        val number = idx + 1
+                        val number = projects.size - idx
                         val isActive = project.id == currentProjectId
                         val thumbBmp = remember(project.thumbnailPath) {
                             project.thumbnailPath?.takeIf { File(it).exists() }?.let { path ->
@@ -1586,7 +1553,7 @@ fun MyProjectsSideDrawer(
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = dateFormat.format(Date(project.createdAtMillis)),
+                                    text = dateFormat.format(Date(project.updatedAtMillis)),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,

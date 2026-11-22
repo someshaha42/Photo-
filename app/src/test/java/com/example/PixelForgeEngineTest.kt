@@ -25,6 +25,8 @@ import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.Layer3DTransform
+import com.example.model.LayerBlendMode
+import com.example.model.LayerEffectStyle
 import com.example.model.ProjectDocument
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
@@ -494,7 +496,7 @@ class PixelForgeEngineTest {
         vm.dismissAllOverlaysAndSelection()
 
         assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
-        assertFalse(vm.showLayersDrawer.value)
+        assertTrue("Layers drawer must remain sticky across empty canvas taps", vm.showLayersDrawer.value)
         assertEquals(null, vm.document.value.selectedLayerId)
         val savedLayer = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
         assertEquals(0x80FF4D4FL, savedLayer.colorArgb)
@@ -1282,5 +1284,103 @@ class PixelForgeEngineTest {
             buf.putShort(maxpOff + 4, 42)
         }
         return buf.array()
+    }
+
+    @Test
+    fun textWidthReflowHandleChangesWrapWidthWithoutStretchingWhenStretchLocked() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val id = vm.addTextLayer("Responsive Wrapping Paragraph")!!
+
+        assertTrue(vm.transformLocks.value.stretchLocked)
+        val initial = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        val initialWrap = initial.wrapWidthNorm
+
+        // Drag Right handle inward by -40px on a 200px box in a 400px canvas
+        vm.beginTransformTransaction()
+        vm.updateSelectedTextWrapWidthTransient(
+            layerId = id,
+            signX = 1f,
+            screenLocalDeltaX = -40f,
+            boxWpx = 200f,
+            canvasWpx = 400f,
+            canvasHpx = 400f
+        )
+        vm.endTransformTransaction()
+
+        val updated = StudioViewModel.findLayerRecursive(vm.document.value.layers, id) as TextLayer
+        assertEquals("stretchX must remain unstretched", 1f, updated.stretchX, 0.0001f)
+        assertNotNull("wrapWidthNorm must be set on horizontal handle drag ($initialWrap -> ${updated.wrapWidthNorm})", updated.wrapWidthNorm)
+        assertEquals(0.40f, updated.wrapWidthNorm!!, 0.001f)
+        assertTrue("Anchoring opposite edge shifts center leftward", updated.offsetXNorm < initial.offsetXNorm)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun puppetPinMeshWarpUniversalLiveCropAndFilterEffectsRenderInExport() {
+        runBlocking {
+            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+            vm.createNewProject()
+            vm.setShowLayersDrawer(true)
+            vm.setZoomMode(true)
+
+            val textId = vm.addTextLayer("WARP")!!
+            // Dismissing overlays keeps Zoom Mode and Layers Drawer sticky
+            vm.dismissAllOverlaysAndSelection()
+            assertTrue(vm.showLayersDrawer.value)
+            assertTrue(vm.isZoomMode.value)
+
+            // Re-select and apply Filter styles (Blend, Shadow synced to TextLayer, Opacity, Fill Color)
+            vm.selectLayer(textId)
+            vm.setSelectedLayerBlendMode(LayerBlendMode.SCREEN)
+            vm.updateSelectedLayerEffectStyle({
+                it.copy(strokeWidth = 6f, strokeColorArgb = 0xFF000000L, shadowEnabled = true, shadowRadius = 8f)
+            }, transient = false)
+            vm.setSelectedLayerOpacity(0.85f)
+            vm.setSelectedLayerFillColor(0xFF00E5FFL)
+
+            // Apply Universal Live Crop on TextLayer
+            vm.updateSelectedLayerCrop { ImageCropRect(left = 0.05f, top = 0.05f, right = 0.95f, bottom = 0.95f) }
+
+            // Add Puppet Pin & drag it
+            vm.openToolDrawer(ToolDrawerTab.CORNER_PIN)
+            vm.toggleCornerPinAddPointMode()
+            assertTrue(vm.isCornerPinAddPointMode.value)
+            vm.addPuppetPinToLayer(textId, 0.5f, 0.5f)
+            var t = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+            assertEquals(1, t.cornerPin.puppetPins.size)
+            val pinId = t.cornerPin.puppetPins.first().id
+            vm.updatePuppetPinDragTransient(textId, pinId, 0.15f, -0.10f)
+            vm.endTransformTransaction()
+            vm.confirmCornerPin()
+
+            t = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+            assertFalse(vm.isCornerPinAddPointMode.value)
+            assertEquals(LayerBlendMode.SCREEN, t.blendMode)
+            assertEquals(6f, t.strokeWidth, 0.01f)
+            assertTrue(t.shadowEnabled)
+            assertEquals(0xFF00E5FFL, t.fillStyle.fillColorArgb)
+            assertEquals(0.05f, t.liveCrop.left, 0.001f)
+            assertEquals(0.15f, t.cornerPin.puppetPins.first().dx, 0.001f)
+
+            // Verify export renders visibly without errors
+            val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
+            val mediaManager = MediaStorageManager(context)
+            val bmp = mediaManager.renderProjectToBitmap(vm.document.value, renderEngine, 240, 240)
+            var nonEmpty = 0
+            for (y in 20 until 220) {
+                for (x in 20 until 220) {
+                    if (Color.alpha(bmp.getPixel(x, y)) > 20) nonEmpty++
+                }
+            }
+            bmp.recycle()
+            assertTrue("Filter + Puppet Warp + Universal LiveCrop export must produce visible pixels", nonEmpty > 40)
+
+            vm.clearPuppetPins(textId)
+            val cleared = StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer
+            assertEquals(0, cleared.cornerPin.puppetPins.size)
+        }
     }
 }

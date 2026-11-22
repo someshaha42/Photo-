@@ -28,6 +28,8 @@ import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
+import com.example.model.Layer3DTransform
+import com.example.model.LayerBlendMode
 import com.example.model.ProjectDocument
 import com.example.model.TextLayer
 import kotlinx.coroutines.Dispatchers
@@ -159,23 +161,43 @@ class MediaStorageManager(private val context: Context) {
         val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        val fillMediaCache = mutableMapOf<String, Bitmap?>()
 
-        for (layer in document.layers) {
-            if (!layer.visible) continue
-            renderLayerToCanvas(
-                canvas = canvas,
-                layer = layer,
-                document = document,
-                fontRenderEngine = fontRenderEngine,
-                targetWidth = targetWidth,
-                targetHeight = targetHeight,
-                isNestedInGroup = false,
-                parentOpacity = 1f,
-                parentScale = 1f
-            )
+        try {
+            for (layer in document.layers) {
+                if (!layer.visible) continue
+                renderLayerToCanvas(
+                    canvas = canvas,
+                    layer = layer,
+                    document = document,
+                    fontRenderEngine = fontRenderEngine,
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight,
+                    isNestedInGroup = false,
+                    parentOpacity = 1f,
+                    parentScale = 1f,
+                    fillMediaCache = fillMediaCache
+                )
+            }
+        } finally {
+            fillMediaCache.values.forEach { bmp ->
+                if (bmp != null && !bmp.isRecycled) bmp.recycle()
+            }
+            fillMediaCache.clear()
         }
 
         output
+    }
+
+    private suspend fun getOrLoadFillBitmap(
+        uri: String?,
+        cache: MutableMap<String, Bitmap?>
+    ): Bitmap? {
+        if (uri.isNullOrBlank()) return null
+        if (cache.containsKey(uri)) return cache[uri]
+        val loaded = decodeRgba8888Bitmap(uri, maxDimension = 1440)
+        cache[uri] = loaded
+        return loaded
     }
 
     private suspend fun renderLayerToCanvas(
@@ -187,13 +209,16 @@ class MediaStorageManager(private val context: Context) {
         targetHeight: Int,
         isNestedInGroup: Boolean,
         parentOpacity: Float,
-        parentScale: Float
+        parentScale: Float,
+        fillMediaCache: MutableMap<String, Bitmap?>
     ) {
         if (!layer.visible) return
         val cx = if (isNestedInGroup) targetWidth * layer.offsetXNorm else targetWidth * (0.5f + layer.offsetXNorm)
         val cy = if (isNestedInGroup) targetHeight * layer.offsetYNorm else targetHeight * (0.5f + layer.offsetYNorm)
         val effectiveOpacity = (layer.opacity * parentOpacity).coerceIn(0f, 1f)
         val cumulativeScale = (layer.scale * parentScale).coerceAtLeast(0.05f)
+        val layerAlphaInt = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
+        val fillMediaBmp = getOrLoadFillBitmap(layer.fillStyle.fillMediaUri, fillMediaCache)
 
         canvas.save()
         canvas.translate(cx, cy)
@@ -202,7 +227,14 @@ class MediaStorageManager(private val context: Context) {
 
         when (layer) {
             is GroupLayer -> {
-                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                val requiresOffscreen = !layer.cornerPin.isIdentity() ||
+                    !layer.transform3D.isIdentity() ||
+                    !layer.liveCrop.isFull() ||
+                    layer.blendMode != LayerBlendMode.NORMAL ||
+                    layer.fillStyle.hasFill() ||
+                    layer.effectStyle.hasEffects()
+
+                if (!requiresOffscreen) {
                     for (child in layer.children) {
                         renderLayerToCanvas(
                             canvas = canvas,
@@ -213,15 +245,16 @@ class MediaStorageManager(private val context: Context) {
                             targetHeight = targetHeight,
                             isNestedInGroup = true,
                             parentOpacity = effectiveOpacity,
-                            parentScale = cumulativeScale
+                            parentScale = cumulativeScale,
+                            fillMediaCache = fillMediaCache
                         )
                     }
                 } else {
                     val boxPx = min(targetWidth, targetHeight) * 0.64f
-                    val padRatio = 2.2f
+                    val origPadRatio = 2.2f
                     val maxPrep = 1440f
-                    val prepScale = min(1f, maxPrep / (boxPx * padRatio).coerceAtLeast(1f))
-                    val prepSize = (boxPx * padRatio * prepScale).roundToInt().coerceIn(48, 1600)
+                    val prepScale = min(1f, maxPrep / (boxPx * origPadRatio).coerceAtLeast(1f))
+                    val prepSize = (boxPx * origPadRatio * prepScale).roundToInt().coerceIn(48, 1600)
                     val groupBmp = Bitmap.createBitmap(prepSize, prepSize, Bitmap.Config.ARGB_8888)
                     val gc = Canvas(groupBmp)
                     gc.translate(prepSize / 2f, prepSize / 2f)
@@ -236,25 +269,47 @@ class MediaStorageManager(private val context: Context) {
                             targetHeight = targetHeight,
                             isNestedInGroup = true,
                             parentOpacity = 1f,
-                            parentScale = cumulativeScale
+                            parentScale = cumulativeScale,
+                            fillMediaCache = fillMediaCache
                         )
                     }
-                    val matrix = LayerTransformMatrix.buildPaddedBitmapDrawMatrix(
-                        bitmapWidth = prepSize,
-                        bitmapHeight = prepSize,
-                        padRatioX = padRatio,
-                        padRatioY = padRatio,
+                    val eff = LayerEffectsHelper.applyFillAndOuterEffects(
+                        sourceBmp = groupBmp,
+                        fillStyle = layer.fillStyle,
+                        fillMediaBmp = fillMediaBmp,
+                        effectStyle = layer.effectStyle,
+                        applyOuterStrokeAndShadow = true,
+                        effectScale = (targetWidth / 360f).coerceIn(0.8f, 4f)
+                    )
+                    if (eff.bitmap !== groupBmp) groupBmp.recycle()
+                    val effPadRatioX = origPadRatio * (eff.bitmap.width.toFloat() / prepSize.toFloat())
+                    val effPadRatioY = origPadRatio * (eff.bitmap.height.toFloat() / prepSize.toFloat())
+
+                    canvas.save()
+                    canvas.translate(-boxPx / 2f, -boxPx / 2f)
+                    if (!layer.liveCrop.isFull()) {
+                        val bounds = LayerTransformMatrix.computeMeshBoundingBox(
+                            boxW = boxPx,
+                            boxH = boxPx,
+                            transform3D = layer.transform3D,
+                            cornerPin = layer.cornerPin
+                        )
+                        LayerEffectsHelper.clipLiveCropRect(canvas, layer.liveCrop, bounds)
+                    }
+                    LayerEffectsHelper.drawBitmapWithEffectsAndWarp(
+                        canvas = canvas,
+                        bmp = eff.bitmap,
                         boxW = boxPx,
                         boxH = boxPx,
                         transform3D = layer.transform3D,
-                        cornerPin = layer.cornerPin
+                        cornerPin = layer.cornerPin,
+                        blendMode = layer.blendMode,
+                        alphaInt = layerAlphaInt,
+                        padRatioX = effPadRatioX,
+                        padRatioY = effPadRatioY
                     )
-                    matrix.postTranslate(-boxPx / 2f, -boxPx / 2f)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
-                    }
-                    canvas.drawBitmap(groupBmp, matrix, p)
-                    groupBmp.recycle()
+                    canvas.restore()
+                    eff.bitmap.recycle()
                 }
             }
             is ImageLayer -> {
@@ -284,22 +339,33 @@ class MediaStorageManager(private val context: Context) {
                             colorFilter = ColorMatrixColorFilter(buildColorMatrix(layer.adjustments))
                         }
                     }
-                    val layerAlpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
                     val tintArgb = layer.tintColorArgb
+                    val requiresPrepared = !layer.cornerPin.isIdentity() ||
+                        !layer.transform3D.isIdentity() ||
+                        layer.blendMode != LayerBlendMode.NORMAL ||
+                        layer.fillStyle.hasFill() ||
+                        layer.effectStyle.hasEffects()
 
-                    if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                    if (!requiresPrepared) {
                         val dst = android.graphics.RectF(-drawW / 2f, -drawH / 2f, drawW / 2f, drawH / 2f)
-                        val shapeClipSave = if (layer.cropShape == ImageCropShape.CIRCLE) {
-                            val c = canvas.save()
+                        if (!layer.liveCrop.isFull()) {
+                            val lc = layer.liveCrop.normalized()
+                            canvas.clipRect(
+                                dst.left + lc.left * dst.width(),
+                                dst.top + lc.top * dst.height(),
+                                dst.left + lc.right * dst.width(),
+                                dst.top + lc.bottom * dst.height()
+                            )
+                        }
+                        if (layer.cropShape == ImageCropShape.CIRCLE) {
                             val ovalPath = android.graphics.Path().apply {
                                 addOval(dst, android.graphics.Path.Direction.CW)
                             }
                             canvas.clipPath(ovalPath)
-                            c
-                        } else null
+                        }
 
                         if (tintArgb != null) {
-                            val saveCount = canvas.saveLayerAlpha(dst, layerAlpha)
+                            val saveCount = canvas.saveLayerAlpha(dst, layerAlphaInt)
                             canvas.drawBitmap(bmp, srcRect, dst, paint)
                             val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                                 color = tintArgb.toInt()
@@ -311,15 +377,11 @@ class MediaStorageManager(private val context: Context) {
                             }
                             canvas.restoreToCount(saveCount)
                         } else {
-                            paint.alpha = layerAlpha
+                            paint.alpha = layerAlphaInt
                             canvas.drawBitmap(bmp, srcRect, dst, paint)
                             if (layer.adjustments.vignette > 0.01f) {
                                 drawVignetteOnRect(canvas, dst, layer.adjustments.vignette, effectiveOpacity)
                             }
-                        }
-
-                        if (shapeClipSave != null) {
-                            canvas.restoreToCount(shapeClipSave)
                         }
                     } else {
                         val maxPrep = 1440f
@@ -336,7 +398,7 @@ class MediaStorageManager(private val context: Context) {
                             pc.clipPath(ovalPath)
                         }
                         if (tintArgb != null) {
-                            val saveCount = pc.saveLayerAlpha(prepDst, layerAlpha)
+                            val saveCount = pc.saveLayer(prepDst, null)
                             pc.drawBitmap(bmp, srcRect, prepDst, paint)
                             val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                                 color = tintArgb.toInt()
@@ -348,23 +410,48 @@ class MediaStorageManager(private val context: Context) {
                             }
                             pc.restoreToCount(saveCount)
                         } else {
-                            paint.alpha = layerAlpha
                             pc.drawBitmap(bmp, srcRect, prepDst, paint)
                             if (layer.adjustments.vignette > 0.01f) {
-                                drawVignetteOnRect(pc, prepDst, layer.adjustments.vignette, effectiveOpacity)
+                                drawVignetteOnRect(pc, prepDst, layer.adjustments.vignette, 1f)
                             }
                         }
-                        val matrix = LayerTransformMatrix.buildBitmapDrawMatrix(
-                            bitmapWidth = prepW,
-                            bitmapHeight = prepH,
+                        val eff = LayerEffectsHelper.applyFillAndOuterEffects(
+                            sourceBmp = prepared,
+                            fillStyle = layer.fillStyle,
+                            fillMediaBmp = fillMediaBmp,
+                            effectStyle = layer.effectStyle,
+                            applyOuterStrokeAndShadow = true,
+                            effectScale = (targetWidth / 360f).coerceIn(0.8f, 4f)
+                        )
+                        if (eff.bitmap !== prepared) prepared.recycle()
+                        val padRatioX = (eff.bitmap.width.toFloat() / prepW.toFloat()).coerceAtLeast(1f)
+                        val padRatioY = (eff.bitmap.height.toFloat() / prepH.toFloat()).coerceAtLeast(1f)
+
+                        canvas.save()
+                        canvas.translate(-drawW / 2f, -drawH / 2f)
+                        if (!layer.liveCrop.isFull()) {
+                            val bounds = LayerTransformMatrix.computeMeshBoundingBox(
+                                boxW = drawW,
+                                boxH = drawH,
+                                transform3D = layer.transform3D,
+                                cornerPin = layer.cornerPin
+                            )
+                            LayerEffectsHelper.clipLiveCropRect(canvas, layer.liveCrop, bounds)
+                        }
+                        LayerEffectsHelper.drawBitmapWithEffectsAndWarp(
+                            canvas = canvas,
+                            bmp = eff.bitmap,
                             boxW = drawW,
                             boxH = drawH,
                             transform3D = layer.transform3D,
-                            cornerPin = layer.cornerPin
+                            cornerPin = layer.cornerPin,
+                            blendMode = layer.blendMode,
+                            alphaInt = layerAlphaInt,
+                            padRatioX = padRatioX,
+                            padRatioY = padRatioY
                         )
-                        matrix.postTranslate(-drawW / 2f, -drawH / 2f)
-                        canvas.drawBitmap(prepared, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-                        prepared.recycle()
+                        canvas.restore()
+                        eff.bitmap.recycle()
                     }
 
                     if (bmp !== rawBmp) bmp.recycle()
@@ -374,14 +461,33 @@ class MediaStorageManager(private val context: Context) {
             is TextLayer -> {
                 val resolutionFactor = targetWidth / 360f
                 val effPx = layer.fontSizeSp * resolutionFactor
+                val maxBoxW = targetWidth * 0.9f
+                val exactWrapWpx = layer.wrapWidthNorm?.let { (it * targetWidth).coerceIn(28f, maxBoxW) }
                 val measured = fontRenderEngine.measureTextLayerBounds(
                     layer = layer.copy(opacity = effectiveOpacity),
                     effectiveFontSizePx = effPx,
-                    maxWidthPx = targetWidth * 0.9f,
+                    maxWidthPx = maxBoxW,
                     emojiSourceMode = document.emojiSourceMode,
-                    appEmojiFontId = document.appEmojiFontId
+                    appEmojiFontId = document.appEmojiFontId,
+                    exactWrapWidthPx = exactWrapWpx
                 )
-                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
+                val requiresOffscreen = !layer.cornerPin.isIdentity() ||
+                    !layer.transform3D.isIdentity() ||
+                    layer.blendMode != LayerBlendMode.NORMAL ||
+                    layer.fillStyle.hasFill()
+
+                if (!requiresOffscreen) {
+                    if (!layer.liveCrop.isFull()) {
+                        val lc = layer.liveCrop.normalized()
+                        val bw = measured.widthPx.coerceAtLeast(48f)
+                        val bh = measured.heightPx.coerceAtLeast(48f)
+                        canvas.clipRect(
+                            (lc.left - 0.5f) * bw,
+                            (lc.top - 0.5f) * bh,
+                            (lc.right - 0.5f) * bw,
+                            (lc.bottom - 0.5f) * bh
+                        )
+                    }
                     val renderScale = cumulativeScale.coerceIn(1f, (2048f / effPx.coerceAtLeast(1f)).coerceAtLeast(1f))
                     if (renderScale > 1.01f) {
                         canvas.scale(1f / renderScale, 1f / renderScale)
@@ -390,9 +496,10 @@ class MediaStorageManager(private val context: Context) {
                         canvas = canvas,
                         layer = layer.copy(opacity = effectiveOpacity),
                         effectiveFontSizePx = effPx * renderScale,
-                        maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f)) * renderScale,
+                        maxWidthPx = ((exactWrapWpx ?: (measured.widthPx + 4f)).coerceAtMost(maxBoxW)) * renderScale,
                         emojiSourceMode = document.emojiSourceMode,
-                        appEmojiFontId = document.appEmojiFontId
+                        appEmojiFontId = document.appEmojiFontId,
+                        exactWrapWidthPx = exactWrapWpx?.times(renderScale)
                     )
                 } else {
                     val boxW = measured.widthPx.coerceAtLeast(48f)
@@ -407,23 +514,50 @@ class MediaStorageManager(private val context: Context) {
                     tc.translate(texW / 2f, texH / 2f)
                     fontRenderEngine.drawTextLayerOnCanvas(
                         canvas = tc,
-                        layer = layer.copy(opacity = effectiveOpacity),
+                        layer = layer.copy(opacity = 1f),
                         effectiveFontSizePx = effPx * texScale,
-                        maxWidthPx = ((measured.widthPx + 4f).coerceAtMost(targetWidth * 0.9f)) * texScale,
+                        maxWidthPx = ((exactWrapWpx ?: (measured.widthPx + 4f)).coerceAtMost(maxBoxW)) * texScale,
                         emojiSourceMode = document.emojiSourceMode,
-                        appEmojiFontId = document.appEmojiFontId
+                        appEmojiFontId = document.appEmojiFontId,
+                        exactWrapWidthPx = exactWrapWpx?.times(texScale)
                     )
-                    val matrix = LayerTransformMatrix.buildBitmapDrawMatrix(
-                        bitmapWidth = texW,
-                        bitmapHeight = texH,
+                    val eff = LayerEffectsHelper.applyFillAndOuterEffects(
+                        sourceBmp = textBmp,
+                        fillStyle = layer.fillStyle,
+                        fillMediaBmp = fillMediaBmp,
+                        effectStyle = layer.effectStyle,
+                        applyOuterStrokeAndShadow = false,
+                        effectScale = resolutionFactor.coerceIn(0.8f, 4f)
+                    )
+                    if (eff.bitmap !== textBmp) textBmp.recycle()
+                    val padRatioX = (eff.bitmap.width.toFloat() / texW.toFloat()).coerceAtLeast(1f)
+                    val padRatioY = (eff.bitmap.height.toFloat() / texH.toFloat()).coerceAtLeast(1f)
+
+                    canvas.save()
+                    canvas.translate(-boxW / 2f, -boxH / 2f)
+                    if (!layer.liveCrop.isFull()) {
+                        val bounds = LayerTransformMatrix.computeMeshBoundingBox(
+                            boxW = boxW,
+                            boxH = boxH,
+                            transform3D = layer.transform3D,
+                            cornerPin = layer.cornerPin
+                        )
+                        LayerEffectsHelper.clipLiveCropRect(canvas, layer.liveCrop, bounds)
+                    }
+                    LayerEffectsHelper.drawBitmapWithEffectsAndWarp(
+                        canvas = canvas,
+                        bmp = eff.bitmap,
                         boxW = boxW,
                         boxH = boxH,
                         transform3D = layer.transform3D,
-                        cornerPin = layer.cornerPin
+                        cornerPin = layer.cornerPin,
+                        blendMode = layer.blendMode,
+                        alphaInt = layerAlphaInt,
+                        padRatioX = padRatioX,
+                        padRatioY = padRatioY
                     )
-                    matrix.postTranslate(-boxW / 2f, -boxH / 2f)
-                    canvas.drawBitmap(textBmp, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-                    textBmp.recycle()
+                    canvas.restore()
+                    eff.bitmap.recycle()
                 }
             }
         }

@@ -9,10 +9,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,17 +20,19 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.AddLocationAlt
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.MoreHoriz
@@ -40,6 +41,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -98,64 +100,113 @@ private val AmMutedText = Color(0xFF8B91A6)
 @Composable
 fun CornerPinToolPanel(
     canUndo: Boolean,
+    isAddPointMode: Boolean = false,
+    puppetPinCount: Int = 0,
+    onToggleAddPointMode: () -> Unit = {},
+    onClearPuppetPins: () -> Unit = {},
     onUndo: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Corner Pin",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Drag the 4 corner points directly on canvas",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Corner Pin",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (isAddPointMode) {
+                        "Tap inside layer to add warp points ($puppetPinCount)"
+                    } else {
+                        "Drag 4 corners or toggle Add Point to warp"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
-        OutlinedButton(
-            onClick = onUndo,
-            enabled = canUndo,
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        Row(
             modifier = Modifier
-                .minimumInteractiveComponentSize()
-                .testTag("corner_pin_undo_button")
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.Undo,
-                contentDescription = "Undo Corner Pin",
-                modifier = Modifier.size(18.dp)
+            FilterChip(
+                selected = isAddPointMode,
+                onClick = onToggleAddPointMode,
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Rounded.AddLocationAlt,
+                        contentDescription = "Add Point",
+                        modifier = Modifier.size(16.dp)
+                    )
+                },
+                label = { Text("Add Point", fontWeight = FontWeight.SemiBold) },
+                modifier = Modifier.testTag("corner_pin_add_point_toggle")
             )
-            Spacer(Modifier.width(6.dp))
-            Text("Undo", fontWeight = FontWeight.SemiBold)
-        }
 
-        Button(
-            onClick = onConfirm,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = StudioEmerald,
-                contentColor = Color.White
-            ),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            modifier = Modifier
-                .minimumInteractiveComponentSize()
-                .testTag("corner_pin_confirm_button")
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Check,
-                contentDescription = "Confirm Corner Pin",
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text("Confirm", fontWeight = FontWeight.Bold)
+            if (puppetPinCount > 0) {
+                OutlinedButton(
+                    onClick = onClearPuppetPins,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("corner_pin_clear_pins_button")
+                ) {
+                    Icon(Icons.Rounded.Clear, contentDescription = "Clear Pins", modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Clear ($puppetPinCount)")
+                }
+            }
+
+            OutlinedButton(
+                onClick = onUndo,
+                enabled = canUndo,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("corner_pin_undo_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.Undo,
+                    contentDescription = "Undo Corner Pin",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Undo", fontWeight = FontWeight.SemiBold)
+            }
+
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = StudioEmerald,
+                    contentColor = Color.White
+                ),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("corner_pin_confirm_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = "Confirm Corner Pin",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Confirm", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -193,67 +244,27 @@ fun FloatingThreeDControllerPanel(
     var scaleActiveWidth by remember { mutableStateOf(true) }
     var skewActiveX by remember { mutableStateOf(true) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    val liveLayer by rememberUpdatedState(selectedLayer)
 
-    val density = LocalDensity.current
-    val peekVisiblePx = with(density) { 64.dp.toPx() }
-
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val maxAvailH = constraints.maxHeight.toFloat().coerceAtLeast(with(density) { 180.dp.toPx() })
-        val panelHeightDp = with(density) {
-            minOf(248.dp.toPx(), (maxAvailH - 4.dp.toPx()).coerceAtLeast(180.dp.toPx())).toDp()
-        }
-        val panelHeightPx = with(density) { panelHeightDp.toPx() }
-        val maxLiftUp = -(maxAvailH - panelHeightPx - with(density) { 12.dp.toPx() }).coerceAtLeast(0f)
-        val maxTuckDown = (panelHeightPx - peekVisiblePx).coerceAtLeast(0f)
-        var panelOffsetY by remember { mutableFloatStateOf(0f) }
-
-        val liveLayer by rememberUpdatedState(selectedLayer)
-
-        Surface(
-            color = AmPanelBg,
-            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 12.dp, bottomEnd = 12.dp),
-            shadowElevation = 14.dp,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 6.dp, vertical = 4.dp)
-                .fillMaxWidth()
-                .height(panelHeightDp)
-                .offset { IntOffset(0, panelOffsetY.roundToInt()) }
-                .border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = 0.08f),
-                    shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 12.dp, bottomEnd = 12.dp)
-                )
-                .pointerInput(Unit) { detectTapGestures { } }
-                .testTag("three_d_floating_panel")
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Top vertical drag strip so the whole 3D panel drags smoothly UP/DOWN over canvas
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(22.dp)
-                        .pointerInput(maxLiftUp, maxTuckDown) {
-                            detectVerticalDragGestures { change, dragAmount ->
-                                change.consume()
-                                panelOffsetY = (panelOffsetY + dragAmount).coerceIn(maxLiftUp, maxTuckDown)
-                            }
-                        }
-                        .testTag("three_d_drag_handle"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 42.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(Color.White.copy(alpha = 0.28f))
-                    )
-                }
-
-                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AmPanelDivider))
-
-                // 3-Column Body (NO Keyframe diamonds, NO Easing graphs)
-                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+    FloatingDraggableResizablePanel(
+        panelTag = "three_d_floating_panel",
+        dragHandleTag = "three_d_drag_handle",
+        resizeTagPrefix = "three_d_resize",
+        defaultWidthFraction = 0.96f,
+        defaultHeightDp = 268.dp,
+        minWidthDp = 210.dp,
+        minHeightDp = 165.dp,
+        defaultAlignment = Alignment.BottomCenter,
+        bottomClearanceDp = 4.dp,
+        surfaceColor = AmPanelBg,
+        borderColor = Color.White.copy(alpha = 0.08f),
+        cornerAccentColor = AmGold,
+        dragStripColor = Color.White.copy(alpha = 0.28f),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 3-Column Body (NO Keyframe diamonds, NO Easing graphs)
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // LEFT VERTICAL COLUMN: Top = Undo / Redo, Bottom = 3-dot Menu
                     Column(
                         modifier = Modifier
@@ -494,7 +505,6 @@ fun FloatingThreeDControllerPanel(
                         ) { tint ->
                             SkewBoxIcon(tint = tint, modifier = Modifier.size(21.dp))
                         }
-                    }
                 }
             }
         }

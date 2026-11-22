@@ -15,11 +15,11 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
@@ -670,6 +670,189 @@ class ComposeRegressionTest {
             "Zoom handle must follow warped BR corner inward/upward",
             warpedZoomBounds.left < unwarpedZoomBounds.left && warpedZoomBounds.top < unwarpedZoomBounds.top
         )
+    }
+
+    @Test
+    fun liveDraftTextPreviewFloatingPanelsPreviewWindowAndStickyDrawersWorkTogether() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickFillMediaDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+
+        // 1. Live Draft Text Preview: opens Text panel without inserting layer yet, renders live preview on canvas
+        composeRule.onNodeWithTag("bottom_tool_text_plus").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("text_layer_editor_input").performTextInput("Live Preview")
+        composeRule.waitForIdle()
+        assertEquals(0, vm.document.value.layers.size)
+        composeRule.onNodeWithTag("draft_text_live_preview").assertIsDisplayed()
+
+        // Floating tool drawer can drag freely in BOTH X and Y, and exposes 4 corner resize handles
+        val drawerBefore = composeRule.onNodeWithTag("tool_drawer_container").getBoundsInRoot()
+        composeRule.onNodeWithTag("tool_drawer_drag_handle").performTouchInput {
+            down(center)
+            moveBy(Offset(-30f, -60f))
+            up()
+        }
+        composeRule.waitForIdle()
+        val drawerAfterDrag = composeRule.onNodeWithTag("tool_drawer_container").getBoundsInRoot()
+        assertTrue("Floating drawer moves freely in X", drawerAfterDrag.left < drawerBefore.left)
+        assertTrue("Floating drawer moves freely in Y", drawerAfterDrag.top < drawerBefore.top)
+
+        composeRule.onNodeWithTag("tool_drawer_resize_tl").assertExists()
+        composeRule.onNodeWithTag("tool_drawer_resize_tr").assertExists()
+        composeRule.onNodeWithTag("tool_drawer_resize_bl").assertExists()
+        composeRule.onNodeWithTag("tool_drawer_resize_br").assertExists()
+
+        // 2. Preview Window Toggle in 3-Dot Menu (OFF by default -> ON opens FloatingPreviewWindow -> X closes it)
+        assertFalse(vm.settings.value.previewWindowEnabled)
+        composeRule.onNodeWithTag("floating_preview_window").assertDoesNotExist()
+        composeRule.onNodeWithTag("three_dot_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("menu_preview_toggle").performClick()
+        composeRule.waitForIdle()
+        assertTrue(vm.settings.value.previewWindowEnabled)
+        composeRule.onNodeWithTag("floating_preview_window").assertIsDisplayed()
+        composeRule.onNodeWithTag("preview_window_close_button").performClick()
+        composeRule.waitForIdle()
+        assertFalse(vm.settings.value.previewWindowEnabled)
+        composeRule.onNodeWithTag("floating_preview_window").assertDoesNotExist()
+
+        // Confirm draft text -> creates 1 layer
+        composeRule.onNodeWithTag("text_confirm_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, vm.document.value.layers.size)
+
+        // 3. Sticky Zoom Mode & Layers Drawer stay open when tapping empty theme background
+        composeRule.onNodeWithTag("top_zoom_button").performClick()
+        composeRule.onNodeWithTag("top_layers_button").performClick()
+        composeRule.waitForIdle()
+        assertTrue(vm.isZoomMode.value)
+        composeRule.onNodeWithTag("layers_side_drawer").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("editor_root_theme_background").performTouchInput {
+            click(Offset(6f, 6f))
+        }
+        composeRule.waitForIdle()
+        assertTrue("Zoom mode remains sticky across empty taps", vm.isZoomMode.value)
+        assertTrue("Layers drawer remains sticky across empty taps", vm.showLayersDrawer.value)
+        composeRule.onNodeWithTag("layers_side_drawer").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Close Layers").performClick()
+        composeRule.waitForIdle()
+        assertFalse(vm.showLayersDrawer.value)
+    }
+
+    @Test
+    fun topBarFilterAndCropTabsFloatingThreeDResizeCornerPinAddPointAndHistoryNumberingWork() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val textId = vm.addTextLayer("Studio Check")!!
+        val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onPickFillMediaDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // 1. Top Bar exposes Filter (idx 3) and Crop (idx 4); Crop is absent from bottom dock
+        composeRule.onNodeWithTag("top_tool_filter").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_tool_crop").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_crop").assertDoesNotExist()
+
+        // Open Filter -> Blend ("Normal (Default)" + 7 modes), Shadow (Stroke/Shadow/Opacity), Fill (Color + Media)
+        composeRule.onNodeWithTag("top_tool_filter").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_tab_blend").assertIsDisplayed()
+        composeRule.onNodeWithTag("blend_mode_normal").assertTextContains("Normal (Default)")
+        composeRule.onNodeWithTag("filter_tab_shadow").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_stroke_toggle").assertExists()
+        composeRule.onNodeWithTag("filter_shadow_toggle").assertExists()
+        composeRule.onNodeWithTag("filter_opacity_slider").assertExists()
+        composeRule.onNodeWithTag("filter_tab_fill").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_fill_pick_media").assertExists()
+
+        // Duplicate Opacity is removed from Rotate & Adjust
+        composeRule.onNodeWithTag("bottom_tool_rotate").performClick()
+        composeRule.waitForIdle()
+        assertEquals(0, composeRule.onAllNodesWithText("Opacity").fetchSemanticsNodes().size)
+
+        // Open universal Top Bar Crop on TextLayer -> works without switching to Photo
+        composeRule.onNodeWithTag("top_tool_crop").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("interactive_crop_overlay").assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_done_button").performClick()
+        composeRule.waitForIdle()
+
+        // 2. Corner Pin Add Point toggle
+        composeRule.onNodeWithTag("top_tool_corner_pin").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("corner_pin_add_point_toggle").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertTrue(vm.isCornerPinAddPointMode.value)
+        composeRule.onNodeWithTag("corner_pin_add_point_surface").assertIsDisplayed()
+        composeRule.onNodeWithTag("corner_pin_confirm_button").performClick()
+        composeRule.waitForIdle()
+
+        // 3. 3D Floating Panel moves freely in X & Y and resizes from corners
+        composeRule.onNodeWithTag("top_tool_3d").performClick()
+        composeRule.waitForIdle()
+        val tdBefore = composeRule.onNodeWithTag("three_d_floating_panel").getBoundsInRoot()
+        composeRule.onNodeWithTag("three_d_drag_handle").performTouchInput {
+            down(center)
+            moveBy(Offset(-35f, -55f))
+            up()
+        }
+        composeRule.waitForIdle()
+        val tdAfterDrag = composeRule.onNodeWithTag("three_d_floating_panel").getBoundsInRoot()
+        assertTrue("3D panel moves freely in X", tdAfterDrag.left < tdBefore.left)
+        assertTrue("3D panel moves freely in Y", tdAfterDrag.top < tdBefore.top)
+
+        composeRule.onNodeWithTag("three_d_resize_br").performTouchInput {
+            down(center)
+            moveBy(Offset(25f, 25f))
+            up()
+        }
+        composeRule.waitForIdle()
+        val tdAfterResize = composeRule.onNodeWithTag("three_d_floating_panel").getBoundsInRoot()
+        assertTrue("3D panel BR corner resizes wider", tdAfterResize.right - tdAfterResize.left > tdAfterDrag.right - tdAfterDrag.left)
+
+        // Ensure middle-right Text reflow handle changes wrapWidthNorm without stretch
+        composeRule.runOnUiThread {
+            vm.closeToolDrawer()
+            vm.selectLayer(textId)
+        }
+        composeRule.waitForIdle()
+        val initialWrap = (StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer).wrapWidthNorm
+        composeRule.onNodeWithTag("horizontal_stretch_handle_3").performTouchInput {
+            down(center)
+            moveBy(Offset(-25f, 0f))
+            up()
+        }
+        composeRule.waitForIdle()
+        val afterWrap = (StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer).wrapWidthNorm
+        assertTrue("Right handle reflows text width ($initialWrap -> $afterWrap)", afterWrap != initialWrap)
+        bmp.recycle()
     }
 }
 

@@ -20,7 +20,7 @@ object LayerTransformMatrix {
         val matrix = Matrix()
 
         // 1. Free 4-corner Corner Pin perspective homography
-        if (!cornerPin.isIdentity()) {
+        if (cornerPin.hasCornerOffsets()) {
             val src = floatArrayOf(
                 0f, 0f,
                 w, 0f,
@@ -76,6 +76,108 @@ object LayerTransformMatrix {
         return matrix
     }
 
+    /**
+     * Smooth Inverse-Distance-Weighted / Gaussian puppet deformation field in normalized [0..1] object space.
+     * Pinned points act as smooth attractors & anchors; stationary edge anchors keep unpinned corners softly grounded
+     * when only 1-2 pins exist so the object bends organically like a rubber sheet.
+     */
+    fun applyPuppetDisplacementNorm(
+        u: Float,
+        v: Float,
+        pins: List<com.example.model.PuppetPinPoint>
+    ): Pair<Float, Float> {
+        if (pins.isEmpty()) return u to v
+        var sumW = 0.0
+        var sumDx = 0.0
+        var sumDy = 0.0
+        val sigma2 = 0.095 // ~0.31 normalized falloff radius
+        for (pin in pins) {
+            val du = (u - pin.anchorX).toDouble()
+            val dv = (v - pin.anchorY).toDouble()
+            val d2 = du * du + dv * dv
+            if (d2 < 1e-6) {
+                return (u + pin.dx) to (v + pin.dy)
+            }
+            val w = kotlin.math.exp(-d2 / sigma2) / (d2 + 0.008)
+            sumW += w
+            sumDx += w * pin.dx
+            sumDy += w * pin.dy
+        }
+        // Soft far-field damping so dragging a single pin bends locally around that pin rather than rigidly translating
+        val damp = 0.35
+        val totalW = sumW + damp
+        return (u + (sumDx / totalW).toFloat()) to (v + (sumDy / totalW).toFloat())
+    }
+
+    fun buildWarpedMeshVerts(
+        cols: Int,
+        rows: Int,
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets,
+        padRatioX: Float = 1f,
+        padRatioY: Float = 1f
+    ): FloatArray {
+        val w = boxW.coerceAtLeast(1f)
+        val h = boxH.coerceAtLeast(1f)
+        val prX = padRatioX.coerceAtLeast(1f)
+        val prY = padRatioY.coerceAtLeast(1f)
+        val verts = FloatArray((cols + 1) * (rows + 1) * 2)
+        val pins = cornerPin.puppetPins
+        var idx = 0
+        for (r in 0..rows) {
+            val tv = r.toFloat() / rows.toFloat()
+            val vNom = (tv - 0.5f) * prY + 0.5f
+            for (c in 0..cols) {
+                val tu = c.toFloat() / cols.toFloat()
+                val uNom = (tu - 0.5f) * prX + 0.5f
+                val (wu, wv) = applyPuppetDisplacementNorm(uNom, vNom, pins)
+                verts[idx++] = wu * w
+                verts[idx++] = wv * h
+            }
+        }
+        val m = computeLocalEffectMatrix(w, h, transform3D, cornerPin)
+        m.mapPoints(verts)
+        return verts
+    }
+
+    fun mapPuppetPinToBoxPx(
+        pin: com.example.model.PuppetPinPoint,
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ): Pair<Float, Float> {
+        val w = boxW.coerceAtLeast(1f)
+        val h = boxH.coerceAtLeast(1f)
+        val pts = floatArrayOf(
+            (pin.anchorX + pin.dx) * w,
+            (pin.anchorY + pin.dy) * h
+        )
+        computeLocalEffectMatrix(w, h, transform3D, cornerPin).mapPoints(pts)
+        return pts[0] to pts[1]
+    }
+
+    fun mapBoxPointToLocalNorm(
+        localX: Float,
+        localY: Float,
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets
+    ): Pair<Float, Float> {
+        val w = boxW.coerceAtLeast(1f)
+        val h = boxH.coerceAtLeast(1f)
+        val effect = computeLocalEffectMatrix(w, h, transform3D, cornerPin)
+        val inv = Matrix()
+        val pts = floatArrayOf(localX, localY)
+        if (effect.invert(inv)) {
+            inv.mapPoints(pts)
+        }
+        return (pts[0] / w).coerceIn(0.02f, 0.98f) to (pts[1] / h).coerceIn(0.02f, 0.98f)
+    }
+
     fun buildBitmapDrawMatrix(
         bitmapWidth: Int,
         bitmapHeight: Int,
@@ -124,7 +226,7 @@ object LayerTransformMatrix {
         transform3D: Layer3DTransform,
         cornerPin: CornerPinOffsets
     ): FloatArray {
-        return mapQuadForRect(
+        val quad = mapQuadForRect(
             left = 0f,
             top = 0f,
             right = boxW,
@@ -134,6 +236,19 @@ object LayerTransformMatrix {
             transform3D = transform3D,
             cornerPin = cornerPin
         )
+        if (cornerPin.puppetPins.isEmpty()) return quad
+        val w = boxW.coerceAtLeast(1f)
+        val h = boxH.coerceAtLeast(1f)
+        val mesh = buildWarpedMeshVerts(8, 8, w, h, transform3D, cornerPin)
+        var minX = quad[0]; var maxX = quad[0]
+        var minY = quad[1]; var maxY = quad[1]
+        for (i in 0 until mesh.size step 2) {
+            if (mesh[i] < minX) minX = mesh[i]
+            if (mesh[i] > maxX) maxX = mesh[i]
+            if (mesh[i + 1] < minY) minY = mesh[i + 1]
+            if (mesh[i + 1] > maxY) maxY = mesh[i + 1]
+        }
+        return quad
     }
 
     fun mapQuadForRect(
@@ -206,6 +321,38 @@ object LayerTransformMatrix {
         for (i in 1 until 4) {
             val x = quadPts[i * 2]
             val y = quadPts[i * 2 + 1]
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+        }
+        return LocalBounds(
+            minX = minX - paddingPx,
+            minY = minY - paddingPx,
+            maxX = maxX + paddingPx,
+            maxY = maxY + paddingPx
+        )
+    }
+
+    fun computeMeshBoundingBox(
+        boxW: Float,
+        boxH: Float,
+        transform3D: Layer3DTransform,
+        cornerPin: CornerPinOffsets,
+        paddingPx: Float = 0f
+    ): LocalBounds {
+        if (cornerPin.puppetPins.isEmpty()) {
+            val q = mapCornerPoints(boxW, boxH, transform3D, cornerPin)
+            return computeQuadBoundingBox(q, paddingPx)
+        }
+        val mesh = buildWarpedMeshVerts(10, 10, boxW, boxH, transform3D, cornerPin)
+        var minX = mesh[0]
+        var maxX = mesh[0]
+        var minY = mesh[1]
+        var maxY = mesh[1]
+        for (i in 2 until mesh.size step 2) {
+            val x = mesh[i]
+            val y = mesh[i + 1]
             if (x < minX) minX = x
             if (x > maxX) maxX = x
             if (y < minY) minY = y

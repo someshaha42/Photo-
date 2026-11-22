@@ -31,7 +31,10 @@ import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.Layer3DTransform
+import com.example.model.LayerBlendMode
+import com.example.model.LayerEffectStyle
 import com.example.model.ProjectDocument
+import com.example.model.PuppetPinPoint
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
@@ -39,6 +42,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -65,7 +69,8 @@ enum class ToolDrawerTab(val label: String) {
     ADJUST("Adjust"),
     ROTATE("Rotate"),
     CORNER_PIN("Corner Pin"),
-    THREE_D("3D")
+    THREE_D("3D"),
+    FILTER("Filter")
 }
 
 enum class EyedropperTarget {
@@ -104,8 +109,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     val fontRenderEngine = FontRenderEngine(context)
     val fontRepository = FontRepository(context, fontRenderEngine)
 
-    val settings: StateFlow<AppSettings> = settingsRepository.settingsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
+    private val _previewWindowOverride = MutableStateFlow<Boolean?>(null)
+    val settings: StateFlow<AppSettings> = combine(
+        settingsRepository.settingsFlow,
+        _previewWindowOverride
+    ) { repoSettings, previewOverride ->
+        if (previewOverride != null) repoSettings.copy(previewWindowEnabled = previewOverride)
+        else repoSettings
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
 
     val projectHistory: StateFlow<List<ProjectEntity>> = projectRepository.projectsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -192,6 +203,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _pendingCropQueue = MutableStateFlow<List<PendingImportPhoto>>(emptyList())
     val pendingCropQueue: StateFlow<List<PendingImportPhoto>> = _pendingCropQueue.asStateFlow()
 
+    private val _isCornerPinAddPointMode = MutableStateFlow(false)
+    val isCornerPinAddPointMode: StateFlow<Boolean> = _isCornerPinAddPointMode.asStateFlow()
+
+    private val _isEditingFillMedia = MutableStateFlow(false)
+    val isEditingFillMedia: StateFlow<Boolean> = _isEditingFillMedia.asStateFlow()
+
     init {
         viewModelScope.launch {
             fontRepository.initialize()
@@ -229,6 +246,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         endTransformTransaction()
         val prevTab = _activeToolDrawer.value
         val nextTab = if (prevTab == tab) ToolDrawerTab.NONE else tab
+        _isCornerPinAddPointMode.value = false
+        if (nextTab != ToolDrawerTab.FILTER) {
+            _isEditingFillMedia.value = false
+        }
         if (prevTab == ToolDrawerTab.CORNER_PIN && nextTab != ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
         } else if (nextTab == ToolDrawerTab.CORNER_PIN && prevTab != ToolDrawerTab.CORNER_PIN) {
@@ -247,6 +268,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeToolDrawer() {
         endTransformTransaction()
+        _isCornerPinAddPointMode.value = false
+        _isEditingFillMedia.value = false
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
         }
@@ -260,6 +283,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun confirmCornerPin() {
         endTransformTransaction()
+        _isCornerPinAddPointMode.value = false
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
             _activeToolDrawer.value = ToolDrawerTab.NONE
@@ -275,6 +299,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissAllOverlaysAndSelection() {
         endTransformTransaction()
+        _isCornerPinAddPointMode.value = false
+        _isEditingFillMedia.value = false
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
         } else if (_activeToolDrawer.value == ToolDrawerTab.TEXT &&
@@ -284,7 +310,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             addTextLayer(_draftText.value)
         }
         _activeToolDrawer.value = ToolDrawerTab.NONE
-        _showLayersDrawer.value = false
+        // Sticky drawers & modes: do NOT auto-close showLayersDrawer or isZoomMode on canvas/background tap!
         _showProjectsDrawer.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
         _draftText.value = ""
@@ -388,6 +414,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { settingsRepository.toggleTheme() }
     }
 
+    fun setPreviewWindowEnabled(enabled: Boolean) {
+        _previewWindowOverride.value = enabled
+        viewModelScope.launch { settingsRepository.setPreviewWindowEnabled(enabled) }
+    }
+
     fun setKeepLocalMediaCopy(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setKeepLocalMediaCopy(enabled) }
     }
@@ -410,6 +441,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _showLayersDrawer.value = false
         _showProjectsDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
+        _isCornerPinAddPointMode.value = false
+        _isEditingFillMedia.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
         _draftText.value = ""
         lastAppliedCaseMode = null
@@ -443,6 +476,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _showLayersDrawer.value = false
         _showProjectsDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
+        _isCornerPinAddPointMode.value = false
+        _isEditingFillMedia.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
         _draftText.value = ""
         lastAppliedCaseMode = null
@@ -544,6 +579,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val out = mutableListOf<String>()
         for (layer in layers) {
             if (layer is ImageLayer) out.add(layer.uriString)
+            layer.fillStyle.fillMediaUri?.takeIf { it.isNotBlank() }?.let { out.add(it) }
             if (layer is GroupLayer) out.addAll(collectAllBitmapUris(layer.children))
         }
         return out
@@ -615,12 +651,15 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun selectLayer(layerId: String?) {
         endTransformTransaction()
         lastAppliedCaseMode = null
+        _isEditingFillMedia.value = false
         if (layerId == null) {
+            _isCornerPinAddPointMode.value = false
             if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
                 restoreLocksAfterCornerPin()
                 _activeToolDrawer.value = ToolDrawerTab.NONE
             } else if (_activeToolDrawer.value == ToolDrawerTab.THREE_D ||
-                _activeToolDrawer.value == ToolDrawerTab.CROP
+                _activeToolDrawer.value == ToolDrawerTab.CROP ||
+                _activeToolDrawer.value == ToolDrawerTab.FILTER
             ) {
                 _activeToolDrawer.value = ToolDrawerTab.NONE
             }
@@ -658,12 +697,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     currentTab != ToolDrawerTab.ROTATE &&
                     currentTab != ToolDrawerTab.CORNER_PIN &&
                     currentTab != ToolDrawerTab.THREE_D &&
-                    currentTab != ToolDrawerTab.CROP
+                    currentTab != ToolDrawerTab.CROP &&
+                    currentTab != ToolDrawerTab.FILTER
                 ) {
                     _activeToolDrawer.value = ToolDrawerTab.TEXT
                 }
             }
-            is ImageLayer -> {
+            is ImageLayer, is GroupLayer -> {
                 if (currentTab == ToolDrawerTab.TEXT ||
                     currentTab == ToolDrawerTab.FONT
                 ) {
@@ -1074,7 +1114,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
                 if (!layer.locked) {
-                    layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
+                    layer.withLiveCrop(liveCrop = transform(layer.liveCrop).normalized())
                 } else layer
             }
         )
@@ -1088,7 +1128,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             doc.copy(
                 layers = mapLayerRecursive(doc.layers, selId) { layer ->
                     if (!layer.locked) {
-                        layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
+                        layer.withLiveCrop(liveCrop = transform(layer.liveCrop).normalized())
                     } else layer
                 }
             )
@@ -1109,7 +1149,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         beginTransformTransaction()
         _document.value = _document.value.copy(
             layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
-                layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
+                layer.withLiveCrop(liveCrop = transform(layer.liveCrop).normalized())
             }
         )
     }
@@ -1124,7 +1164,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         commitChange { doc ->
             doc.copy(
                 layers = mapLayerRecursive(doc.layers, target.id) { layer ->
-                    layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
+                    layer.withLiveCrop(liveCrop = transform(layer.liveCrop).normalized())
                 }
             )
         }
@@ -1287,6 +1327,249 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     boxHpx = boxHpx,
                     canvasWpx = canvasWpx,
                     canvasHpx = canvasHpx
+                )
+            }
+        )
+    }
+
+    fun updateSelectedTextWrapWidthTransient(
+        layerId: String,
+        signX: Float,
+        screenLocalDeltaX: Float,
+        boxWpx: Float,
+        canvasWpx: Float,
+        canvasHpx: Float
+    ) {
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) as? TextLayer ?: return
+        if (targetLayer.locked) return
+        val safeCanvasW = canvasWpx.coerceAtLeast(1f)
+        val safeCanvasH = canvasHpx.coerceAtLeast(1f)
+        val minWrapNorm = (44f / safeCanvasW).coerceIn(0.08f, 0.25f)
+        val maxWrapNorm = 0.92f
+        val currentWrapWpx = targetLayer.wrapWidthNorm?.let { it * safeCanvasW } ?: boxWpx
+        val scaleXEff = (targetLayer.scale * targetLayer.stretchX).coerceAtLeast(0.05f)
+        val deltaBoxPx = (screenLocalDeltaX / scaleXEff) * signX
+        val nextWrapPx = (currentWrapWpx + deltaBoxPx).coerceIn(minWrapNorm * safeCanvasW, maxWrapNorm * safeCanvasW)
+        val actualDeltaDispW = (nextWrapPx - currentWrapWpx) * scaleXEff
+        val shiftLocalX = signX * (actualDeltaDispW * 0.5f)
+        val rad = Math.toRadians(targetLayer.rotationDeg.toDouble())
+        val dxCanvasPx = (shiftLocalX * cos(rad)).toFloat()
+        val dyCanvasPx = (shiftLocalX * sin(rad)).toFloat()
+        val nextWrapNorm = (nextWrapPx / safeCanvasW).coerceIn(minWrapNorm, maxWrapNorm)
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
+                if (layer is TextLayer && !layer.locked) {
+                    layer.withTextWrapWidth(nextWrapNorm).withBaseTransform(
+                        offsetXNorm = (layer.offsetXNorm + dxCanvasPx / safeCanvasW).coerceIn(-0.98f, 0.98f),
+                        offsetYNorm = (layer.offsetYNorm + dyCanvasPx / safeCanvasH).coerceIn(-0.98f, 0.98f)
+                    )
+                } else layer
+            }
+        )
+    }
+
+    fun toggleCornerPinAddPointMode() {
+        _isCornerPinAddPointMode.value = !_isCornerPinAddPointMode.value
+    }
+
+    fun addPuppetPinToLayer(layerId: String, anchorX: Float, anchorY: Float) {
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) ?: return
+        if (targetLayer.locked) return
+        val newPin = PuppetPinPoint(
+            anchorX = anchorX.coerceIn(0.02f, 0.98f),
+            anchorY = anchorY.coerceIn(0.02f, 0.98f)
+        )
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, layerId) { layer ->
+                    if (layer.locked) layer
+                    else {
+                        val nextPins = (layer.cornerPin.puppetPins + newPin).takeLast(12)
+                        layer.withExtraTransforms(cornerPin = layer.cornerPin.copy(puppetPins = nextPins))
+                    }
+                }
+            )
+        }
+    }
+
+    fun updatePuppetPinDragTransient(
+        layerId: String,
+        pinId: String,
+        deltaDxRatio: Float,
+        deltaDyRatio: Float
+    ) {
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) ?: return
+        if (targetLayer.locked) return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
+                if (layer.locked) layer
+                else {
+                    val updatedPins = layer.cornerPin.puppetPins.map { pin ->
+                        if (pin.id == pinId) {
+                            pin.copy(
+                                dx = (pin.dx + deltaDxRatio).coerceIn(-1.2f, 1.2f),
+                                dy = (pin.dy + deltaDyRatio).coerceIn(-1.2f, 1.2f)
+                            )
+                        } else pin
+                    }
+                    layer.withExtraTransforms(cornerPin = layer.cornerPin.copy(puppetPins = updatedPins))
+                }
+            }
+        )
+    }
+
+    fun clearPuppetPins(layerId: String) {
+        val targetLayer = findLayerRecursive(_document.value.layers, layerId) ?: return
+        if (targetLayer.locked || targetLayer.cornerPin.puppetPins.isEmpty()) return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, layerId) { layer ->
+                    layer.withExtraTransforms(cornerPin = layer.cornerPin.copy(puppetPins = emptyList()))
+                }
+            )
+        }
+    }
+
+    fun setSelectedLayerBlendMode(mode: LayerBlendMode) {
+        val selId = _document.value.selectedLayerId ?: return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                    layer.withFilterStyle(blendMode = mode)
+                }
+            )
+        }
+    }
+
+    fun updateSelectedLayerEffectStyle(
+        transform: (LayerEffectStyle) -> LayerEffectStyle,
+        transient: Boolean = false
+    ) {
+        val selId = _document.value.selectedLayerId ?: return
+        if (transient) {
+            beginTransformTransaction()
+            _document.value = _document.value.copy(
+                layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                    layer.withFilterStyle(effectStyle = transform(layer.effectStyle))
+                }
+            )
+        } else {
+            commitChange { doc ->
+                doc.copy(
+                    layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                        layer.withFilterStyle(effectStyle = transform(layer.effectStyle))
+                    }
+                )
+            }
+        }
+    }
+
+    fun setSelectedLayerFillColor(colorArgb: Long?, transient: Boolean = false) {
+        val selId = _document.value.selectedLayerId ?: return
+        if (transient) {
+            beginTransformTransaction()
+            _document.value = _document.value.copy(
+                layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                    layer.withFilterStyle(fillStyle = layer.fillStyle.copy(fillColorArgb = colorArgb))
+                }
+            )
+        } else {
+            commitChange { doc ->
+                doc.copy(
+                    layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                        layer.withFilterStyle(fillStyle = layer.fillStyle.copy(fillColorArgb = colorArgb))
+                    }
+                )
+            }
+        }
+    }
+
+    fun setEditingFillMedia(editing: Boolean) {
+        val selId = _document.value.selectedLayerId
+        val selected = findLayerRecursive(_document.value.layers, selId)
+        _isEditingFillMedia.value = editing && selected != null && !selected.fillStyle.fillMediaUri.isNullOrBlank()
+    }
+
+    fun applyFillMediaFromUri(uri: Uri) {
+        val selId = _document.value.selectedLayerId ?: return
+        val doc = _document.value
+        viewModelScope.launch {
+            val meta = mediaManager.importImage(
+                sourceUri = uri,
+                projectId = doc.id,
+                keepLocalCopy = settings.value.keepLocalMediaCopy
+            )
+            val bmp = mediaManager.decodeRgba8888Bitmap(meta.uriString, maxDimension = null)
+            if (bmp != null) {
+                val nextMap = _imageBitmaps.value.toMutableMap()
+                nextMap[meta.uriString] = bmp
+                _imageBitmaps.value = nextMap
+            }
+            commitChange { current ->
+                current.copy(
+                    layers = mapLayerRecursive(current.layers, selId) { layer ->
+                        layer.withFilterStyle(
+                            fillStyle = layer.fillStyle.copy(
+                                fillMediaUri = meta.uriString,
+                                fillMediaOffsetX = 0f,
+                                fillMediaOffsetY = 0f,
+                                fillMediaScale = 1f,
+                                fillMediaRotationDeg = 0f
+                            )
+                        )
+                    }
+                )
+            }
+            _isEditingFillMedia.value = true
+        }
+    }
+
+    fun clearSelectedLayerFillMedia() {
+        val selId = _document.value.selectedLayerId ?: return
+        _isEditingFillMedia.value = false
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                    layer.withFilterStyle(
+                        fillStyle = layer.fillStyle.copy(
+                            fillMediaUri = null,
+                            fillMediaOffsetX = 0f,
+                            fillMediaOffsetY = 0f,
+                            fillMediaScale = 1f,
+                            fillMediaRotationDeg = 0f
+                        )
+                    )
+                }
+            )
+        }
+    }
+
+    fun transformSelectedLayerFillMediaTransient(
+        dxRatio: Float,
+        dyRatio: Float,
+        scaleFactor: Float,
+        rotDeltaDeg: Float
+    ) {
+        val selId = _document.value.selectedLayerId ?: return
+        val locks = _transformLocks.value
+        val effDx = if (locks.positionLocked) 0f else dxRatio
+        val effDy = if (locks.positionLocked) 0f else dyRatio
+        val effScale = if (locks.zoomLocked) 1f else scaleFactor
+        val effRot = if (locks.rotationLocked) 0f else rotDeltaDeg
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                val f = layer.fillStyle
+                if (f.fillMediaUri.isNullOrBlank()) layer
+                else layer.withFilterStyle(
+                    fillStyle = f.copy(
+                        fillMediaOffsetX = (f.fillMediaOffsetX + effDx).coerceIn(-1.5f, 1.5f),
+                        fillMediaOffsetY = (f.fillMediaOffsetY + effDy).coerceIn(-1.5f, 1.5f),
+                        fillMediaScale = (f.fillMediaScale * effScale).coerceIn(0.2f, 8f),
+                        fillMediaRotationDeg = (f.fillMediaRotationDeg + effRot) % 360f
+                    )
                 )
             }
         )

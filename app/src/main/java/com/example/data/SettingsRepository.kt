@@ -25,7 +25,8 @@ data class AppSettings(
     val exportFormat: ExportImageFormat = ExportImageFormat.PNG,
     val exportResolutionPreset: ExportResolutionPreset = ExportResolutionPreset.RES_2K,
     val exportCustomWidth: Int = 1080,
-    val exportCustomHeight: Int = 1080
+    val exportCustomHeight: Int = 1080,
+    val previewWindowEnabled: Boolean = false
 )
 
 class SettingsRepository(private val context: Context) {
@@ -39,6 +40,7 @@ class SettingsRepository(private val context: Context) {
         val EXPORT_RES_PRESET = stringPreferencesKey("export_resolution_preset")
         val EXPORT_CUSTOM_WIDTH = intPreferencesKey("export_custom_width")
         val EXPORT_CUSTOM_HEIGHT = intPreferencesKey("export_custom_height")
+        val PREVIEW_WINDOW_ENABLED = booleanPreferencesKey("preview_window_enabled")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -61,7 +63,8 @@ class SettingsRepository(private val context: Context) {
             exportFormat = expFormat,
             exportResolutionPreset = expPreset,
             exportCustomWidth = (prefs[Keys.EXPORT_CUSTOM_WIDTH] ?: 1080).coerceIn(64, 8192),
-            exportCustomHeight = (prefs[Keys.EXPORT_CUSTOM_HEIGHT] ?: 1080).coerceIn(64, 8192)
+            exportCustomHeight = (prefs[Keys.EXPORT_CUSTOM_HEIGHT] ?: 1080).coerceIn(64, 8192),
+            previewWindowEnabled = prefs[Keys.PREVIEW_WINDOW_ENABLED] ?: false
         )
     }
 
@@ -74,6 +77,10 @@ class SettingsRepository(private val context: Context) {
             val current = prefs[Keys.DARK_THEME] ?: true
             prefs[Keys.DARK_THEME] = !current
         }
+    }
+
+    suspend fun setPreviewWindowEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.PREVIEW_WINDOW_ENABLED] = enabled }
     }
 
     suspend fun setKeepLocalMediaCopy(enabled: Boolean) {

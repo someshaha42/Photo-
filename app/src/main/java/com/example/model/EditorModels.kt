@@ -252,6 +252,15 @@ data class Layer3DTransform(
 }
 
 @Serializable
+data class PuppetPinPoint(
+    val id: String = UUID.randomUUID().toString(),
+    val anchorX: Float,
+    val anchorY: Float,
+    val dx: Float = 0f,
+    val dy: Float = 0f
+)
+
+@Serializable
 data class CornerPinOffsets(
     val tlDx: Float = 0f,
     val tlDy: Float = 0f,
@@ -260,11 +269,49 @@ data class CornerPinOffsets(
     val brDx: Float = 0f,
     val brDy: Float = 0f,
     val blDx: Float = 0f,
-    val blDy: Float = 0f
+    val blDy: Float = 0f,
+    val puppetPins: List<PuppetPinPoint> = emptyList()
 ) {
-    fun isIdentity(): Boolean =
-        tlDx == 0f && tlDy == 0f && trDx == 0f && trDy == 0f &&
-            brDx == 0f && brDy == 0f && blDx == 0f && blDy == 0f
+    fun hasCornerOffsets(): Boolean =
+        tlDx != 0f || tlDy != 0f || trDx != 0f || trDy != 0f ||
+            brDx != 0f || brDy != 0f || blDx != 0f || blDy != 0f
+
+    fun isIdentity(): Boolean = !hasCornerOffsets() && puppetPins.isEmpty()
+}
+
+@Serializable
+enum class LayerBlendMode(val label: String) {
+    NORMAL("Normal"),
+    MULTIPLY("Multiply"),
+    SCREEN("Screen"),
+    OVERLAY("Overlay"),
+    DARKEN("Darken"),
+    LIGHTEN("Lighten"),
+    ADD("Add"),
+    DIFFERENCE("Difference")
+}
+
+@Serializable
+data class LayerEffectStyle(
+    val strokeColorArgb: Long = 0xFFFFFFFFL,
+    val strokeWidth: Float = 0f,
+    val shadowEnabled: Boolean = false,
+    val shadowColorArgb: Long = 0xAA000000L,
+    val shadowRadius: Float = 8f
+) {
+    fun hasEffects(): Boolean = strokeWidth > 0.01f || shadowEnabled
+}
+
+@Serializable
+data class LayerFillStyle(
+    val fillColorArgb: Long? = null,
+    val fillMediaUri: String? = null,
+    val fillMediaOffsetX: Float = 0f,
+    val fillMediaOffsetY: Float = 0f,
+    val fillMediaScale: Float = 1f,
+    val fillMediaRotationDeg: Float = 0f
+) {
+    fun hasFill(): Boolean = fillColorArgb != null || !fillMediaUri.isNullOrBlank()
 }
 
 @Serializable
@@ -297,6 +344,10 @@ sealed interface EditorLayer {
     val cornerPin: CornerPinOffsets
     val crop: ImageCropRect
     val cropShape: ImageCropShape
+    val liveCrop: ImageCropRect
+    val blendMode: LayerBlendMode
+    val fillStyle: LayerFillStyle
+    val effectStyle: LayerEffectStyle
 
     fun withBaseTransform(
         offsetXNorm: Float = this.offsetXNorm,
@@ -318,6 +369,16 @@ sealed interface EditorLayer {
     fun withUniversalCrop(
         crop: ImageCropRect = this.crop,
         cropShape: ImageCropShape = this.cropShape
+    ): EditorLayer
+
+    fun withLiveCrop(
+        liveCrop: ImageCropRect = this.liveCrop
+    ): EditorLayer
+
+    fun withFilterStyle(
+        blendMode: LayerBlendMode = this.blendMode,
+        fillStyle: LayerFillStyle = this.fillStyle,
+        effectStyle: LayerEffectStyle = this.effectStyle
     ): EditorLayer
 }
 
@@ -343,7 +404,11 @@ data class ImageLayer(
     override val visible: Boolean = true,
     override val locked: Boolean = false,
     override val transform3D: Layer3DTransform = Layer3DTransform(),
-    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets(),
+    override val liveCrop: ImageCropRect = ImageCropRect(),
+    override val blendMode: LayerBlendMode = LayerBlendMode.NORMAL,
+    override val fillStyle: LayerFillStyle = LayerFillStyle(),
+    override val effectStyle: LayerEffectStyle = LayerEffectStyle()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -374,6 +439,15 @@ data class ImageLayer(
 
     override fun withUniversalCrop(crop: ImageCropRect, cropShape: ImageCropShape) =
         copy(crop = crop, cropShape = cropShape)
+
+    override fun withLiveCrop(liveCrop: ImageCropRect) =
+        copy(liveCrop = liveCrop)
+
+    override fun withFilterStyle(
+        blendMode: LayerBlendMode,
+        fillStyle: LayerFillStyle,
+        effectStyle: LayerEffectStyle
+    ) = copy(blendMode = blendMode, fillStyle = fillStyle, effectStyle = effectStyle)
 }
 
 @Serializable
@@ -396,6 +470,7 @@ data class TextLayer(
     val isItalic: Boolean = false,
     val bgPillEnabled: Boolean = false,
     val bgPillColorArgb: Long = 0xAA161B26,
+    val wrapWidthNorm: Float? = null,
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
     override val scale: Float = 1f,
@@ -408,8 +483,20 @@ data class TextLayer(
     override val transform3D: Layer3DTransform = Layer3DTransform(),
     override val cornerPin: CornerPinOffsets = CornerPinOffsets(),
     override val crop: ImageCropRect = ImageCropRect(),
-    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE
+    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE,
+    override val liveCrop: ImageCropRect = ImageCropRect(),
+    override val blendMode: LayerBlendMode = LayerBlendMode.NORMAL,
+    override val fillStyle: LayerFillStyle = LayerFillStyle()
 ) : EditorLayer {
+    override val effectStyle: LayerEffectStyle
+        get() = LayerEffectStyle(
+            strokeColorArgb = strokeColorArgb,
+            strokeWidth = strokeWidth,
+            shadowEnabled = shadowEnabled,
+            shadowColorArgb = shadowColorArgb,
+            shadowRadius = shadowRadius
+        )
+
     override fun withBaseTransform(
         offsetXNorm: Float,
         offsetYNorm: Float,
@@ -439,6 +526,25 @@ data class TextLayer(
 
     override fun withUniversalCrop(crop: ImageCropRect, cropShape: ImageCropShape) =
         copy(crop = crop, cropShape = cropShape)
+
+    override fun withLiveCrop(liveCrop: ImageCropRect) =
+        copy(liveCrop = liveCrop)
+
+    override fun withFilterStyle(
+        blendMode: LayerBlendMode,
+        fillStyle: LayerFillStyle,
+        effectStyle: LayerEffectStyle
+    ) = copy(
+        blendMode = blendMode,
+        fillStyle = fillStyle,
+        strokeColorArgb = effectStyle.strokeColorArgb,
+        strokeWidth = effectStyle.strokeWidth,
+        shadowEnabled = effectStyle.shadowEnabled,
+        shadowColorArgb = effectStyle.shadowColorArgb,
+        shadowRadius = effectStyle.shadowRadius
+    )
+
+    fun withTextWrapWidth(wrapWidthNorm: Float?): TextLayer = copy(wrapWidthNorm = wrapWidthNorm)
 }
 
 @Serializable
@@ -460,7 +566,11 @@ data class GroupLayer(
     override val transform3D: Layer3DTransform = Layer3DTransform(),
     override val cornerPin: CornerPinOffsets = CornerPinOffsets(),
     override val crop: ImageCropRect = ImageCropRect(),
-    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE
+    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE,
+    override val liveCrop: ImageCropRect = ImageCropRect(),
+    override val blendMode: LayerBlendMode = LayerBlendMode.NORMAL,
+    override val fillStyle: LayerFillStyle = LayerFillStyle(),
+    override val effectStyle: LayerEffectStyle = LayerEffectStyle()
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -491,6 +601,15 @@ data class GroupLayer(
 
     override fun withUniversalCrop(crop: ImageCropRect, cropShape: ImageCropShape) =
         copy(crop = crop, cropShape = cropShape)
+
+    override fun withLiveCrop(liveCrop: ImageCropRect) =
+        copy(liveCrop = liveCrop)
+
+    override fun withFilterStyle(
+        blendMode: LayerBlendMode,
+        fillStyle: LayerFillStyle,
+        effectStyle: LayerEffectStyle
+    ) = copy(blendMode = blendMode, fillStyle = fillStyle, effectStyle = effectStyle)
 }
 
 enum class ExportImageFormat(val label: String, val ext: String, val mimeType: String) {

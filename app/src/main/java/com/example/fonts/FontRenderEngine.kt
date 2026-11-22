@@ -218,7 +218,8 @@ class FontRenderEngine(private val context: Context) {
         effectiveFontSizePx: Float,
         maxWidthPx: Float,
         emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
-        appEmojiFontId: String? = null
+        appEmojiFontId: String? = null,
+        exactWrapWidthPx: Float? = null
     ): MeasuredTextBounds {
         val meta = metadataIndex[layer.fontId]
         val isPureColorEmojiFont = meta?.classification == FontClassification.COLOR_EMOJI
@@ -232,7 +233,8 @@ class FontRenderEngine(private val context: Context) {
             appEmojiFontId = appEmojiFontId,
             forStrokePass = false
         )
-        val layoutWidth = maxWidthPx.roundToInt().coerceAtLeast(64)
+        val clampedExactW = exactWrapWidthPx?.coerceIn(24f, maxWidthPx.coerceAtLeast(24f))
+        val layoutWidth = (clampedExactW ?: maxWidthPx).roundToInt().coerceAtLeast(24)
         val alignment = when (layer.align) {
             TextAlignOption.LEFT -> Layout.Alignment.ALIGN_NORMAL
             TextAlignOption.CENTER -> Layout.Alignment.ALIGN_CENTER
@@ -243,10 +245,15 @@ class FontRenderEngine(private val context: Context) {
             .setAlignment(alignment)
             .setIncludePad(true)
             .build()
-        val lineMaxW = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 48f
+        val lineMaxW = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 28f
         val pad = effectiveFontSizePx * 0.45f
+        val measuredW = if (clampedExactW != null) {
+            maxOf(clampedExactW, lineMaxW + pad * 0.4f).coerceIn(28f, maxWidthPx.coerceAtLeast(28f))
+        } else {
+            (lineMaxW + pad).coerceIn(48f, maxWidthPx.coerceAtLeast(48f))
+        }
         return MeasuredTextBounds(
-            widthPx = (lineMaxW + pad).coerceIn(48f, maxWidthPx),
+            widthPx = measuredW,
             heightPx = (layout.height + pad).coerceAtLeast(48f)
         )
     }
@@ -257,7 +264,8 @@ class FontRenderEngine(private val context: Context) {
         effectiveFontSizePx: Float,
         maxWidthPx: Float,
         emojiSourceMode: EmojiSourceMode = EmojiSourceMode.SYSTEM,
-        appEmojiFontId: String? = null
+        appEmojiFontId: String? = null,
+        exactWrapWidthPx: Float? = null
     ) {
         val startNs = System.nanoTime()
         val meta = metadataIndex[layer.fontId]
@@ -274,7 +282,8 @@ class FontRenderEngine(private val context: Context) {
             forStrokePass = false
         )
 
-        val layoutWidth = maxWidthPx.roundToInt().coerceAtLeast(64)
+        val layoutWidth = (exactWrapWidthPx?.coerceIn(24f, maxWidthPx.coerceAtLeast(24f)) ?: maxWidthPx)
+            .roundToInt().coerceAtLeast(24)
         val alignment = when (layer.align) {
             TextAlignOption.LEFT -> Layout.Alignment.ALIGN_NORMAL
             TextAlignOption.CENTER -> Layout.Alignment.ALIGN_CENTER
@@ -287,7 +296,7 @@ class FontRenderEngine(private val context: Context) {
             .setIncludePad(true)
             .build()
 
-        val textW = (0 until staticLayout.lineCount).maxOfOrNull { staticLayout.getLineWidth(it) } ?: 100f
+        val textW = (0 until staticLayout.lineCount).maxOfOrNull { staticLayout.getLineWidth(it) } ?: 60f
         val textH = staticLayout.height.toFloat()
 
         canvas.save()
