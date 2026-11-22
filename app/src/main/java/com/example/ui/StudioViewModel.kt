@@ -18,15 +18,9 @@ import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
 import com.example.fonts.FontSource
 import com.example.fonts.ImportHistoryEntry
-import com.example.data.VectorShapeEngine
-import com.example.data.VectorStrokeEngine
 import com.example.model.BackgroundConfig
-import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
 import com.example.model.CornerPinOffsets
-import com.example.model.DrawLayer
-import com.example.model.DrawPoint
-import com.example.model.DrawStroke
 import com.example.model.EditorLayer
 import com.example.model.EmojiSourceMode
 import com.example.model.ExportImageFormat
@@ -37,13 +31,10 @@ import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.Layer3DTransform
-import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
-import com.example.model.ShapeLayer
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
-import com.example.model.VectorStrokeStyle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -72,16 +63,13 @@ enum class ToolDrawerTab(val label: String) {
     PHOTO("Photo"),
     TEXT("Text"),
     ADJUST("Adjust"),
-    SHAPES("Shapes"),
     ROTATE("Rotate"),
-    DRAW("Draw"),
     CORNER_PIN("Corner Pin"),
     THREE_D("3D")
 }
 
 enum class EyedropperTarget {
     NONE,
-    BACKGROUND,
     SELECTED_LAYER
 }
 
@@ -192,29 +180,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _exportFeedback = MutableStateFlow<ExportFeedbackState>(ExportFeedbackState.Idle)
     val exportFeedback: StateFlow<ExportFeedbackState> = _exportFeedback.asStateFlow()
 
-    private val _blurredBgPreview = MutableStateFlow<Bitmap?>(null)
-    val blurredBgPreview: StateFlow<Bitmap?> = _blurredBgPreview.asStateFlow()
-
     private val _imageBitmaps = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
     val imageBitmaps: StateFlow<Map<String, Bitmap>> = _imageBitmaps.asStateFlow()
 
     private val _diagnostics = MutableStateFlow(FontDiagnosticsSnapshot())
     val diagnostics: StateFlow<FontDiagnosticsSnapshot> = _diagnostics.asStateFlow()
-
-    private val _drawColorArgb = MutableStateFlow(0xFFFF4D4FL)
-    val drawColorArgb: StateFlow<Long> = _drawColorArgb.asStateFlow()
-
-    private val _drawBrushSizeNorm = MutableStateFlow(0.014f)
-    val drawBrushSizeNorm: StateFlow<Float> = _drawBrushSizeNorm.asStateFlow()
-
-    private val _drawStrokeStyle = MutableStateFlow(VectorStrokeStyle())
-    val drawStrokeStyle: StateFlow<VectorStrokeStyle> = _drawStrokeStyle.asStateFlow()
-
-    private val _showStrokeControls = MutableStateFlow(false)
-    val showStrokeControls: StateFlow<Boolean> = _showStrokeControls.asStateFlow()
-
-    private val _shapeEditPointsMode = MutableStateFlow(false)
-    val shapeEditPointsMode: StateFlow<Boolean> = _shapeEditPointsMode.asStateFlow()
 
     private val _transformLocks = MutableStateFlow(TransformLockState())
     val transformLocks: StateFlow<TransformLockState> = _transformLocks.asStateFlow()
@@ -272,11 +242,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 positionLocked = true
             )
         }
-        if (nextTab != ToolDrawerTab.DRAW) {
-            _showStrokeControls.value = false
-        } else {
-            syncStrokeStyleFromSelection()
-        }
         _activeToolDrawer.value = nextTab
     }
 
@@ -285,7 +250,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
         }
-        _showStrokeControls.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         val selected = findLayerRecursive(_document.value.layers, _document.value.selectedLayerId)
         if (selected !is TextLayer) {
@@ -319,8 +283,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         ) {
             addTextLayer(_draftText.value)
         }
-        _showStrokeControls.value = false
-        _shapeEditPointsMode.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
         _showLayersDrawer.value = false
         _showProjectsDrawer.value = false
@@ -403,7 +365,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canvasPan.value = 0f to 0f
     }
 
-    fun setEyedropperActive(active: Boolean, target: EyedropperTarget = EyedropperTarget.BACKGROUND) {
+    fun setEyedropperActive(active: Boolean, target: EyedropperTarget = EyedropperTarget.SELECTED_LAYER) {
         _eyedropperTarget.value = if (active) target else EyedropperTarget.NONE
     }
 
@@ -414,11 +376,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun applyEyedropperColor(argbInt: Int) {
         val opaqueLong = (argbInt.toLong() and 0xFFFFFFFFL) or 0xFF000000L
         when (_eyedropperTarget.value) {
-            EyedropperTarget.BACKGROUND -> {
-                updateBackground { bg ->
-                    bg.copy(activeTab = BackgroundTab.COLORS, colorArgb = opaqueLong)
-                }
-            }
             EyedropperTarget.SELECTED_LAYER -> {
                 applyColorToSelectedLayer(opaqueLong)
             }
@@ -453,10 +410,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _showLayersDrawer.value = false
         _showProjectsDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
-        _showStrokeControls.value = false
-        _shapeEditPointsMode.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
-        _blurredBgPreview.value = null
         _draftText.value = ""
         lastAppliedCaseMode = null
         val s = settings.value
@@ -464,7 +418,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             id = UUID.randomUUID().toString(),
             title = "Project ${projectHistory.value.size + 1}",
             canvas = CanvasDimensions.SQUARE_1_1,
-            background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT),
+            background = BackgroundConfig(),
             layers = emptyList(),
             selectedLayerId = null,
             selectionOrder = emptyList(),
@@ -489,8 +443,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _showLayersDrawer.value = false
         _showProjectsDrawer.value = false
         _activeToolDrawer.value = ToolDrawerTab.NONE
-        _showStrokeControls.value = false
-        _shapeEditPointsMode.value = false
         _eyedropperTarget.value = EyedropperTarget.NONE
         _draftText.value = ""
         lastAppliedCaseMode = null
@@ -565,24 +517,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private fun preloadProjectAssets(doc: ProjectDocument) {
         viewModelScope.launch {
             val map = _imageBitmaps.value.toMutableMap()
-            collectImageLayers(doc.layers).forEach { layer ->
-                if (!map.containsKey(layer.uriString)) {
-                    mediaManager.decodeRgba8888Bitmap(layer.uriString, maxDimension = null)?.let {
-                        map[layer.uriString] = it
-                    }
-                }
-            }
-            doc.background.backgroundImageUri?.let { bgUri ->
-                if (!map.containsKey(bgUri)) {
-                    mediaManager.decodeRgba8888Bitmap(bgUri, maxDimension = null)?.let {
-                        map[bgUri] = it
+            collectAllBitmapUris(doc.layers).forEach { uri ->
+                if (!map.containsKey(uri)) {
+                    mediaManager.decodeRgba8888Bitmap(uri, maxDimension = null)?.let {
+                        map[uri] = it
                     }
                 }
             }
             _imageBitmaps.value = map
-            if (doc.background.activeTab == BackgroundTab.BLUR) {
-                regenerateBlurPreview(doc)
-            }
         }
     }
 
@@ -594,6 +536,15 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 is GroupLayer -> out.addAll(collectImageLayers(layer.children))
                 else -> Unit
             }
+        }
+        return out
+    }
+
+    private fun collectAllBitmapUris(layers: List<EditorLayer>): List<String> {
+        val out = mutableListOf<String>()
+        for (layer in layers) {
+            if (layer is ImageLayer) out.add(layer.uriString)
+            if (layer is GroupLayer) out.addAll(collectAllBitmapUris(layer.children))
         }
         return out
     }
@@ -641,9 +592,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
         _document.value = prev
-        if (prev.background.activeTab == BackgroundTab.BLUR) {
-            viewModelScope.launch { regenerateBlurPreview(prev) }
-        }
     }
 
     fun redo() {
@@ -655,9 +603,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
         _document.value = next
-        if (next.background.activeTab == BackgroundTab.BLUR) {
-            viewModelScope.launch { regenerateBlurPreview(next) }
-        }
     }
 
     private fun canAddLayer(extraCount: Int = 1): Boolean {
@@ -674,10 +619,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
                 restoreLocksAfterCornerPin()
                 _activeToolDrawer.value = ToolDrawerTab.NONE
-            } else if (_activeToolDrawer.value == ToolDrawerTab.THREE_D) {
+            } else if (_activeToolDrawer.value == ToolDrawerTab.THREE_D ||
+                _activeToolDrawer.value == ToolDrawerTab.CROP
+            ) {
                 _activeToolDrawer.value = ToolDrawerTab.NONE
             }
-            _shapeEditPointsMode.value = false
             _isMultiSelectMode.value = false
             _document.value = _document.value.copy(
                 selectedLayerId = null,
@@ -697,14 +643,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         if (layer is TextLayer) {
             fontRepository.selectFont(layer.fontId)
             _draftTextStyle.value = layer
-            _shapeEditPointsMode.value = false
-        } else if (layer is ShapeLayer) {
-            // Keep shape edit mode responsive on Shape layers
-        } else if (layer is DrawLayer) {
-            _shapeEditPointsMode.value = false
-            syncStrokeStyleFromSelection()
-        } else {
-            _shapeEditPointsMode.value = false
         }
     }
 
@@ -719,26 +657,15 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     currentTab != ToolDrawerTab.FONT &&
                     currentTab != ToolDrawerTab.ROTATE &&
                     currentTab != ToolDrawerTab.CORNER_PIN &&
-                    currentTab != ToolDrawerTab.THREE_D
+                    currentTab != ToolDrawerTab.THREE_D &&
+                    currentTab != ToolDrawerTab.CROP
                 ) {
                     _activeToolDrawer.value = ToolDrawerTab.TEXT
                 }
             }
             is ImageLayer -> {
                 if (currentTab == ToolDrawerTab.TEXT ||
-                    currentTab == ToolDrawerTab.FONT ||
-                    currentTab == ToolDrawerTab.SHAPES ||
-                    currentTab == ToolDrawerTab.DRAW
-                ) {
-                    _activeToolDrawer.value = ToolDrawerTab.NONE
-                }
-            }
-            is ShapeLayer -> {
-                if (currentTab == ToolDrawerTab.TEXT ||
-                    currentTab == ToolDrawerTab.FONT ||
-                    currentTab == ToolDrawerTab.CROP ||
-                    currentTab == ToolDrawerTab.ADJUST ||
-                    currentTab == ToolDrawerTab.DRAW
+                    currentTab == ToolDrawerTab.FONT
                 ) {
                     _activeToolDrawer.value = ToolDrawerTab.NONE
                 }
@@ -858,9 +785,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 selectionOrder = listOf(layer.id)
             )
         }
-        if (_document.value.background.activeTab == BackgroundTab.BLUR) {
-            viewModelScope.launch { regenerateBlurPreview(_document.value) }
-        }
     }
 
     fun addImagesFromPicker(uris: List<Uri>) {
@@ -907,9 +831,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         selectedLayerId = addedLastId,
                         selectionOrder = listOf(addedLastId)
                     )
-                }
-                if (_document.value.background.activeTab == BackgroundTab.BLUR) {
-                    regenerateBlurPreview(_document.value)
                 }
             }
         }
@@ -1020,53 +941,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         return newLayer.id
     }
 
-    fun addShapeLayer(shapeType: LayerShapeType) {
-        if (!canAddLayer()) return
-        val newLayer = ShapeLayer(
-            name = shapeType.label,
-            shapeType = shapeType,
-            fillColorArgb = 0xFFFFFFFFL,
-            strokeColorArgb = 0xFF2D8CFFL,
-            strokeWidth = 0f,
-            vectorParams = VectorShapeEngine.defaultParamsFor(shapeType)
-        )
-        _shapeEditPointsMode.value = true
-        commitChange { current ->
-            current.copy(
-                layers = current.layers + newLayer,
-                selectedLayerId = newLayer.id,
-                selectionOrder = listOf(newLayer.id)
-            )
-        }
-    }
-
-    fun setShapeEditPointsMode(enabled: Boolean) {
-        _shapeEditPointsMode.value = enabled
-    }
-
-    fun toggleShapeEditPointsMode() {
-        _shapeEditPointsMode.value = !_shapeEditPointsMode.value
-    }
-
-    fun applyShapeVectorHandleDragTransient(
-        layerId: String,
-        handleId: String,
-        dxPx: Float,
-        dyPx: Float,
-        baseSizePx: Float
-    ) {
-        val existing = findLayerRecursive(_document.value.layers, layerId) as? ShapeLayer ?: return
-        if (existing.locked) return
-        beginTransformTransaction()
-        _document.value = _document.value.copy(
-            layers = mapLayerRecursive(_document.value.layers, layerId) { layer ->
-                if (layer is ShapeLayer && !layer.locked) {
-                    VectorShapeEngine.applyHandleDrag(layer, handleId, dxPx, dyPx, baseSizePx)
-                } else layer
-            }
-        )
-    }
-
     fun updateSelectedTextLayer(transform: (TextLayer) -> TextLayer) {
         val selId = _document.value.selectedLayerId
         val existing = findLayerRecursive(_document.value.layers, selId)
@@ -1153,27 +1027,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         return nextMode
     }
 
-    fun updateSelectedShapeLayerTransient(transform: (ShapeLayer) -> ShapeLayer) {
-        val selId = _document.value.selectedLayerId ?: return
-        beginTransformTransaction()
-        _document.value = _document.value.copy(
-            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
-                if (layer is ShapeLayer) transform(layer) else layer
-            }
-        )
-    }
-
-    fun updateSelectedShapeLayer(transform: (ShapeLayer) -> ShapeLayer) {
-        val selId = _document.value.selectedLayerId ?: return
-        commitChange { doc ->
-            doc.copy(
-                layers = mapLayerRecursive(doc.layers, selId) { layer ->
-                    if (layer is ShapeLayer) transform(layer) else layer
-                }
-            )
-        }
-    }
-
     fun ensureImageLayerSelectedForAdjust(): ImageLayer? {
         val doc = _document.value
         val current = findLayerRecursive(doc.layers, doc.selectedLayerId) as? ImageLayer
@@ -1213,26 +1066,65 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun updateSelectedImageCropTransient(transform: (ImageCropRect) -> ImageCropRect) {
-        val target = ensureImageLayerSelectedForAdjust() ?: return
+    fun updateSelectedLayerCropTransient(transform: (ImageCropRect) -> ImageCropRect) {
+        val selId = _document.value.selectedLayerId ?: return
+        val target = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (target.locked) return
         beginTransformTransaction()
         _document.value = _document.value.copy(
-            layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
-                if (layer is ImageLayer) {
-                    layer.copy(crop = transform(layer.crop).normalized())
+            layers = mapLayerRecursive(_document.value.layers, selId) { layer ->
+                if (!layer.locked) {
+                    layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
                 } else layer
             }
         )
     }
 
+    fun updateSelectedLayerCrop(transform: (ImageCropRect) -> ImageCropRect) {
+        val selId = _document.value.selectedLayerId ?: return
+        val target = findLayerRecursive(_document.value.layers, selId) ?: return
+        if (target.locked) return
+        commitChange { doc ->
+            doc.copy(
+                layers = mapLayerRecursive(doc.layers, selId) { layer ->
+                    if (!layer.locked) {
+                        layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
+                    } else layer
+                }
+            )
+        }
+    }
+
+    fun resetSelectedLayerCrop() {
+        updateSelectedLayerCrop { ImageCropRect() }
+    }
+
+    fun updateSelectedImageCropTransient(transform: (ImageCropRect) -> ImageCropRect) {
+        val selected = findLayerRecursive(_document.value.layers, _document.value.selectedLayerId)
+        if (selected != null) {
+            updateSelectedLayerCropTransient(transform)
+            return
+        }
+        val target = ensureImageLayerSelectedForAdjust() ?: return
+        beginTransformTransaction()
+        _document.value = _document.value.copy(
+            layers = mapLayerRecursive(_document.value.layers, target.id) { layer ->
+                layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
+            }
+        )
+    }
+
     fun updateSelectedImageCrop(transform: (ImageCropRect) -> ImageCropRect) {
+        val selected = findLayerRecursive(_document.value.layers, _document.value.selectedLayerId)
+        if (selected != null) {
+            updateSelectedLayerCrop(transform)
+            return
+        }
         val target = ensureImageLayerSelectedForAdjust() ?: return
         commitChange { doc ->
             doc.copy(
                 layers = mapLayerRecursive(doc.layers, target.id) { layer ->
-                    if (layer is ImageLayer) {
-                        layer.copy(crop = transform(layer.crop).normalized())
-                    } else layer
+                    layer.withUniversalCrop(crop = transform(layer.crop).normalized(), cropShape = layer.cropShape)
                 }
             )
         }
@@ -1240,198 +1132,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun resetSelectedImageCrop() {
         updateSelectedImageCrop { ImageCropRect() }
-    }
-
-    fun setShowStrokeControls(open: Boolean) {
-        if (open) {
-            syncStrokeStyleFromSelection()
-        }
-        _showStrokeControls.value = open
-    }
-
-    fun toggleStrokeControls() {
-        setShowStrokeControls(!_showStrokeControls.value)
-    }
-
-    fun startNewDrawLayerSession() {
-        _document.value = _document.value.copy(
-            selectedLayerId = null,
-            selectionOrder = emptyList()
-        )
-    }
-
-    private fun syncStrokeStyleFromSelection() {
-        val doc = _document.value
-        val selectedDraw = findLayerRecursive(doc.layers, doc.selectedLayerId) as? DrawLayer ?: return
-        val latestStroke = selectedDraw.strokes.lastOrNull() ?: return
-        _drawStrokeStyle.value = latestStroke.style.copy(
-            overallWidthNorm = latestStroke.effectiveOverallWidthNorm
-        )
-        _drawBrushSizeNorm.value = latestStroke.effectiveOverallWidthNorm.coerceIn(0.003f, 0.08f)
-        _drawColorArgb.value = latestStroke.colorArgb
-    }
-
-    fun selectedDrawLayerIds(): List<String> {
-        val doc = _document.value
-        return doc.effectiveSelectionOrder.filter { id ->
-            findLayerRecursive(doc.layers, id) is DrawLayer
-        }
-    }
-
-    fun setDrawColor(colorArgb: Long) {
-        _drawColorArgb.value = colorArgb
-    }
-
-    fun setDrawBrushSizeNorm(sizeNorm: Float) {
-        val clamped = sizeNorm.coerceIn(0.003f, 0.08f)
-        _drawBrushSizeNorm.value = clamped
-        _drawStrokeStyle.value = _drawStrokeStyle.value.copy(overallWidthNorm = clamped)
-        if (_showStrokeControls.value) {
-            val drawIds = selectedDrawLayerIds()
-            if (drawIds.isNotEmpty()) {
-                updateStrokeStyleTransient { it.copy(overallWidthNorm = clamped) }
-            }
-        }
-    }
-
-    fun updateStrokeStyleTransient(transform: (VectorStrokeStyle) -> VectorStrokeStyle) {
-        val nextStyle = transform(_drawStrokeStyle.value)
-        _drawStrokeStyle.value = nextStyle
-        _drawBrushSizeNorm.value = nextStyle.overallWidthNorm.coerceIn(0.003f, 0.08f)
-
-        val drawIds = selectedDrawLayerIds().toSet()
-        if (drawIds.isEmpty()) return
-
-        beginTransformTransaction()
-        var updatedLayers = _document.value.layers
-        for (id in drawIds) {
-            updatedLayers = mapLayerRecursive(updatedLayers, id) { layer ->
-                if (layer is DrawLayer && !layer.locked) {
-                    applyStyleToDrawLayer(layer, transform)
-                } else layer
-            }
-        }
-        _document.value = _document.value.copy(layers = updatedLayers)
-    }
-
-    fun updateStrokeStyle(transform: (VectorStrokeStyle) -> VectorStrokeStyle) {
-        val nextStyle = transform(_drawStrokeStyle.value)
-        _drawStrokeStyle.value = nextStyle
-        _drawBrushSizeNorm.value = nextStyle.overallWidthNorm.coerceIn(0.003f, 0.08f)
-
-        val drawIds = selectedDrawLayerIds().toSet()
-        if (drawIds.isEmpty()) return
-
-        commitChange { doc ->
-            var updatedLayers = doc.layers
-            for (id in drawIds) {
-                updatedLayers = mapLayerRecursive(updatedLayers, id) { layer ->
-                    if (layer is DrawLayer && !layer.locked) {
-                        applyStyleToDrawLayer(layer, transform)
-                    } else layer
-                }
-            }
-            doc.copy(layers = updatedLayers)
-        }
-    }
-
-    private fun applyStyleToDrawLayer(
-        layer: DrawLayer,
-        transform: (VectorStrokeStyle) -> VectorStrokeStyle
-    ): DrawLayer {
-        return layer.copy(
-            strokes = layer.strokes.map { stroke ->
-                val baseStyle = stroke.style.copy(overallWidthNorm = stroke.effectiveOverallWidthNorm)
-                val updatedStyle = transform(baseStyle)
-                val rawPts = stroke.resolvedRawPoints
-                val smoothed = if (kotlin.math.abs(updatedStyle.smoothing - stroke.style.smoothing) > 0.001f || stroke.rawPoints.isEmpty()) {
-                    VectorStrokeEngine.smoothPoints(rawPts, updatedStyle.smoothing)
-                } else {
-                    stroke.points
-                }
-                stroke.copy(
-                    strokeWidthNorm = updatedStyle.overallWidthNorm,
-                    points = smoothed,
-                    rawPoints = rawPts,
-                    style = updatedStyle
-                )
-            }
-        )
-    }
-
-    fun addDrawStroke(stroke: DrawStroke) {
-        val rawPts = stroke.resolvedRawPoints
-        if (rawPts.isEmpty()) return
-        val activeStyle = _drawStrokeStyle.value.copy(
-            overallWidthNorm = _drawBrushSizeNorm.value
-        )
-        val smoothedPts = VectorStrokeEngine.smoothPoints(rawPts, activeStyle.smoothing)
-        val preparedStroke = stroke.copy(
-            colorArgb = stroke.colorArgb,
-            strokeWidthNorm = activeStyle.overallWidthNorm,
-            points = smoothedPts,
-            rawPoints = rawPts,
-            style = activeStyle
-        )
-
-        val doc = _document.value
-        val selectedDraw = findLayerRecursive(doc.layers, doc.selectedLayerId) as? DrawLayer
-        val existingDraw = selectedDraw ?: doc.layers.filterIsInstance<DrawLayer>().lastOrNull()
-        val isIdentityDraw = existingDraw != null &&
-            doc.selectedLayerId == existingDraw.id &&
-            existingDraw.offsetXNorm == 0f &&
-            existingDraw.offsetYNorm == 0f &&
-            existingDraw.scale == 1f &&
-            existingDraw.stretchX == 1f &&
-            existingDraw.stretchY == 1f &&
-            existingDraw.rotationDeg == 0f
-        if (isIdentityDraw && existingDraw != null) {
-            commitChange { d ->
-                d.copy(
-                    layers = mapLayerRecursive(d.layers, existingDraw.id) { l ->
-                        if (l is DrawLayer) l.copy(strokes = l.strokes + preparedStroke) else l
-                    },
-                    selectedLayerId = existingDraw.id,
-                    selectionOrder = listOf(existingDraw.id)
-                )
-            }
-        } else {
-            if (!canAddLayer()) return
-            val drawCount = doc.layers.count { it is DrawLayer } + 1
-            val created = DrawLayer(
-                name = if (drawCount == 1) "Draw" else "Draw $drawCount",
-                strokes = listOf(preparedStroke)
-            )
-            commitChange { d ->
-                d.copy(
-                    layers = d.layers + created,
-                    selectedLayerId = created.id,
-                    selectionOrder = listOf(created.id)
-                )
-            }
-        }
-    }
-
-    fun undoLastDrawStroke() {
-        val doc = _document.value
-        val target = (findLayerRecursive(doc.layers, doc.selectedLayerId) as? DrawLayer)
-            ?: doc.layers.filterIsInstance<DrawLayer>().lastOrNull()
-            ?: return
-        if (target.strokes.isEmpty()) return
-        commitChange { d ->
-            val updated = mapLayerRecursive(d.layers, target.id) { l ->
-                if (l is DrawLayer) l.copy(strokes = l.strokes.dropLast(1)) else l
-            }
-            d.copy(layers = updated)
-        }
-    }
-
-    fun clearActiveDrawLayer() {
-        val doc = _document.value
-        val target = (findLayerRecursive(doc.layers, doc.selectedLayerId) as? DrawLayer)
-            ?: doc.layers.filterIsInstance<DrawLayer>().lastOrNull()
-            ?: return
-        deleteLayer(target.id)
     }
 
     fun setSelectedImageOpacity(opacity: Float) {
@@ -1469,11 +1169,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             when (layer) {
                 is TextLayer -> layer.copy(colorArgb = colorArgb ?: 0xFFFFFFFFL)
                 is ImageLayer -> layer.copy(tintColorArgb = colorArgb)
-                is ShapeLayer -> layer.copy(fillColorArgb = colorArgb ?: 0xFFFFFFFFL)
-                is DrawLayer -> {
-                    val col = colorArgb ?: 0xFFFF4D4FL
-                    layer.copy(strokes = layer.strokes.map { it.copy(colorArgb = col) })
-                }
                 is GroupLayer -> layer
             }
         }
@@ -1917,16 +1612,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 offsetXNorm = target.offsetXNorm + shiftOffset,
                 offsetYNorm = target.offsetYNorm + shiftOffset
             )
-            is ShapeLayer -> target.copy(
-                id = copyId,
-                offsetXNorm = target.offsetXNorm + shiftOffset,
-                offsetYNorm = target.offsetYNorm + shiftOffset
-            )
-            is DrawLayer -> target.copy(
-                id = copyId,
-                offsetXNorm = target.offsetXNorm + shiftOffset,
-                offsetYNorm = target.offsetYNorm + shiftOffset
-            )
             is GroupLayer -> target.copy(
                 id = copyId,
                 children = target.children.map { cloneLayerWithNewIds(it, shiftOffset = 0f) },
@@ -1978,42 +1663,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         commitChange { doc ->
             doc.copy(background = transform(doc.background))
         }
-        val current = _document.value
-        if (current.background.activeTab == BackgroundTab.BLUR) {
-            viewModelScope.launch { regenerateBlurPreview(current) }
-        }
-    }
-
-    fun pickBackgroundImage(uri: Uri) {
-        viewModelScope.launch {
-            val doc = _document.value
-            val meta = mediaManager.importImage(
-                sourceUri = uri,
-                projectId = doc.id,
-                keepLocalCopy = settings.value.keepLocalMediaCopy
-            )
-            val bmp = mediaManager.decodeRgba8888Bitmap(meta.uriString, maxDimension = 1400)
-            if (bmp != null) {
-                _imageBitmaps.value = _imageBitmaps.value + (meta.uriString to bmp)
-            }
-            updateBackground { bg ->
-                bg.copy(
-                    activeTab = BackgroundTab.IMAGE,
-                    backgroundImageUri = meta.uriString
-                )
-            }
-        }
-    }
-
-    private suspend fun regenerateBlurPreview(doc: ProjectDocument) {
-        val targetUri = doc.background.backgroundImageUri
-            ?: collectImageLayers(doc.layers).firstOrNull()?.uriString
-            ?: return
-        val src = _imageBitmaps.value[targetUri]
-            ?: mediaManager.decodeRgba8888Bitmap(targetUri, maxDimension = 900)
-            ?: return
-        val blurred = mediaManager.createBlurredBitmap(src, doc.background.blurStrength)
-        _blurredBgPreview.value = blurred
     }
 
     fun saveProjectToHistory(silent: Boolean = false) {

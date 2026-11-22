@@ -31,16 +31,11 @@ import com.example.fonts.FontRenderEngine
 import com.example.fonts.FontRepository
 import com.example.fonts.FontSource
 import com.example.model.CanvasDimensions
-import com.example.model.DrawPoint
-import com.example.model.DrawStroke
 import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
-import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
-import com.example.model.ShapeLayer
 import com.example.model.TextLayer
-import com.example.model.VectorStrokePattern
 import com.example.ui.PendingImportPhoto
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
@@ -178,18 +173,17 @@ class ComposeRegressionTest {
                     viewModel = vm,
                     onNavigateBack = {},
                     onPickPhotosDirect = { directPhotoPickCount++ },
-                    onPickBackgroundImageDirect = {},
                     onOpenFontLibrary = {}
                 )
             }
         }
 
         composeRule.waitForIdle()
-        // Unselected main screen: Rotate is hidden; Photo opens gallery directly
+        // Unselected main screen: Rotate, Shapes, Draw are absent; Photo opens gallery directly
         composeRule.onNodeWithTag("bottom_tool_photo").assertIsDisplayed()
         composeRule.onNodeWithTag("bottom_tool_text_plus").assertIsDisplayed()
-        composeRule.onNodeWithTag("bottom_tool_shapes").assertIsDisplayed()
-        composeRule.onNodeWithTag("bottom_tool_draw").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom_tool_shapes").assertDoesNotExist()
+        composeRule.onNodeWithTag("bottom_tool_draw").assertDoesNotExist()
         composeRule.onNodeWithTag("bottom_tool_rotate").assertDoesNotExist()
 
         composeRule.onNodeWithTag("bottom_tool_photo").performClick()
@@ -293,8 +287,7 @@ class ComposeRegressionTest {
         val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
         vm.createNewProject()
         val textId = vm.addTextLayer("Hello 3D")!!
-        vm.addShapeLayer(LayerShapeType.STAR)
-        val shapeId = vm.document.value.selectedLayerId!!
+        val secondTextId = vm.addTextLayer("Second 3D")!!
         vm.selectLayer(textId)
 
         composeRule.setContent {
@@ -303,7 +296,6 @@ class ComposeRegressionTest {
                     viewModel = vm,
                     onNavigateBack = {},
                     onPickPhotosDirect = {},
-                    onPickBackgroundImageDirect = {},
                     onOpenFontLibrary = {}
                 )
             }
@@ -354,8 +346,8 @@ class ComposeRegressionTest {
         composeRule.onNodeWithTag("three_d_skew_ruler_x").assertIsDisplayed()
         composeRule.onNodeWithTag("three_d_skew_ruler_y").assertIsDisplayed()
 
-        // Select ShapeLayer -> Corner Pin & 3D now also work for Shapes!
-        composeRule.runOnUiThread { vm.selectLayer(shapeId) }
+        // Select second layer -> Corner Pin & 3D stay active
+        composeRule.runOnUiThread { vm.selectLayer(secondTextId) }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("three_d_floating_panel").assertIsDisplayed()
 
@@ -375,7 +367,7 @@ class ComposeRegressionTest {
     }
 
     @Test
-    fun shapesTabDisplaysAlightWhiteShapeGridTogglesEditPointsAndOpensVectorControls() {
+    fun backgroundSheetShowsTransparentOnlyWithoutColorBlurPickImageOrBlend() {
         val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
         vm.createNewProject()
 
@@ -385,133 +377,30 @@ class ComposeRegressionTest {
                     viewModel = vm,
                     onNavigateBack = {},
                     onPickPhotosDirect = {},
-                    onPickBackgroundImageDirect = {},
                     onOpenFontLibrary = {}
                 )
             }
         }
 
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("bottom_tool_shapes").performClick()
+        composeRule.onNodeWithTag("three_dot_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("2. Background").performClick()
         composeRule.waitForIdle()
 
-        // Shape picker grid shows white silhouette tiles
-        composeRule.onNodeWithTag("shape_picker_grid").assertIsDisplayed()
-        composeRule.onNodeWithTag("shape_pick_circle").assertIsDisplayed()
-        composeRule.onNodeWithTag("shape_pick_triangle").assertIsDisplayed()
-        composeRule.onNodeWithTag("shape_pick_star").assertIsDisplayed()
-
-        // Tapping Triangle adds a white Triangle shape and switches bottom bar + Edit Points ON
-        composeRule.onNodeWithTag("shape_pick_triangle").performClick()
-        composeRule.waitForIdle()
-        val added = StudioViewModel.findLayerRecursive(vm.document.value.layers, vm.document.value.selectedLayerId) as ShapeLayer
-        assertEquals(LayerShapeType.TRIANGLE, added.shapeType)
-        assertEquals(0xFFFFFFFFL, added.fillColorArgb)
-        assertTrue(vm.shapeEditPointsMode.value)
-        composeRule.onNodeWithTag("shape_edit_points_toggle").assertIsDisplayed()
-        composeRule.onNodeWithTag("bottom_tool_shape_points").assertIsDisplayed()
-
-        // Toggle between Edit Points and Bounds mode
-        composeRule.onNodeWithTag("shape_edit_points_toggle").performClick()
-        composeRule.waitForIdle()
-        assertFalse(vm.shapeEditPointsMode.value)
-    }
-
-    @Test
-    fun drawStrokeControlsPanelSupportsAllNineSectionsContextSyncAndWidthPoints() {
-        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
-        vm.createNewProject()
-
-        composeRule.setContent {
-            PixelForgeTheme {
-                EditorScreen(
-                    viewModel = vm,
-                    onNavigateBack = {},
-                    onPickPhotosDirect = {},
-                    onPickBackgroundImageDirect = {},
-                    onOpenFontLibrary = {}
-                )
-            }
-        }
-
-        composeRule.waitForIdle()
-        // Open Draw tool panel -> Size dots + Stroke controls toggle visible
-        composeRule.onNodeWithTag("bottom_tool_draw").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("draw_size_dot_0").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("draw_stroke_controls_button").performScrollTo().performClick()
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag("stroke_controls_panel").assertIsDisplayed()
-        composeRule.onNodeWithText("New Stroke Defaults").assertIsDisplayed()
-
-        // All 9 collapsible section headers exist
-        listOf(
-            "stroke_section_thickness",
-            "stroke_section_taper",
-            "stroke_section_cap_and_join",
-            "stroke_section_stroke_style",
-            "stroke_section_opacity",
-            "stroke_section_smoothing",
-            "stroke_section_width_profile",
-            "stroke_section_pressure",
-            "stroke_section_advanced"
-        ).forEach { tag ->
-            composeRule.onNodeWithTag(tag).assertExists()
-        }
-
-        // Toggle linked/unlinked in Thickness (initially expanded)
-        composeRule.onNodeWithTag("stroke_link_widths_toggle").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        assertFalse(vm.drawStrokeStyle.value.widthsLinked)
-
-        // Expand Stroke Style and choose Dashed
-        composeRule.onNodeWithTag("stroke_section_stroke_style").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("stroke_pattern_dashed").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        assertEquals(VectorStrokePattern.DASHED, vm.drawStrokeStyle.value.pattern)
-
-        // Draw a stroke -> badge automatically switches to Editing Selected Layer and adds non-destructively
-        composeRule.runOnUiThread {
-            vm.addDrawStroke(
-                DrawStroke(
-                    colorArgb = 0xFFFF4D4FL,
-                    strokeWidthNorm = 0.02f,
-                    rawPoints = listOf(DrawPoint(0.2f, 0.2f), DrawPoint(0.8f, 0.8f)),
-                    points = listOf(DrawPoint(0.2f, 0.2f), DrawPoint(0.8f, 0.8f)),
-                    style = vm.drawStrokeStyle.value
-                )
-            )
-        }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Editing Selected Layer").performScrollTo().assertIsDisplayed()
-
-        // Expand Width Profile section & add/remove an individual width point
-        composeRule.onNodeWithTag("stroke_section_width_profile").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("add_width_point_button").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        assertEquals(1, vm.drawStrokeStyle.value.widthPoints.size)
-
-        composeRule.onNodeWithTag("remove_width_point_0").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        assertEquals(0, vm.drawStrokeStyle.value.widthPoints.size)
+        composeRule.onNodeWithTag("bg_tab_transparent").assertIsDisplayed()
+        composeRule.onNodeWithTag("bg_grid_opacity_slider").assertIsDisplayed()
+        composeRule.onNodeWithText("Grid Opacity").assertIsDisplayed()
+        composeRule.onNodeWithTag("bg_tab_colors").assertDoesNotExist()
+        composeRule.onNodeWithTag("bg_tab_blur").assertDoesNotExist()
+        composeRule.onNodeWithTag("bg_tab_image").assertDoesNotExist()
+        composeRule.onNodeWithText("Blend Mode").assertDoesNotExist()
+        composeRule.onNodeWithText("Pick Image").assertDoesNotExist()
     }
 
     @Test
     fun homeScreenShowsOldestFirstSaveButtonHoldMultiSelectAndBatchDelete() {
         val sampleProjects = listOf(
-            ProjectEntity(
-                id = "p_old",
-                title = "Oldest Poster",
-                thumbnailPath = null,
-                projectJson = "{}",
-                aspectLabel = "1:1",
-                layerCount = 2,
-                createdAtMillis = 1000L,
-                updatedAtMillis = 1000L
-            ),
             ProjectEntity(
                 id = "p_new",
                 title = "Newest Banner",
@@ -521,6 +410,16 @@ class ComposeRegressionTest {
                 layerCount = 4,
                 createdAtMillis = 2000L,
                 updatedAtMillis = 2000L
+            ),
+            ProjectEntity(
+                id = "p_old",
+                title = "Oldest Poster",
+                thumbnailPath = null,
+                projectJson = "{}",
+                aspectLabel = "1:1",
+                layerCount = 2,
+                createdAtMillis = 1000L,
+                updatedAtMillis = 1000L
             )
         )
         var savedId: String? = null
@@ -580,7 +479,6 @@ class ComposeRegressionTest {
                     viewModel = vm,
                     onNavigateBack = {},
                     onPickPhotosDirect = {},
-                    onPickBackgroundImageDirect = {},
                     onOpenFontLibrary = {}
                 )
             }
@@ -673,7 +571,6 @@ class ComposeRegressionTest {
                     viewModel = vm,
                     onNavigateBack = {},
                     onPickPhotosDirect = {},
-                    onPickBackgroundImageDirect = {},
                     onOpenFontLibrary = {}
                 )
             }
@@ -708,6 +605,8 @@ class ComposeRegressionTest {
         val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
         vm.createNewProject()
         vm.selectCanvasPreset(CanvasDimensions.PORTRAIT_9_16)
+        vm.addTextLayer("Pager Test")
+        vm.openToolDrawer(ToolDrawerTab.TEXT)
 
         composeRule.setContent {
             PixelForgeTheme {
@@ -716,7 +615,6 @@ class ComposeRegressionTest {
                         viewModel = vm,
                         onNavigateBack = {},
                         onPickPhotosDirect = {},
-                        onPickBackgroundImageDirect = {},
                         onOpenFontLibrary = {}
                     )
                 }
@@ -735,13 +633,10 @@ class ComposeRegressionTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun warpedShapeLayerShiftsSelectionHandlesWithCornerPinDeformation() {
+    fun warpedTextLayerShiftsSelectionHandlesWithCornerPinDeformation() {
         val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
         vm.createNewProject()
-        vm.addShapeLayer(LayerShapeType.CIRCLE)
-        // Switch from Edit Points mode to Bounds mode so SelectionDotHandlesOverlay is rendered
-        vm.toggleShapeEditPointsMode()
-        val shapeId = vm.document.value.selectedLayerId!!
+        val textId = vm.addTextLayer("Warp Me")!!
 
         composeRule.setContent {
             PixelForgeTheme {
@@ -749,7 +644,6 @@ class ComposeRegressionTest {
                     viewModel = vm,
                     onNavigateBack = {},
                     onPickPhotosDirect = {},
-                    onPickBackgroundImageDirect = {},
                     onOpenFontLibrary = {}
                 )
             }
@@ -760,8 +654,8 @@ class ComposeRegressionTest {
         val unwarpedZoomBounds = composeRule.onNodeWithTag("corner_zoom_icon_handle").getBoundsInRoot()
 
         composeRule.runOnUiThread {
-            vm.updateSelectedLayerCornerPinTransient(shapeId, cornerIndex = 0, deltaDxRatio = 0.30f, deltaDyRatio = 0.25f)
-            vm.updateSelectedLayerCornerPinTransient(shapeId, cornerIndex = 2, deltaDxRatio = -0.25f, deltaDyRatio = -0.20f)
+            vm.updateSelectedLayerCornerPinTransient(textId, cornerIndex = 0, deltaDxRatio = 0.30f, deltaDyRatio = 0.25f)
+            vm.updateSelectedLayerCornerPinTransient(textId, cornerIndex = 2, deltaDxRatio = -0.25f, deltaDyRatio = -0.20f)
         }
         composeRule.waitForIdle()
 

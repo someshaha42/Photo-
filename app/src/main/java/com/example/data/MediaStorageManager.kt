@@ -8,7 +8,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -21,10 +20,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import com.example.fonts.FontRenderEngine
-import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
-import com.example.model.DrawLayer
-import com.example.model.EditorBlendMode
 import com.example.model.EditorLayer
 import com.example.model.ExportImageFormat
 import com.example.model.ExportResolutionPreset
@@ -32,9 +28,7 @@ import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
-import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
-import com.example.model.ShapeLayer
 import com.example.model.TextLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -153,16 +147,6 @@ class MediaStorageManager(private val context: Context) {
         }.getOrNull()
     }
 
-    suspend fun createBlurredBitmap(source: Bitmap, blurFraction: Float): Bitmap =
-        withContext(Dispatchers.Default) {
-            val clamped = blurFraction.coerceIn(0f, 1f)
-            val radius = (clamped * 36f).roundToInt().coerceIn(0, 36)
-            val working = source.copy(Bitmap.Config.ARGB_8888, true)
-            if (radius <= 0) return@withContext working
-            stackBlurInPlace(working, radius)
-            working
-        }
-
     /**
      * Renders the complete project into an RGBA8888 Bitmap WITHOUT the checkerboard preview layer.
      */
@@ -175,60 +159,6 @@ class MediaStorageManager(private val context: Context) {
         val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-
-        val bg = document.background
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            xfermode = blendModeToPorterDuff(bg.blendMode)
-        }
-
-        when (bg.activeTab) {
-            BackgroundTab.TRANSPARENT -> Unit
-            BackgroundTab.COLORS -> {
-                val bgColorInt = bg.colorArgb.toInt()
-                val colorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = bgColorInt
-                    alpha = ((android.graphics.Color.alpha(bgColorInt) / 255f) * bg.colorOpacity * 255f)
-                        .roundToInt().coerceIn(0, 255)
-                    xfermode = blendModeToPorterDuff(bg.blendMode)
-                }
-                canvas.drawRect(0f, 0f, targetWidth.toFloat(), targetHeight.toFloat(), colorPaint)
-            }
-            BackgroundTab.BLUR -> {
-                val firstImageUri = bg.backgroundImageUri
-                    ?: findFirstImageUri(document.layers)
-                if (firstImageUri != null) {
-                    decodeRgba8888Bitmap(firstImageUri, maxDimension = 1280)?.let { src ->
-                        val blurred = createBlurredBitmap(src, bg.blurStrength)
-                        val coverMatrix = computeCoverMatrix(
-                            blurred.width,
-                            blurred.height,
-                            targetWidth.toFloat(),
-                            targetHeight.toFloat()
-                        )
-                        bgPaint.alpha = (bg.blurBackgroundOpacity * 255f).roundToInt().coerceIn(0, 255)
-                        canvas.drawBitmap(blurred, coverMatrix, bgPaint)
-                        if (blurred !== src) blurred.recycle()
-                        src.recycle()
-                    }
-                }
-            }
-            BackgroundTab.IMAGE -> {
-                val imgUri = bg.backgroundImageUri
-                if (imgUri != null) {
-                    decodeRgba8888Bitmap(imgUri, maxDimension = targetWidth.coerceAtLeast(targetHeight))?.let { src ->
-                        val coverMatrix = computeCoverMatrix(
-                            src.width,
-                            src.height,
-                            targetWidth.toFloat(),
-                            targetHeight.toFloat()
-                        )
-                        bgPaint.alpha = (bg.backgroundImageOpacity * 255f).roundToInt().coerceIn(0, 255)
-                        canvas.drawBitmap(src, coverMatrix, bgPaint)
-                        src.recycle()
-                    }
-                }
-            }
-        }
 
         for (layer in document.layers) {
             if (!layer.visible) continue
@@ -246,17 +176,6 @@ class MediaStorageManager(private val context: Context) {
         }
 
         output
-    }
-
-    private fun findFirstImageUri(layers: List<EditorLayer>): String? {
-        for (layer in layers) {
-            when (layer) {
-                is ImageLayer -> return layer.uriString
-                is GroupLayer -> findFirstImageUri(layer.children)?.let { return it }
-                else -> Unit
-            }
-        }
-        return null
     }
 
     private suspend fun renderLayerToCanvas(
@@ -452,44 +371,6 @@ class MediaStorageManager(private val context: Context) {
                     rawBmp.recycle()
                 }
             }
-            is ShapeLayer -> {
-                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
-                    drawShapeOnCanvas(canvas, layer.copy(opacity = effectiveOpacity), targetWidth, targetHeight)
-                } else {
-                    val baseSize = min(targetWidth, targetHeight) * 0.34f
-                    val strokeScale = min(targetWidth, targetHeight) / 360f
-                    val padRatio = 2.0f
-                    val maxPrep = 1440f
-                    val prepScale = min(1f, maxPrep / (baseSize * padRatio).coerceAtLeast(1f))
-                    val prepSize = (baseSize * padRatio * prepScale).roundToInt().coerceIn(48, 1600)
-                    val shapeBmp = Bitmap.createBitmap(prepSize, prepSize, Bitmap.Config.ARGB_8888)
-                    val sc = Canvas(shapeBmp)
-                    VectorShapeEngine.drawShapeOnCanvas(
-                        canvas = sc,
-                        layer = layer.copy(opacity = 1f),
-                        baseSizePx = baseSize * prepScale,
-                        cx = prepSize / 2f,
-                        cy = prepSize / 2f,
-                        strokeScaleFactor = strokeScale * prepScale
-                    )
-                    val matrix = LayerTransformMatrix.buildPaddedBitmapDrawMatrix(
-                        bitmapWidth = prepSize,
-                        bitmapHeight = prepSize,
-                        padRatioX = padRatio,
-                        padRatioY = padRatio,
-                        boxW = baseSize,
-                        boxH = baseSize,
-                        transform3D = layer.transform3D,
-                        cornerPin = layer.cornerPin
-                    )
-                    matrix.postTranslate(-baseSize / 2f, -baseSize / 2f)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
-                    }
-                    canvas.drawBitmap(shapeBmp, matrix, p)
-                    shapeBmp.recycle()
-                }
-            }
             is TextLayer -> {
                 val resolutionFactor = targetWidth / 360f
                 val effPx = layer.fontSizeSp * resolutionFactor
@@ -545,83 +426,8 @@ class MediaStorageManager(private val context: Context) {
                     textBmp.recycle()
                 }
             }
-            is DrawLayer -> {
-                if (layer.cornerPin.isIdentity() && layer.transform3D.isIdentity()) {
-                    drawVectorStrokesOnCanvas(
-                        canvas = canvas,
-                        layer = layer.copy(opacity = effectiveOpacity),
-                        targetWidth = targetWidth,
-                        targetHeight = targetHeight
-                    )
-                } else {
-                    val allPts = layer.strokes.flatMap { it.points }
-                    val minXNorm = (allPts.minOfOrNull { it.xNorm } ?: 0.25f).let { (it - 0.04f).coerceIn(0f, 0.92f) }
-                    val minYNorm = (allPts.minOfOrNull { it.yNorm } ?: 0.25f).let { (it - 0.04f).coerceIn(0f, 0.92f) }
-                    val maxXNorm = (allPts.maxOfOrNull { it.xNorm } ?: 0.75f).let { (it + 0.04f).coerceIn((minXNorm + 0.08f).coerceAtMost(1f), 1f) }
-                    val maxYNorm = (allPts.maxOfOrNull { it.yNorm } ?: 0.75f).let { (it + 0.04f).coerceIn((minYNorm + 0.08f).coerceAtMost(1f), 1f) }
-                    val wF = targetWidth.toFloat().coerceAtLeast(1f)
-                    val hF = targetHeight.toFloat().coerceAtLeast(1f)
-                    val boxOriginX = minXNorm * wF
-                    val boxOriginY = minYNorm * hF
-                    val boxW = ((maxXNorm - minXNorm) * wF).coerceAtLeast(48f)
-                    val boxH = ((maxYNorm - minYNorm) * hF).coerceAtLeast(48f)
-                    val maxPrep = 1440f
-                    val texScale = min(1f, maxPrep / maxOf(boxW, boxH).coerceAtLeast(1f)).coerceAtLeast(0.25f)
-                    val texW = (boxW * texScale).roundToInt().coerceIn(24, 1600)
-                    val texH = (boxH * texScale).roundToInt().coerceIn(24, 1600)
-                    val drawBmp = Bitmap.createBitmap(texW, texH, Bitmap.Config.ARGB_8888)
-                    val dc = Canvas(drawBmp)
-                    dc.translate(-boxOriginX * texScale, -boxOriginY * texScale)
-                    for (stroke in layer.strokes) {
-                        VectorStrokeEngine.drawVectorStroke(
-                            canvas = dc,
-                            stroke = stroke,
-                            areaWidthPx = wF * texScale,
-                            areaHeightPx = hF * texScale,
-                            layerOpacity = 1f,
-                            originOffsetX = 0f,
-                            originOffsetY = 0f
-                        )
-                    }
-                    val matrix = LayerTransformMatrix.buildBitmapDrawMatrix(
-                        bitmapWidth = texW,
-                        bitmapHeight = texH,
-                        boxW = boxW,
-                        boxH = boxH,
-                        transform3D = layer.transform3D,
-                        cornerPin = layer.cornerPin
-                    )
-                    matrix.postTranslate(boxOriginX - wF * 0.5f, boxOriginY - hF * 0.5f)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                        alpha = (effectiveOpacity * 255f).roundToInt().coerceIn(0, 255)
-                    }
-                    canvas.drawBitmap(drawBmp, matrix, p)
-                    drawBmp.recycle()
-                }
-            }
         }
         canvas.restore()
-    }
-
-    private fun drawVectorStrokesOnCanvas(
-        canvas: Canvas,
-        layer: DrawLayer,
-        targetWidth: Int,
-        targetHeight: Int
-    ) {
-        val w = targetWidth.toFloat().coerceAtLeast(1f)
-        val h = targetHeight.toFloat().coerceAtLeast(1f)
-        for (stroke in layer.strokes) {
-            VectorStrokeEngine.drawVectorStroke(
-                canvas = canvas,
-                stroke = stroke,
-                areaWidthPx = w,
-                areaHeightPx = h,
-                layerOpacity = layer.opacity,
-                originOffsetX = -w * 0.5f,
-                originOffsetY = -h * 0.5f
-            )
-        }
     }
 
     suspend fun saveProjectThumbnail(
@@ -723,45 +529,6 @@ class MediaStorageManager(private val context: Context) {
         return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     }
 
-    private fun computeCoverMatrix(srcW: Int, srcH: Int, dstW: Float, dstH: Float): Matrix {
-        val scale = maxOf(dstW / srcW.coerceAtLeast(1), dstH / srcH.coerceAtLeast(1))
-        val dx = (dstW - srcW * scale) / 2f
-        val dy = (dstH - srcH * scale) / 2f
-        return Matrix().apply {
-            setScale(scale, scale)
-            postTranslate(dx, dy)
-        }
-    }
-
-    private fun blendModeToPorterDuff(mode: EditorBlendMode): PorterDuffXfermode? {
-        return when (mode) {
-            EditorBlendMode.NORMAL -> null
-            EditorBlendMode.MULTIPLY -> PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
-            EditorBlendMode.SCREEN -> PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-            EditorBlendMode.OVERLAY -> PorterDuffXfermode(PorterDuff.Mode.OVERLAY)
-            EditorBlendMode.SOFT_LIGHT -> PorterDuffXfermode(PorterDuff.Mode.OVERLAY)
-            EditorBlendMode.DARKEN -> PorterDuffXfermode(PorterDuff.Mode.DARKEN)
-        }
-    }
-
-    private fun drawShapeOnCanvas(
-        canvas: Canvas,
-        layer: ShapeLayer,
-        targetWidth: Int,
-        targetHeight: Int
-    ) {
-        val baseSize = min(targetWidth, targetHeight) * 0.34f
-        val strokeScale = min(targetWidth, targetHeight) / 360f
-        VectorShapeEngine.drawShapeOnCanvas(
-            canvas = canvas,
-            layer = layer,
-            baseSizePx = baseSize,
-            cx = 0f,
-            cy = 0f,
-            strokeScaleFactor = strokeScale
-        )
-    }
-
     private fun drawVignetteOnRect(
         canvas: Canvas,
         rect: android.graphics.RectF,
@@ -821,129 +588,6 @@ class MediaStorageManager(private val context: Context) {
             }
         }
         return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
-    }
-
-    private fun stackBlurInPlace(bitmap: Bitmap, radius: Int) {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pix = IntArray(w * h)
-        bitmap.getPixels(pix, 0, w, 0, 0, w, h)
-        val wm = w - 1
-        val hm = h - 1
-        val wh = w * h
-        val div = radius + radius + 1
-        val r = IntArray(wh)
-        val g = IntArray(wh)
-        val b = IntArray(wh)
-        val a = IntArray(wh)
-        var rsum: Int; var gsum: Int; var bsum: Int; var asum: Int
-        var x: Int; var y: Int; var i: Int; var p: Int; var yp: Int; var yi: Int; var yw: Int
-        val vmin = IntArray(maxOf(w, h))
-        var divsum = (div + 1) shr 1
-        divsum *= divsum
-        val dv = IntArray(256 * divsum)
-        for (idx in dv.indices) dv[idx] = idx / divsum
-
-        yw = 0; yi = 0
-        val stack = Array(div) { IntArray(4) }
-        var stackpointer: Int; var stackstart: Int; var sir: IntArray; var rbs: Int
-        val r1 = radius + 1
-        var routsum: Int; var goutsum: Int; var boutsum: Int; var aoutsum: Int
-        var rinsum: Int; var ginsum: Int; var binsum: Int; var ainsum: Int
-
-        y = 0
-        while (y < h) {
-            rinsum = 0; ginsum = 0; binsum = 0; ainsum = 0
-            routsum = 0; goutsum = 0; boutsum = 0; aoutsum = 0
-            rsum = 0; gsum = 0; bsum = 0; asum = 0
-            i = -radius
-            while (i <= radius) {
-                p = pix[yi + minOf(wm, maxOf(i, 0))]
-                sir = stack[i + radius]
-                sir[0] = (p and 0xff0000) shr 16
-                sir[1] = (p and 0x00ff00) shr 8
-                sir[2] = p and 0x0000ff
-                sir[3] = (p ushr 24) and 0xff
-                rbs = r1 - kotlin.math.abs(i)
-                rsum += sir[0] * rbs; gsum += sir[1] * rbs; bsum += sir[2] * rbs; asum += sir[3] * rbs
-                if (i > 0) {
-                    rinsum += sir[0]; ginsum += sir[1]; binsum += sir[2]; ainsum += sir[3]
-                } else {
-                    routsum += sir[0]; goutsum += sir[1]; boutsum += sir[2]; aoutsum += sir[3]
-                }
-                i++
-            }
-            stackpointer = radius
-            x = 0
-            while (x < w) {
-                r[yi] = dv[rsum]; g[yi] = dv[gsum]; b[yi] = dv[bsum]; a[yi] = dv[asum]
-                rsum -= routsum; gsum -= goutsum; bsum -= boutsum; asum -= aoutsum
-                stackstart = stackpointer - radius + div
-                sir = stack[stackstart % div]
-                routsum -= sir[0]; goutsum -= sir[1]; boutsum -= sir[2]; aoutsum -= sir[3]
-                if (y == 0) vmin[x] = minOf(x + radius + 1, wm)
-                p = pix[yw + vmin[x]]
-                sir[0] = (p and 0xff0000) shr 16
-                sir[1] = (p and 0x00ff00) shr 8
-                sir[2] = p and 0x0000ff
-                sir[3] = (p ushr 24) and 0xff
-                rinsum += sir[0]; ginsum += sir[1]; binsum += sir[2]; ainsum += sir[3]
-                rsum += rinsum; gsum += ginsum; bsum += binsum; asum += ainsum
-                stackpointer = (stackpointer + 1) % div
-                sir = stack[stackpointer % div]
-                routsum += sir[0]; goutsum += sir[1]; boutsum += sir[2]; aoutsum += sir[3]
-                rinsum -= sir[0]; ginsum -= sir[1]; binsum -= sir[2]; ainsum -= sir[3]
-                yi++
-                x++
-            }
-            yw += w
-            y++
-        }
-        x = 0
-        while (x < w) {
-            rinsum = 0; ginsum = 0; binsum = 0; ainsum = 0
-            routsum = 0; goutsum = 0; boutsum = 0; aoutsum = 0
-            rsum = 0; gsum = 0; bsum = 0; asum = 0
-            yp = -radius * w
-            i = -radius
-            while (i <= radius) {
-                yi = maxOf(0, yp) + x
-                sir = stack[i + radius]
-                sir[0] = r[yi]; sir[1] = g[yi]; sir[2] = b[yi]; sir[3] = a[yi]
-                rbs = r1 - kotlin.math.abs(i)
-                rsum += r[yi] * rbs; gsum += g[yi] * rbs; bsum += b[yi] * rbs; asum += a[yi] * rbs
-                if (i > 0) {
-                    rinsum += sir[0]; ginsum += sir[1]; binsum += sir[2]; ainsum += sir[3]
-                } else {
-                    routsum += sir[0]; goutsum += sir[1]; boutsum += sir[2]; aoutsum += sir[3]
-                }
-                if (i < hm) yp += w
-                i++
-            }
-            yi = x
-            stackpointer = radius
-            y = 0
-            while (y < h) {
-                pix[yi] = (dv[asum] shl 24) or (dv[rsum] shl 16) or (dv[gsum] shl 8) or dv[bsum]
-                rsum -= routsum; gsum -= goutsum; bsum -= boutsum; asum -= aoutsum
-                stackstart = stackpointer - radius + div
-                sir = stack[stackstart % div]
-                routsum -= sir[0]; goutsum -= sir[1]; boutsum -= sir[2]; aoutsum -= sir[3]
-                if (x == 0) vmin[y] = minOf(y + r1, hm) * w
-                p = x + vmin[y]
-                sir[0] = r[p]; sir[1] = g[p]; sir[2] = b[p]; sir[3] = a[p]
-                rinsum += sir[0]; ginsum += sir[1]; binsum += sir[2]; ainsum += sir[3]
-                rsum += rinsum; gsum += ginsum; bsum += binsum; asum += ainsum
-                stackpointer = (stackpointer + 1) % div
-                sir = stack[stackpointer]
-                routsum += sir[0]; goutsum += sir[1]; boutsum += sir[2]; aoutsum += sir[3]
-                rinsum -= sir[0]; ginsum -= sir[1]; binsum -= sir[2]; ainsum -= sir[3]
-                yi += w
-                y++
-            }
-            x++
-        }
-        bitmap.setPixels(pix, 0, w, 0, 0, w, h)
     }
 
     companion object {

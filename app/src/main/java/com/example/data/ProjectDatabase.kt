@@ -12,6 +12,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.model.ProjectDocument
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -76,7 +77,7 @@ class ProjectRepository(
         classDiscriminator = "layerType"
     }
 
-    val projectsFlow: Flow<List<ProjectEntity>> = dao.getAllProjectsAsc()
+    val projectsFlow: Flow<List<ProjectEntity>> = dao.getAllProjectsAsc().map { it.reversed() }
 
     suspend fun loadDocument(projectId: String): ProjectDocument? {
         val entity = dao.getProjectById(projectId) ?: return null

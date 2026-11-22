@@ -7,5 +7,5 @@
     <string name="setting_copy_media_title">Keep Local Copy of Media</string>
     <string name="setting_copy_media_subtitle">Save a duplicate copy inside the app so your project stays safe even if you delete the original file from your gallery.</string>
     <string name="setting_unlimited_layers_title">Unlimited Layers</string>
-    <string name="setting_unlimited_layers_subtitle">Add unlimited photo, text, and shape layers.</string>
+    <string name="setting_unlimited_layers_subtitle">Add unlimited photo and text layers.</string>
 </resources>

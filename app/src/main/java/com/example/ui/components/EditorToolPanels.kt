@@ -7,7 +7,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,6 +38,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MergeType
 import androidx.compose.material.icons.automirrored.rounded.RotateLeft
@@ -46,7 +46,6 @@ import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
@@ -64,12 +63,15 @@ import androidx.compose.material.icons.rounded.LayersClear
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -97,8 +99,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -106,29 +106,32 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.example.data.MediaStorageManager
 import com.example.data.ProjectEntity
-import com.example.data.VectorShapeEngine
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
-import com.example.model.DrawLayer
+import com.example.model.CanvasDimensions
 import com.example.model.EditorLayer
 import com.example.model.EmojiSourceMode
+import com.example.model.ExportImageFormat
+import com.example.model.ExportResolutionPreset
 import com.example.model.GroupLayer
 import com.example.model.ImageAdjustments
 import com.example.model.ImageLayer
-import com.example.model.LayerShapeType
-import com.example.model.ShapeLayer
 import com.example.model.TextLayer
+import com.example.ui.ExportFeedbackState
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
 import com.example.ui.theme.StudioPurple
+import com.example.ui.theme.StudioTeal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -173,7 +176,7 @@ fun HorizontalLayerStrip(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No Layers • Tap Photo / Text / Shapes",
+                    text = "No Layers • Tap Photo / Text",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -316,27 +319,6 @@ private fun LayerMiniThumbnail(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(4.dp)
-                )
-            }
-            is ShapeLayer -> {
-                Canvas(modifier = Modifier.size(30.dp)) {
-                    val fill = Color(layer.fillColorArgb.toInt())
-                    val shapePath = VectorShapeEngine.buildShapePath(
-                        shapeType = layer.shapeType,
-                        params = layer.vectorParams,
-                        baseSizePx = size.minDimension * 0.85f,
-                        cx = size.width * 0.5f,
-                        cy = size.height * 0.5f
-                    ).asComposePath()
-                    drawPath(shapePath, color = fill)
-                }
-            }
-            is DrawLayer -> {
-                Icon(
-                    imageVector = Icons.Rounded.Brush,
-                    contentDescription = layer.name,
-                    tint = Color((layer.strokes.lastOrNull()?.colorArgb ?: 0xFFFF4D4FL).toInt()),
-                    modifier = Modifier.size(22.dp)
                 )
             }
         }
@@ -1633,4 +1615,165 @@ fun MyProjectsSideDrawer(
         }
     }
 }
+
+@Composable
+fun SaveExportDialog(
+    canvas: CanvasDimensions,
+    initialFormat: ExportImageFormat,
+    initialPreset: ExportResolutionPreset,
+    initialCustomWidth: Int,
+    initialCustomHeight: Int,
+    exportFeedback: ExportFeedbackState,
+    onExport: (format: ExportImageFormat, preset: ExportResolutionPreset, customW: Int, customH: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedFormat by remember(initialFormat) { mutableStateOf(initialFormat) }
+    var selectedPreset by remember(initialPreset) { mutableStateOf(initialPreset) }
+    var customWText by remember(initialCustomWidth) { mutableStateOf(initialCustomWidth.toString()) }
+    var customHText by remember(initialCustomHeight) { mutableStateOf(initialCustomHeight.toString()) }
+
+    val parsedCustomW = (customWText.toIntOrNull() ?: initialCustomWidth).coerceIn(64, 8192)
+    val parsedCustomH = (customHText.toIntOrNull() ?: initialCustomHeight).coerceIn(64, 8192)
+    val (targetW, targetH) = MediaStorageManager.computeTargetResolution(
+        canvas = canvas,
+        preset = selectedPreset,
+        customWidth = parsedCustomW,
+        customHeight = parsedCustomH
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Rounded.Save, contentDescription = null, tint = StudioAzure)
+                Text("Save Image", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Format Selection: PNG (Default) | JPG
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Format",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExportImageFormat.entries.forEach { fmt ->
+                            FilterChip(
+                                selected = selectedFormat == fmt,
+                                onClick = { selectedFormat = fmt },
+                                label = {
+                                    Text(
+                                        text = if (fmt == ExportImageFormat.PNG) "PNG (Default)" else "JPG",
+                                        fontWeight = if (selectedFormat == fmt) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                },
+                                modifier = Modifier.testTag("export_format_${fmt.name.lowercase()}")
+                            )
+                        }
+                    }
+                }
+
+                // Resolution Presets: 4K | 2K | Custom (persistent!)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Resolution",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExportResolutionPreset.entries.forEach { preset ->
+                            FilterChip(
+                                selected = selectedPreset == preset,
+                                onClick = { selectedPreset = preset },
+                                label = { Text(preset.label) },
+                                modifier = Modifier.testTag("export_res_${preset.name.lowercase()}")
+                            )
+                        }
+                    }
+                }
+
+                if (selectedPreset == ExportResolutionPreset.CUSTOM) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = customWText,
+                            onValueChange = { s -> customWText = s.filter { it.isDigit() }.take(4) },
+                            label = { Text("Width px") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("export_custom_width_input")
+                        )
+                        OutlinedTextField(
+                            value = customHText,
+                            onValueChange = { s -> customHText = s.filter { it.isDigit() }.take(4) },
+                            label = { Text("Height px") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("export_custom_height_input")
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Output: ${targetW} × ${targetH} px (${canvas.label}) • ${selectedFormat.label}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
+                }
+
+                when (exportFeedback) {
+                    ExportFeedbackState.Idle -> Unit
+                    ExportFeedbackState.Exporting -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            Text("Saving ${selectedFormat.label}...")
+                        }
+                    }
+                    is ExportFeedbackState.Success -> {
+                        Text(exportFeedback.message, color = StudioTeal, fontWeight = FontWeight.SemiBold)
+                    }
+                    is ExportFeedbackState.Error -> {
+                        Text(exportFeedback.message, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(if (exportFeedback is ExportFeedbackState.Success) "Close" else "Cancel")
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onExport(selectedFormat, selectedPreset, parsedCustomW, parsedCustomH) },
+                enabled = exportFeedback !is ExportFeedbackState.Exporting,
+                colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
+                modifier = Modifier.testTag("export_confirm_save_button")
+            ) {
+                Text("Save ${selectedFormat.label}", fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
 

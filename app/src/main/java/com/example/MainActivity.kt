@@ -70,13 +70,6 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
         if (uris.isNotEmpty()) viewModel.stagePickedPhotosForCrop(uris)
     }
 
-    // Direct Android Photo Picker for Background Image
-    val bgImagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = PickVisualMedia()
-    ) { uri ->
-        if (uri != null) viewModel.pickBackgroundImage(uri)
-    }
-
     // SAF Multi-Document Picker for Custom Fonts (TTF, OTF, TTC, OTC, WOFF, WOFF2)
     val fontFilesLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = OpenMultipleDocuments()
@@ -129,11 +122,6 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                     },
                     onPickPhotosDirect = {
                         photosPickerLauncher.launch(
-                            PickVisualMediaRequest(PickVisualMedia.ImageOnly)
-                        )
-                    },
-                    onPickBackgroundImageDirect = {
-                        bgImagePickerLauncher.launch(
                             PickVisualMediaRequest(PickVisualMedia.ImageOnly)
                         )
                     },

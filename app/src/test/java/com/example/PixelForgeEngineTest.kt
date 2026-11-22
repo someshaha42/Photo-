@@ -6,9 +6,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.MediaStorageManager
 import com.example.data.ProjectDatabase
 import com.example.data.ProjectRepository
-import com.example.data.ShapeHandleKind
-import com.example.data.VectorShapeEngine
-import com.example.data.VectorStrokeEngine
 import com.example.fonts.ColorTableType
 import com.example.fonts.FontArchiveExtractor
 import com.example.fonts.FontClassification
@@ -17,12 +14,8 @@ import com.example.fonts.FontRepository
 import com.example.fonts.TrueTypeTableParser
 import com.example.data.LayerTransformMatrix
 import com.example.model.BackgroundConfig
-import com.example.model.BackgroundTab
 import com.example.model.CanvasDimensions
 import com.example.model.CornerPinOffsets
-import com.example.model.DrawLayer
-import com.example.model.DrawPoint
-import com.example.model.DrawStroke
 import com.example.model.EmojiSourceMode
 import com.example.model.ExportImageFormat
 import com.example.model.ExportResolutionPreset
@@ -32,19 +25,10 @@ import com.example.model.ImageCropRect
 import com.example.model.ImageCropShape
 import com.example.model.ImageLayer
 import com.example.model.Layer3DTransform
-import com.example.model.LayerShapeType
 import com.example.model.ProjectDocument
-import com.example.model.ShapeLayer
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
-import com.example.model.VectorLineCap
-import com.example.model.VectorLineJoin
-import com.example.model.VectorStrokeAlignment
-import com.example.model.VectorStrokePattern
-import com.example.model.VectorStrokeStyle
-import com.example.model.WidthPointTransition
-import com.example.model.WidthProfilePoint
 import com.example.ui.StudioViewModel
 import com.example.ui.ToolDrawerTab
 import com.example.ui.TransformLockState
@@ -116,7 +100,7 @@ class PixelForgeEngineTest {
     @Test
     fun arrangementBySelectionOrderPlacesFirstSelectedOnTopAndSupportsSwap() {
         val a = TextLayer(id = "A", text = "First")
-        val b = ShapeLayer(id = "B")
+        val b = TextLayer(id = "B", text = "Second")
         val c = ImageLayer(id = "C", uriString = "/tmp/c.png", originalWidth = 100, originalHeight = 100)
 
         // Stack bottom->top: [A, B, C]; select B 1st and A 2nd -> arrangeTop puts C below, then A, then B on very top!
@@ -153,7 +137,7 @@ class PixelForgeEngineTest {
                 rotationDeg = 18f,
                 scale = 1.4f
             )
-            val sLayer = ShapeLayer(id = "s1", offsetXNorm = -0.2f, offsetYNorm = 0.1f)
+            val sLayer = TextLayer(id = "s1", text = "Child 2", offsetXNorm = -0.2f, offsetYNorm = 0.1f)
             val doc = ProjectDocument(
                 layers = listOf(tLayer, sLayer),
                 selectedLayerId = "s1",
@@ -253,7 +237,6 @@ class PixelForgeEngineTest {
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
                 background = BackgroundConfig(
-                    activeTab = BackgroundTab.TRANSPARENT,
                     checkerboardPreviewEnabled = true
                 ),
                 layers = listOf(
@@ -346,7 +329,6 @@ class PixelForgeEngineTest {
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
                 background = BackgroundConfig(
-                    activeTab = BackgroundTab.TRANSPARENT,
                     checkerboardPreviewEnabled = false
                 ),
                 layers = listOf(
@@ -409,7 +391,6 @@ class PixelForgeEngineTest {
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
                 background = BackgroundConfig(
-                    activeTab = BackgroundTab.TRANSPARENT,
                     checkerboardPreviewEnabled = false
                 ),
                 layers = listOf(
@@ -454,7 +435,7 @@ class PixelForgeEngineTest {
             )
             val tintedDoc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
-                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                background = BackgroundConfig(checkerboardPreviewEnabled = false),
                 layers = listOf(tintedLayer)
             )
             val tintedBmp = mediaManager.renderProjectToBitmap(tintedDoc, renderEngine, 160, 160)
@@ -522,8 +503,9 @@ class PixelForgeEngineTest {
 
     @Test
     fun anchoredOneSideStretchKeepsOppositeEdgePinned() {
-        val baseLayer = ShapeLayer(
+        val baseLayer = TextLayer(
             id = "s_anchor",
+            text = "Anchor",
             offsetXNorm = 0f,
             offsetYNorm = 0f,
             scale = 1f,
@@ -553,27 +535,25 @@ class PixelForgeEngineTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun drawLayerRendersVectorStrokesAndJpgCompositeIsWhiteOpaque() {
+    fun resolutionTargetsAndJpgCompositeWhiteOpaqueWorkCleanly() {
         runBlocking {
             val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
             val mediaManager = MediaStorageManager(context)
 
-            val drawLayer = DrawLayer(
-                strokes = listOf(
-                    DrawStroke(
-                        colorArgb = 0xFFFF0000L,
-                        strokeWidthNorm = 0.08f,
-                        points = listOf(DrawPoint(0.25f, 0.5f), DrawPoint(0.75f, 0.5f))
-                    )
-                )
+            val redText = TextLayer(
+                text = "H",
+                fontId = repo.selectedFontId.value,
+                fontSizeSp = 44f,
+                colorArgb = 0xFFFF0000L
             )
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
                 background = BackgroundConfig(
-                    activeTab = BackgroundTab.TRANSPARENT,
                     checkerboardPreviewEnabled = false
                 ),
-                layers = listOf(drawLayer)
+                layers = listOf(redText)
             )
 
             // Verify 4K & 2K resolution targets
@@ -601,11 +581,8 @@ class PixelForgeEngineTest {
             )
             assertEquals(1234 to 777, resCustom)
 
-            // Render DrawLayer stroke center red pixel
             val pngBmp = mediaManager.renderProjectToBitmap(doc, renderEngine, 200, 200)
-            val centerPx = pngBmp.getPixel(100, 100)
             val cornerPx = pngBmp.getPixel(5, 5)
-            assertTrue("Center stroke pixel must be bright red", Color.red(centerPx) > 200 && Color.alpha(centerPx) > 200)
             assertEquals("Transparent PNG corner must keep zero alpha", 0, Color.alpha(cornerPx))
             pngBmp.recycle()
 
@@ -762,7 +739,7 @@ class PixelForgeEngineTest {
             val mediaManager = MediaStorageManager(context)
             val bigDoc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
-                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                background = BackgroundConfig(checkerboardPreviewEnabled = false),
                 layers = listOf(
                     TextLayer(
                         text = "H",
@@ -851,38 +828,6 @@ class PixelForgeEngineTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun drawStrokeAfterTransformedDrawLayerCreatesFreshUntransformedLayer() {
-        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
-        vm.createNewProject()
-
-        val stroke1 = DrawStroke(
-            colorArgb = 0xFFFF0000L,
-            strokeWidthNorm = 0.02f,
-            points = listOf(DrawPoint(0.1f, 0.1f), DrawPoint(0.3f, 0.3f))
-        )
-        vm.addDrawStroke(stroke1)
-        assertEquals(1, vm.document.value.layers.size)
-        val firstDrawId = vm.document.value.layers.first().id
-
-        // Move first draw layer away from identity
-        vm.transformLayerTransient(firstDrawId, deltaXNorm = 0.2f, deltaYNorm = 0.1f, scaleFactor = 1f, rotationDelta = 0f)
-
-        // Adding another stroke must create a fresh identity DrawLayer instead of distorting into the moved layer
-        val stroke2 = DrawStroke(
-            colorArgb = 0xFF00FF00L,
-            strokeWidthNorm = 0.02f,
-            points = listOf(DrawPoint(0.6f, 0.6f), DrawPoint(0.8f, 0.8f))
-        )
-        vm.addDrawStroke(stroke2)
-        assertEquals(2, vm.document.value.layers.size)
-        val secondDraw = vm.document.value.layers[1] as DrawLayer
-        assertEquals(0f, secondDraw.offsetXNorm, 0.0001f)
-        assertEquals(0f, secondDraw.offsetYNorm, 0.0001f)
-        assertEquals(1, secondDraw.strokes.size)
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun circleCropShapeMasksExportedImageCornersToTransparent() {
         runBlocking {
             val sourceFile = File(context.cacheDir, "circle_crop_src.png")
@@ -897,7 +842,7 @@ class PixelForgeEngineTest {
             val mediaManager = MediaStorageManager(context)
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
-                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                background = BackgroundConfig(checkerboardPreviewEnabled = false),
                 layers = listOf(
                     ImageLayer(
                         uriString = sourceFile.absolutePath,
@@ -1053,7 +998,7 @@ class PixelForgeEngineTest {
 
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
-                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
+                background = BackgroundConfig(checkerboardPreviewEnabled = false),
                 layers = listOf(
                     ImageLayer(
                         uriString = sourceFile.absolutePath,
@@ -1097,198 +1042,6 @@ class PixelForgeEngineTest {
     }
 
     @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun alightStyleShapesDefaultWhiteHaveMinimalHandlesAndRenderCleanly() {
-        runBlocking {
-            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
-            vm.createNewProject()
-
-            // Circle & Rectangle strictly have 4 minimal cardinal dots; Rounded Rect adds 1 radius pill; Triangle has 3 vertex rings
-            val circleLayer = ShapeLayer(shapeType = LayerShapeType.CIRCLE)
-            assertEquals(0xFFFFFFFFL, circleLayer.fillColorArgb)
-            val circleHandles = VectorShapeEngine.computeControlHandles(circleLayer, 200f)
-            assertEquals(4, circleHandles.size)
-            assertTrue(circleHandles.all { it.kind == ShapeHandleKind.CARDINAL_DOT })
-
-            val rectHandles = VectorShapeEngine.computeControlHandles(ShapeLayer(shapeType = LayerShapeType.RECTANGLE), 200f)
-            assertEquals(4, rectHandles.size)
-            assertTrue(rectHandles.all { it.kind == ShapeHandleKind.CARDINAL_DOT })
-
-            val roundedHandles = VectorShapeEngine.computeControlHandles(
-                ShapeLayer(shapeType = LayerShapeType.ROUNDED_RECT, vectorParams = VectorShapeEngine.defaultParamsFor(LayerShapeType.ROUNDED_RECT)),
-                200f
-            )
-            assertEquals(5, roundedHandles.size)
-            assertEquals(1, roundedHandles.count { it.kind == ShapeHandleKind.RADIUS_PILL })
-
-            val triLayer = ShapeLayer(shapeType = LayerShapeType.TRIANGLE)
-            val triHandles = VectorShapeEngine.computeControlHandles(triLayer, 200f)
-            assertEquals(3, triHandles.size)
-            assertTrue(triHandles.all { it.kind == ShapeHandleKind.VERTEX_RING })
-
-            // Dragging triangle apex stretches vertex upward non-destructively
-            val draggedTri = VectorShapeEngine.applyHandleDrag(triLayer, "tri_apex", dxPx = 0f, dyPx = -40f, baseSizePx = 200f)
-            assertTrue(draggedTri.vectorParams.triangleApexY < triLayer.vectorParams.triangleApexY)
-
-            // ViewModel addShapeLayer defaults to white and turns on Edit Points mode
-            vm.addShapeLayer(LayerShapeType.STAR)
-            val added = StudioViewModel.findLayerRecursive(vm.document.value.layers, vm.document.value.selectedLayerId) as ShapeLayer
-            assertEquals(0xFFFFFFFFL, added.fillColorArgb)
-            assertTrue(vm.shapeEditPointsMode.value)
-
-            // Render every new vector shape type onto native bitmap
-            val renderEngine = FontRenderEngine(context)
-            val mediaManager = MediaStorageManager(context)
-            listOf(
-                LayerShapeType.TRIANGLE,
-                LayerShapeType.HEXAGON,
-                LayerShapeType.PIE,
-                LayerShapeType.ARROW,
-                LayerShapeType.QUAD
-            ).forEach { shapeType ->
-                val shapeDoc = ProjectDocument(
-                    canvas = CanvasDimensions.SQUARE_1_1,
-                    background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
-                    layers = listOf(
-                        ShapeLayer(
-                            shapeType = shapeType,
-                            fillColorArgb = 0xFFFFFFFFL,
-                            vectorParams = VectorShapeEngine.defaultParamsFor(shapeType)
-                        )
-                    )
-                )
-                val bmp = mediaManager.renderProjectToBitmap(shapeDoc, renderEngine, 180, 180)
-                var whitePx = 0
-                for (y in 20 until 160) {
-                    for (x in 20 until 160) {
-                        val c = bmp.getPixel(x, y)
-                        if (Color.alpha(c) > 200 && Color.red(c) > 200) whitePx++
-                    }
-                }
-                bmp.recycle()
-                assertTrue("Shape $shapeType must render visible white vector pixels (got $whitePx)", whitePx > 40)
-            }
-        }
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun vectorStrokeEngineSupportsSmoothingTaperProfileWidthPointsPressureAndNonDestructiveEdit() {
-        runBlocking {
-            val jagged = listOf(
-                DrawPoint(0.10f, 0.50f, pressure = 0.4f),
-                DrawPoint(0.25f, 0.35f, pressure = 0.7f),
-                DrawPoint(0.45f, 0.65f, pressure = 1.0f),
-                DrawPoint(0.70f, 0.38f, pressure = 0.9f),
-                DrawPoint(0.90f, 0.50f, pressure = 0.5f)
-            )
-            val smoothed = VectorStrokeEngine.smoothPoints(jagged, smoothingIntensity = 0.8f)
-            assertEquals(jagged.first().xNorm, smoothed.first().xNorm, 0.0001f)
-            assertEquals(jagged.last().xNorm, smoothed.last().xNorm, 0.0001f)
-            assertTrue(smoothed.size >= jagged.size)
-
-            // Evaluate linked vs unlinked widths, taper, roundness, pressure, widthProfile & widthPoints
-            val linkedStyle = VectorStrokeStyle(widthsLinked = true, startWidthFactor = 1.4f, endWidthFactor = 0.5f)
-            assertEquals(1.4f, VectorStrokeEngine.evaluateWidthMultiplier(1f, 1.0f, linkedStyle), 0.02f)
-
-            val unlinkedTaperedStyle = VectorStrokeStyle(
-                widthsLinked = false,
-                startWidthFactor = 1.0f,
-                endWidthFactor = 1.8f,
-                startTaperLength = 0.3f,
-                startTaperIntensity = 0.9f,
-                startRoundness = 0.8f,
-                variableWidthEnabled = true,
-                widthProfile = listOf(
-                    WidthProfilePoint(id = "p0", positionNorm = 0f, widthMultiplier = 1f),
-                    WidthProfilePoint(id = "p1", positionNorm = 0.5f, widthMultiplier = 1.6f),
-                    WidthProfilePoint(id = "p2", positionNorm = 1f, widthMultiplier = 1f)
-                ),
-                widthPoints = listOf(
-                    WidthProfilePoint(id = "w0", positionNorm = 0.5f, widthMultiplier = 1.25f, transition = WidthPointTransition.SHARP)
-                ),
-                pressureEnabled = true,
-                pressureSensitivity = 0.8f
-            )
-            val atStart = VectorStrokeEngine.evaluateWidthMultiplier(0f, 1.0f, unlinkedTaperedStyle)
-            val atMidHighPressure = VectorStrokeEngine.evaluateWidthMultiplier(0.5f, 1.3f, unlinkedTaperedStyle)
-            val atMidLowPressure = VectorStrokeEngine.evaluateWidthMultiplier(0.5f, 0.2f, unlinkedTaperedStyle)
-            assertTrue("Start taper must narrow tip ($atStart < $atMidHighPressure)", atStart < atMidHighPressure * 0.4f)
-            assertTrue("Pressure sensitivity must scale width ($atMidHighPressure > $atMidLowPressure)", atMidHighPressure > atMidLowPressure)
-
-            // End-to-end ViewModel pre-draw -> draw -> deselect -> select -> non-destructive post-draw edit + undo/redo + batch edit
-            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
-            vm.createNewProject()
-            vm.updateStrokeStyle {
-                it.copy(
-                    overallWidthNorm = 0.03f,
-                    pattern = VectorStrokePattern.DASHED,
-                    lineCap = VectorLineCap.SQUARE,
-                    lineJoin = VectorLineJoin.BEVEL,
-                    smoothing = 0.2f,
-                    strokeOpacity = 0.85f,
-                    miterLimit = 6f,
-                    strokeOffsetNorm = 0.006f,
-                    strokeAlignment = VectorStrokeAlignment.OUTSIDE
-                )
-            }
-            vm.addDrawStroke(
-                DrawStroke(
-                    colorArgb = 0xFFFF4D4FL,
-                    strokeWidthNorm = 0.03f,
-                    rawPoints = jagged,
-                    points = VectorStrokeEngine.smoothPoints(jagged, 0.2f),
-                    style = vm.drawStrokeStyle.value
-                )
-            )
-            val layer1Id = vm.document.value.selectedLayerId!!
-
-            // Switch to new session (deselects) -> defaults stay clean/new -> reselect loads layer1's saved style
-            vm.startNewDrawLayerSession()
-            assertEquals(null, vm.document.value.selectedLayerId)
-            vm.selectLayer(layer1Id)
-            assertEquals(VectorStrokePattern.DASHED, vm.drawStrokeStyle.value.pattern)
-            assertEquals(VectorStrokeAlignment.OUTSIDE, vm.drawStrokeStyle.value.strokeAlignment)
-
-            // Non-destructive post-draw edit recomputes smoothed points from preserved rawPoints without flattening
-            vm.updateStrokeStyle { it.copy(smoothing = 0.9f, pattern = VectorStrokePattern.DASH_DOT, variableWidthEnabled = true) }
-            val updatedLayer = StudioViewModel.findLayerRecursive(vm.document.value.layers, layer1Id) as DrawLayer
-            val updatedStroke = updatedLayer.strokes.first()
-            assertEquals(jagged.size, updatedStroke.rawPoints.size)
-            assertEquals(VectorStrokePattern.DASH_DOT, updatedStroke.style.pattern)
-            assertTrue(updatedStroke.points.size >= updatedStroke.rawPoints.size)
-
-            // Undo reverses post-draw style edit back to DASHED
-            vm.undo()
-            val afterUndo = StudioViewModel.findLayerRecursive(vm.document.value.layers, layer1Id) as DrawLayer
-            assertEquals(VectorStrokePattern.DASHED, afterUndo.strokes.first().style.pattern)
-            vm.redo()
-
-            // JSON round-trip preserves rawPoints and VectorStrokeStyle
-            val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; classDiscriminator = "layerType" }
-            val encoded = json.encodeToString(vm.document.value)
-            val decoded = json.decodeFromString<ProjectDocument>(encoded)
-            val decodedStroke = (decoded.layers.first() as DrawLayer).strokes.first()
-            assertEquals(VectorStrokePattern.DASH_DOT, decodedStroke.style.pattern)
-            assertEquals(jagged.size, decodedStroke.rawPoints.size)
-
-            // Render stroke bitmap cleanly via MediaStorageManager
-            val renderEngine = FontRenderEngine(context)
-            val mediaManager = MediaStorageManager(context)
-            val rendered = mediaManager.renderProjectToBitmap(decoded, renderEngine, 200, 200)
-            var redInkPx = 0
-            for (y in 20 until 180) {
-                for (x in 10 until 190) {
-                    val px = rendered.getPixel(x, y)
-                    if (Color.alpha(px) > 100 && Color.red(px) > 180) redInkPx++
-                }
-            }
-            rendered.recycle()
-            assertTrue("Variable-width + dashed + offset stroke must render visible ink pixels ($redInkPx)", redInkPx > 30)
-        }
-    }
-
-    @Test
     fun canvasPresetsProjectHistoryAscOrderBatchDeleteAndInEditorSwitchWorkCleanly() {
         runBlocking {
             val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
@@ -1308,7 +1061,6 @@ class PixelForgeEngineTest {
             val dao = db.projectDao()
             val repo = ProjectRepository(context, dao)
 
-            // Clean any existing entries from test db
             val existing = dao.getAllProjectsAsc().first().map { it.id }.toSet()
             if (existing.isNotEmpty()) repo.deleteProjects(existing)
 
@@ -1323,7 +1075,6 @@ class PixelForgeEngineTest {
             val orderedAsc = dao.getAllProjectsAsc().first()
             assertEquals(listOf("proj_oldest", "proj_middle", "proj_newest"), orderedAsc.map { it.id })
 
-            // Switch active editor document to proj_oldest, mutate it, then switch to proj_middle -> edits must auto-save!
             assertTrue(vm.openProjectFromHistory("proj_oldest"))
             assertEquals("proj_oldest", vm.document.value.id)
             vm.addTextLayer("AutoSaved Text")
@@ -1336,7 +1087,6 @@ class PixelForgeEngineTest {
             assertEquals(1, reloadedOld!!.layers.size)
             assertEquals("AutoSaved Text", (reloadedOld.layers.first() as TextLayer).text)
 
-            // Batch delete 2 projects together
             repo.deleteProjects(setOf("proj_oldest", "proj_newest"))
             val remaining = dao.getAllProjectsAsc().first()
             assertEquals(listOf("proj_middle"), remaining.map { it.id })
@@ -1346,35 +1096,22 @@ class PixelForgeEngineTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun cornerPinAnd3DRenderCleanlyForShapeDrawAndCollapsedGroupLayers() {
+    fun cornerPinAnd3DRenderCleanlyForCollapsedGroupLayers() {
         runBlocking {
             val renderEngine = FontRenderEngine(context)
+            val repo = FontRepository(context, renderEngine)
+            repo.initialize()
             val mediaManager = MediaStorageManager(context)
 
-            val shape = ShapeLayer(
-                shapeType = LayerShapeType.STAR,
-                fillColorArgb = 0xFF00E5FFL,
-                cornerPin = CornerPinOffsets(tlDx = 0.14f, brDy = -0.12f),
-                transform3D = Layer3DTransform(rotationYDeg = 24f, skewXDeg = 8f)
-            )
-            val draw = DrawLayer(
-                strokes = listOf(
-                    DrawStroke(
-                        colorArgb = 0xFFFF4D4FL,
-                        strokeWidthNorm = 0.06f,
-                        points = listOf(DrawPoint(0.2f, 0.3f), DrawPoint(0.8f, 0.7f))
-                    )
-                ),
-                cornerPin = CornerPinOffsets(trDy = 0.1f, blDx = -0.08f),
-                transform3D = Layer3DTransform(rotationXDeg = 18f, skewYDeg = -6f)
-            )
             val collapsedGroup = GroupLayer(
                 name = "Warped Group",
                 isExpanded = false,
                 children = listOf(
-                    ShapeLayer(
-                        shapeType = LayerShapeType.CIRCLE,
-                        fillColorArgb = 0xFFFFEB3BL,
+                    TextLayer(
+                        text = "GROUP",
+                        fontId = repo.selectedFontId.value,
+                        fontSizeSp = 40f,
+                        colorArgb = 0xFFFFEB3BL,
                         scale = 0.8f
                     )
                 ),
@@ -1384,8 +1121,8 @@ class PixelForgeEngineTest {
 
             val doc = ProjectDocument(
                 canvas = CanvasDimensions.SQUARE_1_1,
-                background = BackgroundConfig(activeTab = BackgroundTab.TRANSPARENT, checkerboardPreviewEnabled = false),
-                layers = listOf(shape, draw, collapsedGroup)
+                background = BackgroundConfig(checkerboardPreviewEnabled = false),
+                layers = listOf(collapsedGroup)
             )
             val rendered = mediaManager.renderProjectToBitmap(doc, renderEngine, 240, 240)
             var opaquePixels = 0
@@ -1396,8 +1133,8 @@ class PixelForgeEngineTest {
             }
             rendered.recycle()
             assertTrue(
-                "Shape, Draw, and collapsed Group layers with Corner Pin & 3D must render visible output pixels ($opaquePixels)",
-                opaquePixels > 200
+                "Collapsed Group layer with Corner Pin & 3D must render visible output pixels ($opaquePixels)",
+                opaquePixels > 120
             )
         }
     }

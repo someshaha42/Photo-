@@ -76,10 +76,9 @@ import androidx.compose.ui.unit.sp
 import com.example.fonts.FontClassification
 import com.example.fonts.FontMetadata
 import com.example.fonts.FontRenderEngine
-import com.example.model.DrawLayer
 import com.example.model.EditorLayer
+import com.example.model.GroupLayer
 import com.example.model.ImageLayer
-import com.example.model.ShapeLayer
 import com.example.model.TextLayer
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioEmerald
@@ -425,7 +424,7 @@ fun ColorToolPanel(
     ) {
         if (selectedLayer == null) {
             Text(
-                text = "Select a Photo, Text, or Shape",
+                text = "Select a Photo or Text",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp)
@@ -436,16 +435,12 @@ fun ColorToolPanel(
         val currentLayerColor: Long? = when (selectedLayer) {
             is TextLayer -> selectedLayer.colorArgb
             is ImageLayer -> selectedLayer.tintColorArgb
-            is ShapeLayer -> selectedLayer.fillColorArgb
-            is DrawLayer -> selectedLayer.strokes.lastOrNull()?.colorArgb ?: 0xFFFF4D4FL
-            is com.example.model.GroupLayer -> null
+            is GroupLayer -> null
         }
         val isDefaultState = when (selectedLayer) {
             is ImageLayer -> selectedLayer.tintColorArgb == null
             is TextLayer -> selectedLayer.colorArgb == 0xFFFFFFFFL
-            is ShapeLayer -> selectedLayer.fillColorArgb == 0xFF2D8CFFL
-            is DrawLayer -> false
-            is com.example.model.GroupLayer -> true
+            is GroupLayer -> true
         }
 
         val effectiveSeedColorInt = (currentLayerColor ?: 0xFFFF4D4FL).toInt()

@@ -268,35 +268,9 @@ data class CornerPinOffsets(
 }
 
 @Serializable
-enum class BackgroundTab(val title: String) {
-    TRANSPARENT("Transparent"),
-    BLUR("Blur"),
-    COLORS("Colors"),
-    IMAGE("Image")
-}
-
-@Serializable
-enum class EditorBlendMode(val label: String) {
-    NORMAL("Normal"),
-    MULTIPLY("Multiply"),
-    SCREEN("Screen"),
-    OVERLAY("Overlay"),
-    SOFT_LIGHT("Soft Light"),
-    DARKEN("Darken")
-}
-
-@Serializable
 data class BackgroundConfig(
-    val activeTab: BackgroundTab = BackgroundTab.TRANSPARENT,
     val checkerboardPreviewEnabled: Boolean = true,
-    val checkerboardOpacity: Float = 1f,
-    val blurStrength: Float = 0.35f,
-    val blurBackgroundOpacity: Float = 1f,
-    val colorArgb: Long = 0xFFFF4D4F,
-    val colorOpacity: Float = 1f,
-    val backgroundImageUri: String? = null,
-    val backgroundImageOpacity: Float = 1f,
-    val blendMode: EditorBlendMode = EditorBlendMode.NORMAL
+    val checkerboardOpacity: Float = 1f
 )
 
 @Serializable
@@ -305,56 +279,6 @@ enum class TextAlignOption(val label: String) {
     CENTER("Center"),
     RIGHT("Right")
 }
-
-@Serializable
-enum class LayerShapeType(val label: String) {
-    CIRCLE("Circle"),
-    ROUNDED_RECT("Rounded"),
-    RECTANGLE("Square"),
-    TRIANGLE("Triangle"),
-    STAR("Star"),
-    HEXAGON("Hexagon"),
-    PIE("Pie"),
-    ARROW("Arrow"),
-    QUAD("Quad"),
-    BADGE("Badge")
-}
-
-@Serializable
-data class NormalizedPoint(
-    val x: Float,
-    val y: Float
-)
-
-@Serializable
-data class ShapeVectorParams(
-    val cornerRadiusFrac: Float = 0.20f,
-    val starInnerRatio: Float = 0.45f,
-    val starPoints: Int = 5,
-    val polygonSides: Int = 6,
-    val pieStartDeg: Float = 45f,
-    val pieSweepDeg: Float = 270f,
-    val triangleApexX: Float = 0f,
-    val triangleApexY: Float = -0.5f,
-    val triangleLeftX: Float = -0.5f,
-    val triangleLeftY: Float = 0.5f,
-    val triangleRightX: Float = 0.5f,
-    val triangleRightY: Float = 0.5f,
-    val arrowTipX: Float = 0.42f,
-    val arrowTipY: Float = -0.42f,
-    val arrowTailX: Float = -0.42f,
-    val arrowTailY: Float = 0.42f,
-    val arrowHeadLengthFrac: Float = 0.36f,
-    val arrowShaftWidthFrac: Float = 0.22f,
-    val quadVertices: List<NormalizedPoint> = listOf(
-        NormalizedPoint(-0.46f, -0.44f),
-        NormalizedPoint(0.36f, -0.44f),
-        NormalizedPoint(0.48f, 0.46f),
-        NormalizedPoint(-0.46f, 0.46f)
-    ),
-    val boxWidthScale: Float = 1f,
-    val boxHeightScale: Float = 1f
-)
 
 @Serializable
 sealed interface EditorLayer {
@@ -371,6 +295,8 @@ sealed interface EditorLayer {
     val locked: Boolean
     val transform3D: Layer3DTransform
     val cornerPin: CornerPinOffsets
+    val crop: ImageCropRect
+    val cropShape: ImageCropShape
 
     fun withBaseTransform(
         offsetXNorm: Float = this.offsetXNorm,
@@ -388,6 +314,11 @@ sealed interface EditorLayer {
         transform3D: Layer3DTransform = this.transform3D,
         cornerPin: CornerPinOffsets = this.cornerPin
     ): EditorLayer
+
+    fun withUniversalCrop(
+        crop: ImageCropRect = this.crop,
+        cropShape: ImageCropShape = this.cropShape
+    ): EditorLayer
 }
 
 @Serializable
@@ -399,8 +330,8 @@ data class ImageLayer(
     val originalWidth: Int,
     val originalHeight: Int,
     val adjustments: ImageAdjustments = ImageAdjustments(),
-    val crop: ImageCropRect = ImageCropRect(),
-    val cropShape: ImageCropShape = ImageCropShape.RECTANGLE,
+    override val crop: ImageCropRect = ImageCropRect(),
+    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE,
     val tintColorArgb: Long? = null,
     override val offsetXNorm: Float = 0f,
     override val offsetYNorm: Float = 0f,
@@ -440,6 +371,9 @@ data class ImageLayer(
         transform3D: Layer3DTransform,
         cornerPin: CornerPinOffsets
     ) = copy(transform3D = transform3D, cornerPin = cornerPin)
+
+    override fun withUniversalCrop(crop: ImageCropRect, cropShape: ImageCropShape) =
+        copy(crop = crop, cropShape = cropShape)
 }
 
 @Serializable
@@ -472,7 +406,9 @@ data class TextLayer(
     override val visible: Boolean = true,
     override val locked: Boolean = false,
     override val transform3D: Layer3DTransform = Layer3DTransform(),
-    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets(),
+    override val crop: ImageCropRect = ImageCropRect(),
+    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -500,56 +436,9 @@ data class TextLayer(
         transform3D: Layer3DTransform,
         cornerPin: CornerPinOffsets
     ) = copy(transform3D = transform3D, cornerPin = cornerPin)
-}
 
-@Serializable
-@SerialName("shape")
-data class ShapeLayer(
-    override val id: String = UUID.randomUUID().toString(),
-    override val name: String = "Shape",
-    val shapeType: LayerShapeType = LayerShapeType.ROUNDED_RECT,
-    val fillColorArgb: Long = 0xFFFFFFFFL,
-    val strokeColorArgb: Long = 0xFF2D8CFFL,
-    val strokeWidth: Float = 0f,
-    val vectorParams: ShapeVectorParams = ShapeVectorParams(),
-    override val offsetXNorm: Float = 0f,
-    override val offsetYNorm: Float = 0f,
-    override val scale: Float = 1f,
-    override val stretchX: Float = 1f,
-    override val stretchY: Float = 1f,
-    override val rotationDeg: Float = 0f,
-    override val opacity: Float = 1f,
-    override val visible: Boolean = true,
-    override val locked: Boolean = false,
-    override val transform3D: Layer3DTransform = Layer3DTransform(),
-    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
-) : EditorLayer {
-    override fun withBaseTransform(
-        offsetXNorm: Float,
-        offsetYNorm: Float,
-        scale: Float,
-        stretchX: Float,
-        stretchY: Float,
-        rotationDeg: Float,
-        opacity: Float,
-        visible: Boolean,
-        locked: Boolean
-    ) = copy(
-        offsetXNorm = offsetXNorm,
-        offsetYNorm = offsetYNorm,
-        scale = scale,
-        stretchX = stretchX,
-        stretchY = stretchY,
-        rotationDeg = rotationDeg,
-        opacity = opacity,
-        visible = visible,
-        locked = locked
-    )
-
-    override fun withExtraTransforms(
-        transform3D: Layer3DTransform,
-        cornerPin: CornerPinOffsets
-    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
+    override fun withUniversalCrop(crop: ImageCropRect, cropShape: ImageCropShape) =
+        copy(crop = crop, cropShape = cropShape)
 }
 
 @Serializable
@@ -569,7 +458,9 @@ data class GroupLayer(
     override val visible: Boolean = true,
     override val locked: Boolean = false,
     override val transform3D: Layer3DTransform = Layer3DTransform(),
-    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
+    override val cornerPin: CornerPinOffsets = CornerPinOffsets(),
+    override val crop: ImageCropRect = ImageCropRect(),
+    override val cropShape: ImageCropShape = ImageCropShape.RECTANGLE
 ) : EditorLayer {
     override fun withBaseTransform(
         offsetXNorm: Float,
@@ -597,168 +488,9 @@ data class GroupLayer(
         transform3D: Layer3DTransform,
         cornerPin: CornerPinOffsets
     ) = copy(transform3D = transform3D, cornerPin = cornerPin)
-}
 
-@Serializable
-data class DrawPoint(
-    val xNorm: Float,
-    val yNorm: Float,
-    val pressure: Float = 1f
-)
-
-@Serializable
-enum class VectorLineCap(val label: String) {
-    BUTT("Butt"),
-    ROUND("Round"),
-    SQUARE("Square")
-}
-
-@Serializable
-enum class VectorLineJoin(val label: String) {
-    MITER("Miter"),
-    ROUND("Round"),
-    BEVEL("Bevel")
-}
-
-@Serializable
-enum class VectorStrokePattern(val label: String) {
-    SOLID("Solid"),
-    DASHED("Dashed"),
-    DOTTED("Dotted"),
-    DASH_DOT("Dash-Dot")
-}
-
-@Serializable
-enum class VectorStrokeAlignment(val label: String) {
-    CENTER("Center"),
-    INSIDE("Inside"),
-    OUTSIDE("Outside")
-}
-
-@Serializable
-enum class WidthPointTransition(val label: String) {
-    SMOOTH("Smooth"),
-    SHARP("Sharp")
-}
-
-@Serializable
-data class WidthProfilePoint(
-    val id: String = UUID.randomUUID().toString(),
-    val positionNorm: Float,
-    val widthMultiplier: Float,
-    val transition: WidthPointTransition = WidthPointTransition.SMOOTH
-)
-
-@Serializable
-data class VectorStrokeStyle(
-    val overallWidthNorm: Float = 0.014f,
-    val startWidthFactor: Float = 1f,
-    val endWidthFactor: Float = 1f,
-    val widthsLinked: Boolean = true,
-    val startTaperLength: Float = 0f,
-    val startTaperIntensity: Float = 1f,
-    val endTaperLength: Float = 0f,
-    val endTaperIntensity: Float = 1f,
-    val startRoundness: Float = 1f,
-    val endRoundness: Float = 1f,
-    val lineCap: VectorLineCap = VectorLineCap.ROUND,
-    val lineJoin: VectorLineJoin = VectorLineJoin.ROUND,
-    val pattern: VectorStrokePattern = VectorStrokePattern.SOLID,
-    val dashLengthNorm: Float = 0.032f,
-    val dashSpacingNorm: Float = 0.020f,
-    val dotSpacingNorm: Float = 0.018f,
-    val strokeSpacingNorm: Float = 0f,
-    val strokeOpacity: Float = 1f,
-    val smoothing: Float = 0.25f,
-    val variableWidthEnabled: Boolean = false,
-    val widthProfile: List<WidthProfilePoint> = defaultWidthProfile(),
-    val widthPoints: List<WidthProfilePoint> = emptyList(),
-    val pressureEnabled: Boolean = true,
-    val pressureSensitivity: Float = 0.65f,
-    val miterLimit: Float = 4f,
-    val strokeOffsetNorm: Float = 0f,
-    val strokeAlignment: VectorStrokeAlignment = VectorStrokeAlignment.CENTER
-) {
-    fun requiresVariableGeometry(): Boolean {
-        return variableWidthEnabled ||
-            startWidthFactor != 1f ||
-            endWidthFactor != 1f ||
-            startTaperLength > 0.001f ||
-            endTaperLength > 0.001f ||
-            widthPoints.isNotEmpty() ||
-            (pressureEnabled && pressureSensitivity > 0.01f) ||
-            strokeOffsetNorm != 0f ||
-            strokeAlignment != VectorStrokeAlignment.CENTER
-    }
-
-    companion object {
-        fun defaultWidthProfile(): List<WidthProfilePoint> = listOf(
-            WidthProfilePoint(id = "wp_start", positionNorm = 0f, widthMultiplier = 1f),
-            WidthProfilePoint(id = "wp_mid", positionNorm = 0.5f, widthMultiplier = 1f),
-            WidthProfilePoint(id = "wp_end", positionNorm = 1f, widthMultiplier = 1f)
-        )
-    }
-}
-
-@Serializable
-data class DrawStroke(
-    val colorArgb: Long = 0xFFFF4D4FL,
-    val strokeWidthNorm: Float = 0.014f,
-    val points: List<DrawPoint> = emptyList(),
-    val rawPoints: List<DrawPoint> = emptyList(),
-    val style: VectorStrokeStyle = VectorStrokeStyle()
-) {
-    val resolvedRawPoints: List<DrawPoint>
-        get() = if (rawPoints.isNotEmpty()) rawPoints else points
-
-    val effectiveOverallWidthNorm: Float
-        get() = if (style.overallWidthNorm > 0f) style.overallWidthNorm else strokeWidthNorm
-}
-
-@Serializable
-@SerialName("draw")
-data class DrawLayer(
-    override val id: String = UUID.randomUUID().toString(),
-    override val name: String = "Draw",
-    val strokes: List<DrawStroke> = emptyList(),
-    override val offsetXNorm: Float = 0f,
-    override val offsetYNorm: Float = 0f,
-    override val scale: Float = 1f,
-    override val stretchX: Float = 1f,
-    override val stretchY: Float = 1f,
-    override val rotationDeg: Float = 0f,
-    override val opacity: Float = 1f,
-    override val visible: Boolean = true,
-    override val locked: Boolean = false,
-    override val transform3D: Layer3DTransform = Layer3DTransform(),
-    override val cornerPin: CornerPinOffsets = CornerPinOffsets()
-) : EditorLayer {
-    override fun withBaseTransform(
-        offsetXNorm: Float,
-        offsetYNorm: Float,
-        scale: Float,
-        stretchX: Float,
-        stretchY: Float,
-        rotationDeg: Float,
-        opacity: Float,
-        visible: Boolean,
-        locked: Boolean
-    ) = copy(
-        offsetXNorm = offsetXNorm,
-        offsetYNorm = offsetYNorm,
-        scale = scale,
-        stretchX = stretchX,
-        stretchY = stretchY,
-        rotationDeg = rotationDeg,
-        opacity = opacity,
-        visible = visible,
-        locked = locked
-    )
-
-    override fun withExtraTransforms(
-        transform3D: Layer3DTransform,
-        cornerPin: CornerPinOffsets
-    ) = copy(transform3D = transform3D, cornerPin = cornerPin)
+    override fun withUniversalCrop(crop: ImageCropRect, cropShape: ImageCropShape) =
+        copy(crop = crop, cropShape = cropShape)
 }
 
 enum class ExportImageFormat(val label: String, val ext: String, val mimeType: String) {

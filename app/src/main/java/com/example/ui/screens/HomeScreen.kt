@@ -47,7 +47,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -58,7 +57,6 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -325,9 +323,9 @@ fun HomeScreen(
                         }
                     }
                 } else {
-                    // Ordered oldest -> newest so #1 is oldest, #2 is next newer, etc.
+                    // Ordered newest -> oldest at top, keeping oldest numbered #1 at bottom
                     itemsIndexed(projects, key = { _, item -> item.id }) { index, project ->
-                        val number = index + 1
+                        val number = projects.size - index
                         val isSelected = project.id in selectedProjectIds
                         HistoryProjectCard(
                             number = number,
@@ -372,7 +370,6 @@ private fun HistoryProjectCard(
     onDeleteAllSelected: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var holdProgress by remember(project.id) { mutableFloatStateOf(0f) }
 
     val thumbBitmap = remember(project.thumbnailPath, project.updatedAtMillis) {
         project.thumbnailPath?.let { path ->
@@ -401,21 +398,12 @@ private fun HistoryProjectCard(
                     awaitFirstDown(requireUnconsumed = false)
                     var triggeredHold = false
                     val progressJob = scope.launch {
-                        val totalMs = 500L
-                        val stepMs = 40L
-                        var elapsed = 0L
-                        while (elapsed < totalMs) {
-                            delay(stepMs)
-                            elapsed += stepMs
-                            holdProgress = (elapsed.toFloat() / totalMs).coerceIn(0f, 1f)
-                        }
+                        delay(500L)
                         triggeredHold = true
-                        holdProgress = 0f
                         onHoldSelect()
                     }
                     val up = waitForUpOrCancellation()
                     progressJob.cancel()
-                    holdProgress = 0f
                     if (up != null && !triggeredHold) {
                         onTap()
                     }
@@ -432,15 +420,6 @@ private fun HistoryProjectCard(
         )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            if (holdProgress > 0f) {
-                LinearProgressIndicator(
-                    progress = { holdProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp),
-                    color = StudioAzure
-                )
-            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

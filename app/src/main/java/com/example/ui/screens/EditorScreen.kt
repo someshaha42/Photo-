@@ -43,9 +43,6 @@ import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AspectRatio
-import androidx.compose.material.icons.rounded.AutoFixHigh
-import androidx.compose.material.icons.rounded.Brush
-import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Crop
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
@@ -106,11 +103,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.model.DrawLayer
 import com.example.model.GroupLayer
 import com.example.model.ImageLayer
-import com.example.model.LayerShapeType
-import com.example.model.ShapeLayer
 import com.example.model.TextLayer
 import com.example.ui.ExportFeedbackState
 import com.example.ui.EyedropperTarget
@@ -122,7 +116,6 @@ import com.example.ui.components.CanvasSettingsPanel
 import com.example.ui.components.ColorToolPanel
 import com.example.ui.components.CornerPinToolPanel
 import com.example.ui.components.CropToolPanel
-import com.example.ui.components.DrawToolPanel
 import com.example.ui.components.EditorCanvasViewport
 import com.example.ui.components.EmojiSettingsPanel
 import com.example.ui.components.FloatingEyedropperOverlay
@@ -134,7 +127,6 @@ import com.example.ui.components.MyProjectsSideDrawer
 import com.example.ui.components.PendingPhotoCropOverlay
 import com.example.ui.components.RotateTransformPanel
 import com.example.ui.components.SaveExportDialog
-import com.example.ui.components.ShapesToolPanel
 import com.example.ui.components.TextToolPanel
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
@@ -157,7 +149,6 @@ fun EditorScreen(
     viewModel: StudioViewModel,
     onNavigateBack: () -> Unit,
     onPickPhotosDirect: () -> Unit,
-    onPickBackgroundImageDirect: () -> Unit,
     onOpenFontLibrary: () -> Unit,
     onImportFontsClick: () -> Unit = onOpenFontLibrary,
     onImportArchiveClick: () -> Unit = onOpenFontLibrary
@@ -168,7 +159,6 @@ fun EditorScreen(
 
     val document by viewModel.document.collectAsStateWithLifecycle()
     val imageBitmaps by viewModel.imageBitmaps.collectAsStateWithLifecycle()
-    val blurredPreview by viewModel.blurredBgPreview.collectAsStateWithLifecycle()
     val activeToolDrawer by viewModel.activeToolDrawer.collectAsStateWithLifecycle()
     val showLayersDrawer by viewModel.showLayersDrawer.collectAsStateWithLifecycle()
     val showProjectsDrawer by viewModel.showProjectsDrawer.collectAsStateWithLifecycle()
@@ -188,11 +178,6 @@ fun EditorScreen(
     val fontsRecentToOld by viewModel.fontsRecentToOld.collectAsStateWithLifecycle()
     val selectedFontId by viewModel.selectedFontId.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val drawColorArgb by viewModel.drawColorArgb.collectAsStateWithLifecycle()
-    val drawBrushSizeNorm by viewModel.drawBrushSizeNorm.collectAsStateWithLifecycle()
-    val drawStrokeStyle by viewModel.drawStrokeStyle.collectAsStateWithLifecycle()
-    val showStrokeControls by viewModel.showStrokeControls.collectAsStateWithLifecycle()
-    val shapeEditPointsMode by viewModel.shapeEditPointsMode.collectAsStateWithLifecycle()
     val transformLocks by viewModel.transformLocks.collectAsStateWithLifecycle()
     val pendingCropQueue by viewModel.pendingCropQueue.collectAsStateWithLifecycle()
 
@@ -268,13 +253,7 @@ fun EditorScreen(
     val selectedTextLayer = selectedLayer as? TextLayer
     val selectedImageLayer = (selectedLayer as? ImageLayer)
         ?: document.layers.filterIsInstance<ImageLayer>().lastOrNull()
-    val selectedShapeLayer = selectedLayer as? ShapeLayer
     val activeFont = fonts.firstOrNull { it.id == (selectedTextLayer?.fontId ?: selectedFontId) }
-    val hasDrawContent = (selectedLayer as? DrawLayer)?.strokes?.isNotEmpty() == true ||
-        document.layers.filterIsInstance<DrawLayer>().any { it.strokes.isNotEmpty() }
-    val selectedDrawLayerCount = remember(document.layers, document.selectedLayerId, document.selectionOrder) {
-        viewModel.selectedDrawLayerIds().size
-    }
     val isClearTypingMode = isImeVisible && activeToolDrawer == ToolDrawerTab.TEXT
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -330,15 +309,6 @@ fun EditorScreen(
                                     onClick = {
                                         showAddMenu = false
                                         viewModel.startNewTextDraft()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Shapes") },
-                                    leadingIcon = { Icon(Icons.Rounded.Category, contentDescription = null) },
-                                    onClick = {
-                                        showAddMenu = false
-                                        viewModel.addShapeLayer(LayerShapeType.ROUNDED_RECT)
-                                        viewModel.openToolDrawer(ToolDrawerTab.SHAPES)
                                     }
                                 )
                             }
@@ -573,7 +543,6 @@ fun EditorScreen(
             val toolDrawerMaxHeight = when {
                 isClearTypingMode -> 140.dp
                 isSpaciousLandscapeCanvas -> (spareVerticalDp - 88.dp).coerceIn(280.dp, 460.dp)
-                showStrokeControls || activeToolDrawer == ToolDrawerTab.SHAPES -> 340.dp
                 else -> 265.dp
             }.coerceAtMost(maxSafeDrawerHeight)
 
@@ -598,16 +567,10 @@ fun EditorScreen(
                     EditorCanvasViewport(
                         document = document,
                         imageBitmaps = imageBitmaps,
-                        blurredPreview = blurredPreview,
                         fontRenderEngine = viewModel.fontRenderEngine,
                         isZoomMode = isZoomMode,
                         isCropMode = activeToolDrawer == ToolDrawerTab.CROP,
-                        isDrawMode = activeToolDrawer == ToolDrawerTab.DRAW,
                         isCornerPinMode = activeToolDrawer == ToolDrawerTab.CORNER_PIN,
-                        isShapeEditPointsMode = shapeEditPointsMode,
-                        drawColorArgb = drawColorArgb,
-                        drawBrushSizeNorm = drawBrushSizeNorm,
-                        drawStrokeStyle = drawStrokeStyle,
                         transformLocks = transformLocks,
                         canvasZoom = canvasZoom,
                         canvasPan = canvasPan,
@@ -628,14 +591,10 @@ fun EditorScreen(
                         onCornerPinDrag = { id, cornerIndex, dxRatio, dyRatio ->
                             viewModel.updateSelectedLayerCornerPinTransient(id, cornerIndex, dxRatio, dyRatio)
                         },
-                        onShapeHandleDrag = { id, handleId, dxPx, dyPx, basePx ->
-                            viewModel.applyShapeVectorHandleDragTransient(id, handleId, dxPx, dyPx, basePx)
-                        },
                         onBeginTransformTransaction = { viewModel.beginTransformTransaction() },
                         onEndTransformTransaction = { viewModel.endTransformTransaction() },
                         onUpdateCropTransient = { viewModel.updateSelectedImageCropTransient(it) },
                         onCommitCrop = { viewModel.updateSelectedImageCrop(it) },
-                        onAddDrawStroke = { viewModel.addDrawStroke(it) },
                         onEyedropperTap = { nx, ny ->
                             scope.launch {
                                 val bmp = viewModel.mediaManager.renderProjectToBitmap(
@@ -649,11 +608,10 @@ fun EditorScreen(
                                 val sampled = bmp.getPixel(px, py)
                                 bmp.recycle()
                                 if (android.graphics.Color.alpha(sampled) > 0) {
-                                    viewModel.updateBackground { bg ->
-                                        bg.copy(colorArgb = sampled.toLong() and 0xFFFFFFFFL)
-                                    }
+                                    viewModel.applyEyedropperColor(sampled)
+                                } else {
+                                    viewModel.setEyedropperActive(false)
                                 }
-                                viewModel.setEyedropperActive(false)
                             }
                         }
                     )
@@ -828,17 +786,6 @@ fun EditorScreen(
                                                 onEndTransaction = { viewModel.endTransformTransaction() }
                                             )
                                         }
-                                        ToolDrawerTab.SHAPES -> {
-                                            ShapesToolPanel(
-                                                selectedShapeLayer = selectedShapeLayer,
-                                                isEditPointsMode = shapeEditPointsMode,
-                                                onToggleEditPointsMode = { viewModel.toggleShapeEditPointsMode() },
-                                                onAddShape = { viewModel.addShapeLayer(it) },
-                                                onUpdateShape = { viewModel.updateSelectedShapeLayer(it) },
-                                                onUpdateShapeTransient = { viewModel.updateSelectedShapeLayerTransient(it) },
-                                                onEndTransaction = { viewModel.endTransformTransaction() }
-                                            )
-                                        }
                                         ToolDrawerTab.ROTATE -> {
                                             RotateTransformPanel(
                                                 selectedLayer = selectedLayer,
@@ -853,26 +800,6 @@ fun EditorScreen(
                                                     selectedLayer?.let { viewModel.duplicateLayer(it.id) }
                                                 },
                                                 onEndTransaction = { viewModel.endTransformTransaction() }
-                                            )
-                                        }
-                                        ToolDrawerTab.DRAW -> {
-                                            DrawToolPanel(
-                                                brushColorArgb = drawColorArgb,
-                                                brushSizeNorm = drawBrushSizeNorm,
-                                                strokeStyle = drawStrokeStyle,
-                                                showStrokeControls = showStrokeControls,
-                                                selectedDrawLayerCount = selectedDrawLayerCount,
-                                                canUndoStroke = hasDrawContent,
-                                                onSelectColor = { viewModel.setDrawColor(it) },
-                                                onSetBrushSize = { viewModel.setDrawBrushSizeNorm(it) },
-                                                onToggleStrokeControls = { viewModel.toggleStrokeControls() },
-                                                onStartNewStrokeSession = { viewModel.startNewDrawLayerSession() },
-                                                onUpdateStrokeStyleTransient = { viewModel.updateStrokeStyleTransient(it) },
-                                                onUpdateStrokeStyleCommit = { viewModel.updateStrokeStyle(it) },
-                                                onEndTransaction = { viewModel.endTransformTransaction() },
-                                                onUndoStroke = { viewModel.undoLastDrawStroke() },
-                                                onClearDraw = { viewModel.clearActiveDrawLayer() },
-                                                onDone = { viewModel.closeToolDrawer() }
                                             )
                                         }
                                         ToolDrawerTab.CORNER_PIN -> {
@@ -982,59 +909,6 @@ fun EditorScreen(
                                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
                                         )
                                     )
-                                    selectedLayer is ShapeLayer -> listOf(
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.Category,
-                                            label = "Shapes",
-                                            selected = activeToolDrawer == ToolDrawerTab.SHAPES,
-                                            tag = "bottom_tool_shapes",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.AutoFixHigh,
-                                            label = "Points",
-                                            selected = shapeEditPointsMode,
-                                            tag = "bottom_tool_shape_points",
-                                            onClick = { viewModel.toggleShapeEditPointsMode() }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.Palette,
-                                            label = "Color",
-                                            selected = activeToolDrawer == ToolDrawerTab.COLOR,
-                                            tag = "bottom_tool_color",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                            label = "Rotate",
-                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                            tag = "bottom_tool_rotate",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                        )
-                                    )
-                                    selectedLayer is DrawLayer -> listOf(
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.Brush,
-                                            label = "Draw",
-                                            selected = activeToolDrawer == ToolDrawerTab.DRAW,
-                                            tag = "bottom_tool_draw",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.Palette,
-                                            label = "Color",
-                                            selected = activeToolDrawer == ToolDrawerTab.COLOR,
-                                            tag = "bottom_tool_color",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.AutoMirrored.Rounded.RotateRight,
-                                            label = "Rotate",
-                                            selected = activeToolDrawer == ToolDrawerTab.ROTATE,
-                                            tag = "bottom_tool_rotate",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.ROTATE) }
-                                        )
-                                    )
                                     selectedLayer is GroupLayer -> listOf(
                                         DockToolSpec(
                                             icon = Icons.AutoMirrored.Rounded.RotateRight,
@@ -1058,20 +932,6 @@ fun EditorScreen(
                                             selected = activeToolDrawer == ToolDrawerTab.TEXT,
                                             tag = "bottom_tool_text_plus",
                                             onClick = { viewModel.startNewTextDraft() }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.Category,
-                                            label = "Shapes",
-                                            selected = activeToolDrawer == ToolDrawerTab.SHAPES,
-                                            tag = "bottom_tool_shapes",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.SHAPES) }
-                                        ),
-                                        DockToolSpec(
-                                            icon = Icons.Rounded.Brush,
-                                            label = "Draw",
-                                            selected = activeToolDrawer == ToolDrawerTab.DRAW,
-                                            tag = "bottom_tool_draw",
-                                            onClick = { viewModel.openToolDrawer(ToolDrawerTab.DRAW) }
                                         )
                                     )
                                 }
@@ -1266,18 +1126,7 @@ fun EditorScreen(
                     ThreeDotSheetSection.BACKGROUND -> {
                         BackgroundSettingsPanel(
                             background = document.background,
-                            blurredPreview = blurredPreview,
-                            selectedBgImageBitmap = document.background.backgroundImageUri?.let { imageBitmaps[it] },
-                            isEyedropperActive = isEyedropperActive,
-                            onUpdateBackground = { viewModel.updateBackground(it) },
-                            onPickBackgroundImage = {
-                                activeThreeDotSection = ThreeDotSheetSection.NONE
-                                onPickBackgroundImageDirect()
-                            },
-                            onToggleEyedropper = {
-                                viewModel.startEyedropper(EyedropperTarget.BACKGROUND)
-                                activeThreeDotSection = ThreeDotSheetSection.NONE
-                            }
+                            onUpdateBackground = { viewModel.updateBackground(it) }
                         )
                     }
                     ThreeDotSheetSection.EMOJI -> {
