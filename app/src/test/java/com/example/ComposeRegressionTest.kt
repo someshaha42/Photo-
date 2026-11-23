@@ -1072,6 +1072,43 @@ class ComposeRegressionTest {
             composeRule.onAllNodesWithTag("creator_view_eye_button").fetchSemanticsNodes().isNotEmpty()
         )
     }
+
+    @Test
+    fun packagedUiDrawablesAndXmlAnimationsLoadAtRuntime() {
+        val context: android.content.Context = ApplicationProvider.getApplicationContext()
+        val motionSpecs = com.example.ui.theme.UiResourceLoader.loadMotionSpecs(context)
+        assertEquals(220, motionSpecs.panelEnterMs)
+        assertEquals(180, motionSpecs.panelExitMs)
+        assertEquals(200, motionSpecs.overlayFadeInMs)
+        assertEquals(160, motionSpecs.overlayFadeOutMs)
+        assertEquals(200, motionSpecs.dialogScaleFadeMs)
+
+        val refs = com.example.ui.theme.UiResourceLoader.packagedResourceSnapshot()
+        assertTrue(androidx.core.content.ContextCompat.getDrawable(context, refs.threeDRotateIcon) != null)
+        assertTrue(androidx.core.content.ContextCompat.getDrawable(context, refs.threeDScaleIcon) != null)
+        assertTrue(androidx.core.content.ContextCompat.getDrawable(context, refs.threeDSkewIcon) != null)
+
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        vm.addTextLayer("ICON TEST")
+        vm.openToolDrawer(ToolDrawerTab.THREE_D)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("three_d_mode_rotate").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("three_d_mode_scale").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("three_d_mode_skew").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+    }
 }
 
 

@@ -1,0 +1,459 @@
+:root {
+  --pf-dark-bg: #0e1118;
+  --pf-dark-surface: #161b26;
+  --pf-dark-surface-variant: #1f2636;
+  --pf-dark-surface-elevated: #262f42;
+  --pf-dark-on-bg: #f3f6fc;
+  --pf-dark-on-surface: #e6ecf7;
+  --pf-dark-on-variant: #9aa7c0;
+  --pf-dark-outline: #323c52;
+
+  --pf-light-bg: #f5f7fb;
+  --pf-light-surface: #ffffff;
+  --pf-light-surface-variant: #e9eef7;
+  --pf-light-surface-elevated: #dce4f2;
+  --pf-light-on-bg: #101522;
+  --pf-light-on-surface: #161c2c;
+  --pf-light-on-variant: #53607a;
+  --pf-light-outline: #cbd4e4;
+
+  --pf-azure: #2d8cff;
+  --pf-azure-dark: #1a6fe0;
+  --pf-teal: #00d4b4;
+  --pf-amber: #ffb020;
+  --pf-coral: #ff5a6e;
+  --pf-emerald: #22c55e;
+  --pf-purple: #8b5cf6;
+
+  --pf-am-bg: #1f222e;
+  --pf-am-divider: #12141c;
+  --pf-am-pill: #303549;
+  --pf-am-link-btn: #5a6073;
+  --pf-am-gold: #f0b44a;
+  --pf-am-active-bg: #0d0f16;
+  --pf-am-muted: #8b91a6;
+
+  --pf-checker-1: #202020;
+  --pf-checker-2: #303030;
+
+  --pf-bg: var(--pf-dark-bg);
+  --pf-surface: var(--pf-dark-surface);
+  --pf-surface-variant: var(--pf-dark-surface-variant);
+  --pf-on-bg: var(--pf-dark-on-bg);
+  --pf-on-surface: var(--pf-dark-on-surface);
+  --pf-on-variant: var(--pf-dark-on-variant);
+  --pf-outline: var(--pf-dark-outline);
+
+  --pf-panel-enter-ms: 220ms;
+  --pf-panel-exit-ms: 180ms;
+  --pf-overlay-fade-ms: 200ms;
+}
+
+body.pf-theme-light {
+  --pf-bg: var(--pf-light-bg);
+  --pf-surface: var(--pf-light-surface);
+  --pf-surface-variant: var(--pf-light-surface-variant);
+  --pf-on-bg: var(--pf-light-on-bg);
+  --pf-on-surface: var(--pf-light-on-surface);
+  --pf-on-variant: var(--pf-light-on-variant);
+  --pf-outline: var(--pf-light-outline);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--pf-bg);
+  color: var(--pf-on-bg);
+  font-family: "Roboto", "Noto Sans", system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+.pf-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
+}
+
+.pf-icon-sm {
+  width: 16px;
+  height: 16px;
+}
+
+.pf-icon-lg {
+  width: 24px;
+  height: 24px;
+}
+
+.pf-touch-btn {
+  min-width: 48px;
+  min-height: 48px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 12px;
+  cursor: pointer;
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
+.pf-home-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  gap: 16px;
+}
+
+.pf-home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pf-home-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pf-home-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+
+.pf-home-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--pf-on-variant);
+}
+
+.pf-new-project-btn {
+  width: 100%;
+  min-height: 54px;
+  border-radius: 16px;
+  border: none;
+  background: var(--pf-azure);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.pf-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.pf-project-card {
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-outline);
+  border-radius: 16px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-project-card.selected {
+  border: 2px solid var(--pf-azure);
+}
+
+.pf-checkerboard {
+  background-image:
+    linear-gradient(45deg, var(--pf-checker-2) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--pf-checker-2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--pf-checker-2) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--pf-checker-2) 75%);
+  background-color: var(--pf-checker-1);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+.pf-editor-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.pf-topbar {
+  background: var(--pf-azure);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  z-index: 20;
+}
+
+.pf-topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  min-height: 48px;
+  gap: 4px;
+}
+
+.pf-topbar-context {
+  background: rgba(0, 0, 0, 0.16);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  overflow-x: auto;
+}
+
+.pf-tool-chip {
+  min-height: 42px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pf-tool-chip.active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.pf-editor-stage {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.pf-canvas-frame {
+  width: min(86vw, 420px);
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  border: 1.5px solid var(--pf-outline);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+.pf-floating-corner-btn {
+  position: absolute;
+  min-width: 52px;
+  min-height: 52px;
+  padding: 6px 9px;
+  border-radius: 12px;
+  border: none;
+  background: rgba(0, 0, 0, 0.72);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: grab;
+  z-index: 15;
+}
+
+.pf-floating-corner-btn.active {
+  background: var(--pf-amber);
+  color: #000000;
+}
+
+.pf-bottom-dock {
+  background: var(--pf-surface);
+  border-top: 1px solid var(--pf-outline);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 4px 8px;
+  min-height: 66px;
+  z-index: 18;
+}
+
+.pf-dock-btn {
+  min-width: 48px;
+  min-height: 48px;
+  border: none;
+  background: transparent;
+  color: var(--pf-on-surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.pf-dock-btn.active {
+  color: var(--pf-azure);
+  background: rgba(45, 140, 255, 0.12);
+}
+
+.pf-floating-panel {
+  position: absolute;
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-outline);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  z-index: 30;
+  animation: pfPanelEnter var(--pf-panel-enter-ms) ease-out;
+}
+
+.pf-floating-panel.am-3d {
+  background: var(--pf-am-bg);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.pf-drag-strip {
+  width: 100%;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: move;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-drag-pill {
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.65);
+}
+
+.pf-3d-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.pf-3d-left-rail {
+  width: 52px;
+  border-right: 1px solid var(--pf-am-divider);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+
+.pf-3d-center {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-3d-right-rail {
+  width: 56px;
+  border-left: 1px solid var(--pf-am-divider);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-evenly;
+  padding: 4px;
+}
+
+.pf-3d-mode-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pf-3d-mode-btn.selected {
+  background: var(--pf-am-active-bg);
+  outline: 1.5px solid var(--pf-am-gold);
+}
+
+.pf-pill-row {
+  display: flex;
+  gap: 8px;
+}
+
+.pf-pill-btn {
+  flex: 1;
+  height: 34px;
+  border-radius: 8px;
+  border: none;
+  background: var(--pf-am-pill);
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-pill-btn.active {
+  color: var(--pf-am-gold);
+}
+
+.pf-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-swatch-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1.5px solid var(--pf-outline);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+@keyframes pfPanelEnter {
+  from {
+    opacity: 0;
+    transform: translateY(18%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

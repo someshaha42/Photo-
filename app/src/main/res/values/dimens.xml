@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="min_touch_target">48dp</dimen>
+    <dimen name="panel_corner_radius">16dp</dimen>
+    <dimen name="card_corner_radius">18dp</dimen>
+    <dimen name="spacing_xs">4dp</dimen>
+    <dimen name="spacing_sm">8dp</dimen>
+    <dimen name="spacing_md">12dp</dimen>
+    <dimen name="spacing_lg">16dp</dimen>
+    <dimen name="top_bar_action_height">48dp</dimen>
+    <dimen name="bottom_dock_height">66dp</dimen>
+    <dimen name="three_d_panel_height">268dp</dimen>
+</resources>

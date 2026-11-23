@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
@@ -154,6 +155,7 @@ import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
+import com.example.ui.theme.rememberUiMotionSpecs
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -296,6 +298,7 @@ fun EditorScreen(
         ?: document.layers.filterIsInstance<ImageLayer>().lastOrNull()
     val activeFont = fonts.firstOrNull { it.id == (selectedTextLayer?.fontId ?: selectedFontId) }
     val isClearTypingMode = isImeVisible && activeToolDrawer == ToolDrawerTab.TEXT
+    val motionSpecs = rememberUiMotionSpecs()
 
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
@@ -787,8 +790,8 @@ fun EditorScreen(
                     // Always-visible Horizontal Layer Strip whenever NO floating tool option panel is open
                     AnimatedVisibility(
                         visible = activeToolDrawer == ToolDrawerTab.NONE && !isCreatorViewActive,
-                        enter = expandVertically(),
-                        exit = shrinkVertically()
+                        enter = expandVertically(animationSpec = tween(motionSpecs.panelEnterMs)),
+                        exit = shrinkVertically(animationSpec = tween(motionSpecs.panelExitMs))
                     ) {
                         HorizontalLayerStrip(
                             layers = document.layers,
@@ -1414,8 +1417,8 @@ fun EditorScreen(
             // Right-Half Vertical Side Layers Drawer (Top-to-bottom on right side)
             AnimatedVisibility(
                 visible = showLayersDrawer && !isCreatorViewActive,
-                enter = slideInHorizontally { it },
-                exit = slideOutHorizontally { it },
+                enter = slideInHorizontally(animationSpec = tween(motionSpecs.panelEnterMs)) { it },
+                exit = slideOutHorizontally(animationSpec = tween(motionSpecs.panelExitMs)) { it },
                 modifier = Modifier.align(Alignment.CenterEnd)
             ) {
                 LayersSideDrawer(
@@ -1440,8 +1443,8 @@ fun EditorScreen(
             // Right-Half Vertical Side My Projects Drawer (Auto-backups current project on switch)
             AnimatedVisibility(
                 visible = showProjectsDrawer && !isCreatorViewActive,
-                enter = slideInHorizontally { it },
-                exit = slideOutHorizontally { it },
+                enter = slideInHorizontally(animationSpec = tween(motionSpecs.panelEnterMs)) { it },
+                exit = slideOutHorizontally(animationSpec = tween(motionSpecs.panelExitMs)) { it },
                 modifier = Modifier.align(Alignment.CenterEnd)
             ) {
                 MyProjectsSideDrawer(

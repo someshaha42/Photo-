@@ -7,4 +7,35 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- PixelForge Studio Dark Theme Palette -->
+    <color name="dark_background">#FF0E1118</color>
+    <color name="dark_surface">#FF161B26</color>
+    <color name="dark_surface_variant">#FF1F2636</color>
+    <color name="dark_surface_elevated">#FF262F42</color>
+    <color name="dark_on_background">#FFF3F6FC</color>
+    <color name="dark_on_surface">#FFE6ECF7</color>
+    <color name="dark_on_surface_variant">#FF9AA7C0</color>
+    <color name="dark_outline">#FF323C52</color>
+
+    <!-- PixelForge Studio Light Theme Palette -->
+    <color name="light_background">#FFF5F7FB</color>
+    <color name="light_surface">#FFFFFFFF</color>
+    <color name="light_surface_variant">#FFE9EEF7</color>
+    <color name="light_surface_elevated">#FFDCE4F2</color>
+    <color name="light_on_background">#FF101522</color>
+    <color name="light_on_surface">#FF161C2C</color>
+    <color name="light_on_surface_variant">#FF53607A</color>
+    <color name="light_outline">#FFCBD4E4</color>
+
+    <!-- PixelForge Brand & 3D Panel Accents -->
+    <color name="studio_azure">#FF2D8CFF</color>
+    <color name="studio_azure_dark">#FF1A6FE0</color>
+    <color name="studio_teal">#FF00D4B4</color>
+    <color name="studio_amber">#FFFFB020</color>
+    <color name="studio_coral">#FFFF5A6E</color>
+    <color name="studio_emerald">#FF22C55E</color>
+    <color name="studio_purple">#FF8B5CF6</color>
+    <color name="am_panel_bg">#FF1F222E</color>
+    <color name="am_gold">#FFF0B44A</color>
 </resources>

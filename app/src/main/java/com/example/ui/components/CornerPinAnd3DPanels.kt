@@ -72,11 +72,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.model.EditorLayer
 import com.example.model.ImageLayer
 import com.example.model.Layer3DTransform
@@ -1106,93 +1108,32 @@ private fun RightRailModeButton(
 
 @Composable
 private fun RotateBoxIcon(tint: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val stroke = 1.8.dp.toPx()
-        val boxS = size.minDimension * 0.34f
-        drawRect(
-            color = tint,
-            topLeft = Offset(center.x - boxS / 2f, center.y - boxS / 2f),
-            size = Size(boxS, boxS),
-            style = Stroke(width = stroke, join = StrokeJoin.Round)
-        )
-        val arcR = size.minDimension * 0.44f
-        drawArc(
-            color = tint,
-            startAngle = -140f,
-            sweepAngle = 110f,
-            useCenter = false,
-            topLeft = Offset(center.x - arcR, center.y - arcR),
-            size = Size(arcR * 2f, arcR * 2f),
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        drawArc(
-            color = tint,
-            startAngle = 40f,
-            sweepAngle = 110f,
-            useCenter = false,
-            topLeft = Offset(center.x - arcR, center.y - arcR),
-            size = Size(arcR * 2f, arcR * 2f),
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-    }
+    Icon(
+        painter = painterResource(id = R.drawable.ic_3d_rotate),
+        contentDescription = "Rotate Mode",
+        tint = tint,
+        modifier = modifier
+    )
 }
 
 @Composable
 private fun ScaleBoxIcon(tint: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val stroke = 1.8.dp.toPx()
-        val pad = size.minDimension * 0.14f
-        val inner = size.minDimension - pad * 2f
-        drawRoundRect(
-            color = tint,
-            topLeft = Offset(pad, pad),
-            size = Size(inner, inner),
-            cornerRadius = CornerRadius(2.dp.toPx()),
-            style = Stroke(width = stroke)
-        )
-        val smallS = inner * 0.38f
-        drawRect(
-            color = tint,
-            topLeft = Offset(pad, size.height - pad - smallS),
-            size = Size(smallS, smallS),
-            style = Stroke(width = stroke)
-        )
-        val ax0 = pad + smallS * 0.9f
-        val ay0 = size.height - pad - smallS * 0.9f
-        val ax1 = size.width - pad - inner * 0.22f
-        val ay1 = pad + inner * 0.22f
-        drawLine(tint, Offset(ax0, ay0), Offset(ax1, ay1), strokeWidth = stroke, cap = StrokeCap.Round)
-        drawLine(tint, Offset(ax1, ay1), Offset(ax1 - inner * 0.22f, ay1), strokeWidth = stroke, cap = StrokeCap.Round)
-        drawLine(tint, Offset(ax1, ay1), Offset(ax1, ay1 + inner * 0.22f), strokeWidth = stroke, cap = StrokeCap.Round)
-    }
+    Icon(
+        painter = painterResource(id = R.drawable.ic_3d_scale),
+        contentDescription = "Scale Mode",
+        tint = tint,
+        modifier = modifier
+    )
 }
 
 @Composable
 private fun SkewBoxIcon(tint: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val stroke = 1.7.dp.toPx()
-        val dash = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.5.dp.toPx()))
-        val left = size.width * 0.14f
-        val right = size.width * 0.68f
-        val top = size.height * 0.2f
-        val bottom = size.height * 0.82f
-
-        drawRect(
-            color = tint.copy(alpha = 0.7f),
-            topLeft = Offset(left, top),
-            size = Size(right - left, bottom - top),
-            style = Stroke(width = stroke * 0.85f, pathEffect = dash)
-        )
-
-        val p = Path().apply {
-            moveTo(size.width * 0.32f, top)
-            lineTo(size.width * 0.88f, top)
-            lineTo(size.width * 0.66f, bottom)
-            lineTo(size.width * 0.12f, bottom)
-            close()
-        }
-        drawPath(p, color = tint, style = Stroke(width = stroke, join = StrokeJoin.Round))
-    }
+    Icon(
+        painter = painterResource(id = R.drawable.ic_3d_skew),
+        contentDescription = "Skew Mode",
+        tint = tint,
+        modifier = modifier
+    )
 }
 
 private fun wrapAngleDeg(deg: Float): Float {
