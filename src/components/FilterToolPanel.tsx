@@ -69,10 +69,10 @@ export const FilterToolPanel: React.FC<FilterToolPanelProps> = ({
           {strokeEnabled && (
             <div className="pf-swatch-row">
               <button type="button" className="pf-touch-btn" onClick={() => onLaunchEyedropper('stroke')}>
-                <img src="../assets/icons/ic_eyedropper.png" alt="Pick Stroke Color" className="pf-icon pf-icon-sm" />
+                <img src="/assets/icons/ic_eyedropper.png" alt="Pick Stroke Color" className="pf-icon pf-icon-sm" />
               </button>
               <button type="button" className="pf-touch-btn">
-                <img src="../assets/icons/ic_palette.png" alt="Stroke Palette" className="pf-icon pf-icon-sm" />
+                <img src="/assets/icons/ic_palette.png" alt="Stroke Palette" className="pf-icon pf-icon-sm" />
               </button>
               <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flex: 1 }}>
                 {SWATCH_COLORS.map((c) => (
@@ -89,10 +89,10 @@ export const FilterToolPanel: React.FC<FilterToolPanelProps> = ({
           {shadowEnabled && (
             <div className="pf-swatch-row">
               <button type="button" className="pf-touch-btn" onClick={() => onLaunchEyedropper('shadow')}>
-                <img src="../assets/icons/ic_eyedropper.png" alt="Pick Shadow Color" className="pf-icon pf-icon-sm" />
+                <img src="/assets/icons/ic_eyedropper.png" alt="Pick Shadow Color" className="pf-icon pf-icon-sm" />
               </button>
               <button type="button" className="pf-touch-btn">
-                <img src="../assets/icons/ic_palette.png" alt="Shadow Palette" className="pf-icon pf-icon-sm" />
+                <img src="/assets/icons/ic_palette.png" alt="Shadow Palette" className="pf-icon pf-icon-sm" />
               </button>
             </div>
           )}
@@ -107,10 +107,10 @@ export const FilterToolPanel: React.FC<FilterToolPanelProps> = ({
       {subTab === 'FILL' && (
         <div className="pf-swatch-row">
           <button type="button" className="pf-touch-btn" onClick={() => onLaunchEyedropper('fill')}>
-            <img src="../assets/icons/ic_eyedropper.png" alt="Pick Fill Color" className="pf-icon pf-icon-sm" />
+            <img src="/assets/icons/ic_eyedropper.png" alt="Pick Fill Color" className="pf-icon pf-icon-sm" />
           </button>
           <button type="button" className="pf-touch-btn">
-            <img src="../assets/icons/ic_palette.png" alt="Fill Palette" className="pf-icon pf-icon-sm" />
+            <img src="/assets/icons/ic_palette.png" alt="Fill Palette" className="pf-icon pf-icon-sm" />
           </button>
           <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flex: 1 }}>
             {SWATCH_COLORS.map((c) => (

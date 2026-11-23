@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { EditorScreen } from './components/EditorScreen';
 import { HomeScreen, ProjectSummaryItem } from './components/HomeScreen';
-
-const INITIAL_PROJECTS: ProjectSummaryItem[] = [
-  { id: 'proj-1', title: 'Project 1', updatedAtLabel: 'Saved locally' },
-];
+import { StorageService } from './services/StorageService';
+import { AudioService } from './services/AudioService';
 
 export const App: React.FC = () => {
   const [activeProject, setActiveProject] = useState<ProjectSummaryItem | null>(null);
-  const [projects, setProjects] = useState<ProjectSummaryItem[]>(INITIAL_PROJECTS);
+  const [projects, setProjects] = useState<ProjectSummaryItem[]>(() => StorageService.getProjects());
   const [isDarkTheme, setIsDarkTheme] = useState(true);
+
+  useEffect(() => {
+    StorageService.saveProjects(projects);
+  }, [projects]);
 
   const toggleTheme = () => {
     setIsDarkTheme((prev) => {
@@ -20,12 +22,13 @@ export const App: React.FC = () => {
   };
 
   const createProject = () => {
+    AudioService.playShutterSound();
     const created: ProjectSummaryItem = {
-      id: `proj-${projects.length + 1}`,
+      id: `proj-${Date.now()}`,
       title: `Project ${projects.length + 1}`,
       updatedAtLabel: 'Just now',
     };
-    setProjects((prev) => [...prev, created]);
+    setProjects((prev) => [created, ...prev]);
     setActiveProject(created);
   };
 
