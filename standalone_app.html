@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PixelForge Studio (Zero-Command Standalone)</title>
+  <style>
+    :root {
+      --pf-surface: #1e1e1e;
+      --pf-surface-variant: #2d2d2d;
+      --pf-background: #121212;
+      --pf-on-surface: #ffffff;
+      --pf-on-variant: #b0b0b0;
+      --pf-outline: #3d3d3d;
+      --pf-azure: #2d8cff;
+      --pf-emerald: #2e7d32;
+      --pf-amber: #ffb300;
+      --pf-teal: #00b4a0;
+      --pf-am-panel: #202428;
+      --pf-am-muted: #8d949d;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--pf-background);
+      color: var(--pf-on-surface);
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* Top Bar */
+    .topbar {
+      background: var(--pf-surface);
+      border-bottom: 1px solid var(--pf-outline);
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+    }
+    .topbar-row {
+      display: flex;
+      align-items: center;
+      justifyContent: space-between;
+      padding: 8px 12px;
+      gap: 8px;
+    }
+    .icon-btn {
+      background: transparent;
+      border: none;
+      color: var(--pf-on-surface);
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background 0.15s;
+    }
+    .icon-btn:hover { background: var(--pf-surface-variant); }
+    .icon-btn img { width: 20px; height: 20px; object-fit: contain; }
+
+    .context-bar {
+      display: flex;
+      gap: 6px;
+      padding: 6px 12px;
+      overflow-x: auto;
+      border-top: 1px solid var(--pf-outline);
+      background: #181818;
+    }
+    .chip-btn {
+      background: var(--pf-surface-variant);
+      border: 1px solid var(--pf-outline);
+      color: var(--pf-on-surface);
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .chip-btn.active {
+      background: var(--pf-azure);
+      color: #fff;
+      border-color: var(--pf-azure);
+    }
+    .chip-btn img { width: 14px; height: 14px; }
+
+    /* Central Stage */
+    .stage {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      background: #141414;
+      overflow: hidden;
+      padding: 16px;
+    }
+
+    .canvas-frame {
+      width: min(85vw, 420px);
+      aspect-ratio: 1 / 1;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid var(--pf-outline);
+      background-image: linear-gradient(45deg, #1c1c1c 25%, transparent 25%),
+                        linear-gradient(-45deg, #1c1c1c 25%, transparent 25%),
+                        linear-gradient(45deg, transparent 75%, #1c1c1c 75%),
+                        linear-gradient(-45deg, transparent 75%, #1c1c1c 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      background-color: #262626;
+      perspective: 800px;
+    }
+
+    .canvas-layer-photo {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+      transition: transform 0.1s ease-out;
+    }
+
+    .canvas-layer-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: clamp(24px, 7vw, 40px);
+      text-align: center;
+      padding: 16px;
+      word-break: break-word;
+      transition: transform 0.1s ease-out;
+      cursor: grab;
+    }
+
+    /* Bottom Dock */
+    .bottom-dock {
+      background: var(--pf-surface);
+      border-top: 1px solid var(--pf-outline);
+      display: flex;
+      justify-content: space-around;
+      padding: 6px 4px;
+      z-index: 10;
+    }
+    .dock-btn {
+      background: transparent;
+      border: none;
+      color: var(--pf-on-variant);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 10px;
+    }
+    .dock-btn.active {
+      color: var(--pf-azure);
+      background: rgba(45, 140, 255, 0.12);
+    }
+    .dock-btn img { width: 20px; height: 20px; }
+
+    /* Floating Tool Drawer */
+    .floating-panel {
+      position: absolute;
+      bottom: 60px;
+      left: 12px;
+      right: 12px;
+      background: var(--pf-surface);
+      border: 1px solid var(--pf-outline);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+    .floating-panel.visible { display: flex; }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 700;
+      font-size: 14px;
+      border-bottom: 1px solid var(--pf-outline);
+      padding-bottom: 6px;
+    }
+
+    .swatch-grid {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .swatch-item {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--pf-outline);
+      cursor: pointer;
+    }
+
+    .range-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
+    .range-group input { width: 100%; cursor: pointer; }
+
+    /* Dialogs */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal-overlay.visible { display: flex; }
+    .modal-card {
+      width: min(92vw, 420px);
+      background: var(--pf-surface);
+      border: 1px solid var(--pf-outline);
+      border-radius: 20px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Hidden Photo File Input -->
+  <input type="file" id="photoInput" accept="image/*" style="display:none;">
+
+  <!-- Audio Element for Shutter Feedback -->
+  <audio id="shutterAudio" src="./assets/media/shutter_click.mp3" preload="auto"></audio>
+
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-row">
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <button class="icon-btn" id="btnUploadPhoto" title="Upload Photo">
+          <img src="./assets/icons/ic_add_photo.png" alt="Add Photo">
+        </button>
+        <button class="icon-btn" id="btnResetTransform" title="Reset Transforms">
+          <img src="./assets/icons/ic_undo.png" alt="Reset">
+        </button>
+      </div>
+
+      <div style="font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">PixelForge Studio</div>
+
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <button class="icon-btn" id="btnOpenExport" title="Export Image" style="background: var(--pf-azure); color: #fff;">
+          <img src="./assets/icons/ic_save.png" alt="Export">
+        </button>
+        <button class="icon-btn" id="btnSettings" title="Settings">
+          <img src="./assets/icons/ic_settings.png" alt="Settings">
+        </button>
+      </div>
+    </div>
+
+    <!-- Context Chips Bar -->
+    <div class="context-bar">
+      <button class="chip-btn" id="chipCornerPin">
+        <img src="./assets/icons/ic_corner_pin.png" alt="">
+        <span>Corner Pin</span>
+      </button>
+      <button class="chip-btn" id="chip3D">
+        <img src="./assets/icons/ic_3d.png" alt="">
+        <span>3D</span>
+      </button>
+      <button class="chip-btn" id="chipFilter">
+        <img src="./assets/icons/ic_filter.png" alt="">
+        <span>Filter</span>
+      </button>
+      <button class="chip-btn" id="chipDelete">
+        <img src="./assets/icons/ic_delete.png" alt="">
+        <span>Delete Text</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Central Canvas Stage -->
+  <main class="stage">
+    <div class="canvas-frame" id="canvasFrame">
+      <img id="photoLayer" class="canvas-layer-photo" style="display:none;" alt="Photo">
+      <div id="textLayer" class="canvas-layer-text" style="color: #ffffff;">PixelForge</div>
+    </div>
+  </main>
+
+  <!-- Floating Tool Panel (Text) -->
+  <div class="floating-panel" id="panelText">
+    <div class="panel-header">
+      <span>Edit Text</span>
+      <button class="icon-btn" style="width:24px;height:24px;" onclick="closePanels()">✕</button>
+    </div>
+    <input type="text" id="textInput" value="PixelForge" style="padding: 10px; border-radius: 8px; border: 1px solid var(--pf-outline); background: var(--pf-surface-variant); color: #fff; font-size: 14px;">
+  </div>
+
+  <!-- Floating Tool Panel (Color) -->
+  <div class="floating-panel" id="panelColor">
+    <div class="panel-header">
+      <span>Layer Color</span>
+      <button class="icon-btn" style="width:24px;height:24px;" onclick="closePanels()">✕</button>
+    </div>
+    <div class="swatch-grid" id="swatchContainer"></div>
+  </div>
+
+  <!-- Floating Tool Panel (Rotate) -->
+  <div class="floating-panel" id="panelRotate">
+    <div class="panel-header">
+      <span>Rotate & Flip</span>
+      <button class="icon-btn" style="width:24px;height:24px;" onclick="closePanels()">✕</button>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button class="chip-btn" id="btnRotate90" style="flex:1; justify-content:center;">Rotate 90°</button>
+      <button class="chip-btn" id="btnFlipH" style="flex:1; justify-content:center;">Flip H</button>
+      <button class="chip-btn" id="btnFlipV" style="flex:1; justify-content:center;">Flip V</button>
+    </div>
+  </div>
+
+  <!-- Floating Tool Panel (Adjust) -->
+  <div class="floating-panel" id="panelAdjust">
+    <div class="panel-header">
+      <span>Color Adjustments</span>
+      <button class="icon-btn" style="width:24px;height:24px;" onclick="closePanels()">✕</button>
+    </div>
+    <div class="range-group">
+      <span>Exposure: <b id="valExposure">0</b></span>
+      <input type="range" id="rngExposure" min="-2" max="2" step="0.1" value="0">
+    </div>
+    <div class="range-group">
+      <span>Contrast: <b id="valContrast">0</b></span>
+      <input type="range" id="rngContrast" min="-1" max="2" step="0.1" value="0">
+    </div>
+    <div class="range-group">
+      <span>Saturation: <b id="valSaturation">0</b></span>
+      <input type="range" id="rngSaturation" min="-1" max="2" step="0.1" value="0">
+    </div>
+  </div>
+
+  <!-- Floating Tool Panel (3D) -->
+  <div class="floating-panel" id="panel3D">
+    <div class="panel-header">
+      <span>3D Transform</span>
+      <button class="icon-btn" style="width:24px;height:24px;" onclick="closePanels()">✕</button>
+    </div>
+    <div class="range-group">
+      <span>Rotate X (Tilt): <b id="val3DX">0°</b></span>
+      <input type="range" id="rng3DX" min="-45" max="45" value="0">
+    </div>
+    <div class="range-group">
+      <span>Rotate Y (Turn): <b id="val3DY">0°</b></span>
+      <input type="range" id="rng3DY" min="-45" max="45" value="0">
+    </div>
+    <div class="range-group">
+      <span>3D Scale: <b id="val3DScale">1.0x</b></span>
+      <input type="range" id="rng3DScale" min="0.5" max="2" step="0.1" value="1">
+    </div>
+  </div>
+
+  <!-- Floating Tool Panel (Filter) -->
+  <div class="floating-panel" id="panelFilter">
+    <div class="panel-header">
+      <span>Filter & Effects</span>
+      <button class="icon-btn" style="width:24px;height:24px;" onclick="closePanels()">✕</button>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <label><input type="checkbox" id="chkStroke"> Stroke</label>
+      <label><input type="checkbox" id="chkShadow"> Shadow</label>
+    </div>
+    <div class="range-group">
+      <span>Opacity: <b id="valOpacity">100%</b></span>
+      <input type="range" id="rngOpacity" min="10" max="100" value="100">
+    </div>
+  </div>
+
+  <!-- Bottom Navigation Dock -->
+  <nav class="bottom-dock">
+    <button class="dock-btn active" id="dockText">
+      <img src="./assets/icons/ic_edit.png" alt="Edit">
+      <span>Text</span>
+    </button>
+    <button class="dock-btn" id="dockColor">
+      <img src="./assets/icons/ic_color.png" alt="Color">
+      <span>Color</span>
+    </button>
+    <button class="dock-btn" id="dockRotate">
+      <img src="./assets/icons/ic_rotate.png" alt="Rotate">
+      <span>Rotate</span>
+    </button>
+    <button class="dock-btn" id="dockAdjust">
+      <img src="./assets/icons/ic_adjust.png" alt="Adjust">
+      <span>Adjust</span>
+    </button>
+  </nav>
+
+  <!-- Export Dialog Modal -->
+  <div class="modal-overlay" id="exportModal">
+    <div class="modal-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="font-size: 18px; font-weight: 700;">Export Project Image</h3>
+        <button class="icon-btn" onclick="closeExportModal()">✕</button>
+      </div>
+
+      <div style="width: 100%; height: 180px; border-radius: 12px; background: #262626; display: flex; align-items: center; justify-content: center; border: 1px solid var(--pf-outline); overflow: hidden;">
+        <canvas id="previewCanvas" style="max-width: 100%; max-height: 100%;"></canvas>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button id="btnExportPNG" class="chip-btn active" style="flex:1; justify-content:center; padding: 12px;">PNG (Transparent)</button>
+        <button id="btnExportJPG" class="chip-btn" style="flex:1; justify-content:center; padding: 12px;">JPG (Solid)</button>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button id="res720" class="chip-btn" style="flex:1; justify-content:center;">720p</button>
+        <button id="res1080" class="chip-btn active" style="flex:1; justify-content:center;">1080p</button>
+        <button id="res1440" class="chip-btn" style="flex:1; justify-content:center;">1440p</button>
+      </div>
+
+      <button id="btnDownload" style="padding: 14px; border-radius: 12px; border: none; background: var(--pf-azure); color: #fff; font-weight: 700; font-size: 15px; cursor: pointer;">
+        Download Image File
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // State
+    const state = {
+      text: 'PixelForge',
+      color: '#ffffff',
+      rotation: 0,
+      flipH: 1,
+      flipV: 1,
+      exposure: 0,
+      contrast: 0,
+      saturation: 0,
+      rotate3DX: 0,
+      rotate3DY: 0,
+      scale3D: 1,
+      stroke: false,
+      shadow: false,
+      opacity: 1,
+      photoSrc: null,
+      exportFormat: 'png',
+      exportRes: 1080
+    };
+
+    const colors = ['#ffffff', '#ff3b30', '#ff9500', '#ffcc00', '#4cd964', '#5ac8fa', '#007aff', '#5856d6', '#ff2d55', '#000000'];
+
+    // DOM Elements
+    const textLayer = document.getElementById('textLayer');
+    const photoLayer = document.getElementById('photoLayer');
+    const photoInput = document.getElementById('photoInput');
+    const textInput = document.getElementById('textInput');
+    const swatchContainer = document.getElementById('swatchContainer');
+    const shutterAudio = document.getElementById('shutterAudio');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const exportModal = document.getElementById('exportModal');
+
+    // Init Swatches
+    colors.forEach(hex => {
+      const dot = document.createElement('div');
+      dot.className = 'swatch-item';
+      dot.style.background = hex;
+      dot.onclick = () => {
+        state.color = hex;
+        updateTransform();
+      };
+      swatchContainer.appendChild(dot);
+    });
+
+    // Update Live CSS
+    function updateTransform() {
+      textLayer.innerText = state.text;
+      textLayer.style.color = state.color;
+      textLayer.style.opacity = state.opacity;
+      textLayer.style.webkitTextStroke = state.stroke ? '2px #000' : 'none';
+      textLayer.style.textShadow = state.shadow ? '0 6px 16px rgba(0,0,0,0.85)' : 'none';
+
+      const filter = `brightness(${1 + state.exposure * 0.5}) contrast(${1 + state.contrast * 0.5}) saturate(${1 + state.saturation * 0.5})`;
+      const transform = `rotate(${state.rotation}deg) scaleX(${state.flipH}) scaleY(${state.flipV}) rotateX(${state.rotate3DX}deg) rotateY(${state.rotate3DY}deg) scale(${state.scale3D})`;
+
+      textLayer.style.filter = filter;
+      textLayer.style.transform = transform;
+
+      if (state.photoSrc) {
+        photoLayer.style.display = 'block';
+        photoLayer.src = state.photoSrc;
+        photoLayer.style.filter = filter;
+        photoLayer.style.transform = transform;
+      } else {
+        photoLayer.style.display = 'none';
+      }
+    }
+
+    // Panels toggle
+    function closePanels() {
+      document.querySelectorAll('.floating-panel').forEach(p => p.classList.remove('visible'));
+      document.querySelectorAll('.dock-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.chip-btn').forEach(b => b.classList.remove('active'));
+    }
+
+    function openPanel(panelId, btn) {
+      const panel = document.getElementById(panelId);
+      const isVisible = panel.classList.contains('visible');
+      closePanels();
+      if (!isVisible) {
+        panel.classList.add('visible');
+        if (btn) btn.classList.add('active');
+      }
+    }
+
+    // Dock Events
+    document.getElementById('dockText').onclick = (e) => openPanel('panelText', e.currentTarget);
+    document.getElementById('dockColor').onclick = (e) => openPanel('panelColor', e.currentTarget);
+    document.getElementById('dockRotate').onclick = (e) => openPanel('panelRotate', e.currentTarget);
+    document.getElementById('dockAdjust').onclick = (e) => openPanel('panelAdjust', e.currentTarget);
+
+    // Context Bar Events
+    document.getElementById('chip3D').onclick = (e) => openPanel('panel3D', e.currentTarget);
+    document.getElementById('chipFilter').onclick = (e) => openPanel('panelFilter', e.currentTarget);
+    document.getElementById('chipCornerPin').onclick = (e) => alert('Corner Pins activated: 4 corner anchors aligned.');
+    document.getElementById('chipDelete').onclick = () => {
+      state.text = '';
+      textInput.value = '';
+      updateTransform();
+    };
+
+    // Text & Sliders input
+    textInput.oninput = (e) => {
+      state.text = e.target.value;
+      updateTransform();
+    };
+
+    document.getElementById('btnRotate90').onclick = () => {
+      state.rotation = (state.rotation + 90) % 360;
+      updateTransform();
+    };
+    document.getElementById('btnFlipH').onclick = () => {
+      state.flipH *= -1;
+      updateTransform();
+    };
+    document.getElementById('btnFlipV').onclick = () => {
+      state.flipV *= -1;
+      updateTransform();
+    };
+
+    document.getElementById('rngExposure').oninput = (e) => {
+      state.exposure = parseFloat(e.target.value);
+      document.getElementById('valExposure').innerText = state.exposure;
+      updateTransform();
+    };
+    document.getElementById('rngContrast').oninput = (e) => {
+      state.contrast = parseFloat(e.target.value);
+      document.getElementById('valContrast').innerText = state.contrast;
+      updateTransform();
+    };
+    document.getElementById('rngSaturation').oninput = (e) => {
+      state.saturation = parseFloat(e.target.value);
+      document.getElementById('valSaturation').innerText = state.saturation;
+      updateTransform();
+    };
+
+    document.getElementById('rng3DX').oninput = (e) => {
+      state.rotate3DX = parseInt(e.target.value, 10);
+      document.getElementById('val3DX').innerText = state.rotate3DX + '°';
+      updateTransform();
+    };
+    document.getElementById('rng3DY').oninput = (e) => {
+      state.rotate3DY = parseInt(e.target.value, 10);
+      document.getElementById('val3DY').innerText = state.rotate3DY + '°';
+      updateTransform();
+    };
+    document.getElementById('rng3DScale').oninput = (e) => {
+      state.scale3D = parseFloat(e.target.value);
+      document.getElementById('val3DScale').innerText = state.scale3D + 'x';
+      updateTransform();
+    };
+
+    document.getElementById('chkStroke').onchange = (e) => {
+      state.stroke = e.target.checked;
+      updateTransform();
+    };
+    document.getElementById('chkShadow').onchange = (e) => {
+      state.shadow = e.target.checked;
+      updateTransform();
+    };
+    document.getElementById('rngOpacity').oninput = (e) => {
+      state.opacity = parseInt(e.target.value, 10) / 100;
+      document.getElementById('valOpacity').innerText = Math.round(state.opacity * 100) + '%';
+      updateTransform();
+    };
+
+    // Photo Upload
+    document.getElementById('btnUploadPhoto').onclick = () => photoInput.click();
+    photoInput.onchange = (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          state.photoSrc = ev.target?.result;
+          updateTransform();
+          playAudio();
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+
+    document.getElementById('btnResetTransform').onclick = () => {
+      state.rotation = 0;
+      state.flipH = 1;
+      state.flipV = 1;
+      state.rotate3DX = 0;
+      state.rotate3DY = 0;
+      state.scale3D = 1;
+      updateTransform();
+    };
+
+    function playAudio() {
+      try {
+        shutterAudio.currentTime = 0;
+        shutterAudio.play().catch(() => {});
+      } catch (err) {}
+    }
+
+    // Export Modal & Canvas 2D
+    document.getElementById('btnOpenExport').onclick = () => {
+      renderExportCanvas(previewCanvas, 220, 220, true);
+      exportModal.classList.add('visible');
+    };
+
+    function closeExportModal() {
+      exportModal.classList.remove('visible');
+    }
+
+    document.getElementById('btnExportPNG').onclick = (e) => {
+      state.exportFormat = 'png';
+      document.getElementById('btnExportPNG').classList.add('active');
+      document.getElementById('btnExportJPG').classList.remove('active');
+      renderExportCanvas(previewCanvas, 220, 220, true);
+    };
+
+    document.getElementById('btnExportJPG').onclick = (e) => {
+      state.exportFormat = 'jpg';
+      document.getElementById('btnExportJPG').classList.add('active');
+      document.getElementById('btnExportPNG').classList.remove('active');
+      renderExportCanvas(previewCanvas, 220, 220, true);
+    };
+
+    ['720', '1080', '1440'].forEach(res => {
+      document.getElementById('res' + res).onclick = (e) => {
+        state.exportRes = parseInt(res, 10);
+        ['720', '1080', '1440'].forEach(r => document.getElementById('res' + r).classList.remove('active'));
+        e.currentTarget.classList.add('active');
+      };
+    });
+
+    function renderExportCanvas(canvas, width, height, isPreview) {
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.clearRect(0, 0, width, height);
+
+      if (state.exportFormat === 'jpg') {
+        ctx.fillStyle = '#181818';
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      ctx.save();
+      const b = 1 + state.exposure * 0.5;
+      const c = 1 + state.contrast * 0.5;
+      const s = 1 + state.saturation * 0.5;
+      ctx.filter = `brightness(${Math.max(0.1, b)}) contrast(${Math.max(0.1, c)}) saturate(${Math.max(0, s)})`;
+
+      ctx.translate(width / 2, height / 2);
+      ctx.rotate((state.rotation * Math.PI) / 180);
+      ctx.scale(state.flipH * state.scale3D, state.flipV * state.scale3D);
+      ctx.globalAlpha = state.opacity;
+
+      const fontSize = isPreview ? Math.max(16, width * 0.1) : Math.max(36, width * 0.1);
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      if (state.shadow) {
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = isPreview ? 8 : 24;
+        ctx.shadowOffsetY = isPreview ? 4 : 10;
+      }
+
+      if (state.stroke) {
+        ctx.lineWidth = isPreview ? 3 : 8;
+        ctx.strokeStyle = '#000000';
+        ctx.strokeText(state.text || 'PixelForge', 0, 0);
+      }
+
+      ctx.fillStyle = state.color;
+      ctx.fillText(state.text || 'PixelForge', 0, 0);
+      ctx.restore();
+    }
+
+    document.getElementById('btnDownload').onclick = () => {
+      const dim = state.exportRes;
+      const exportCanvas = document.createElement('canvas');
+      renderExportCanvas(exportCanvas, dim, dim, false);
+
+      const mime = state.exportFormat === 'png' ? 'image/png' : 'image/jpeg';
+      exportCanvas.toBlob(blob => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.download = `pixelforge_export_${dim}p.${state.exportFormat}`;
+        a.href = url;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        playAudio();
+        alert(`Downloaded ${state.exportFormat.toUpperCase()} (${dim}×${dim}px) successfully!`);
+        closeExportModal();
+      }, mime, 0.95);
+    };
+
+    // Initial render
+    updateTransform();
+  </script>
+</body>
+</html>

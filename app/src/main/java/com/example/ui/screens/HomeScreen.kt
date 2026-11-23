@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.History
@@ -99,6 +100,7 @@ fun HomeScreen(
     statusBanner: String? = null,
     onClearBanner: () -> Unit = {},
     onNewProjectClick: () -> Unit,
+    onOpenWebStudio: () -> Unit = {},
     onOpenProject: (String) -> Unit,
     onSaveProject: (String) -> Unit = {},
     onDeleteProject: (String) -> Unit,
@@ -226,30 +228,59 @@ fun HomeScreen(
                 contentPadding = PaddingValues(horizontal = horizontalPad, vertical = verticalPad),
                 verticalArrangement = Arrangement.spacedBy(if (deviceEnv.compactChrome) 8.dp else 14.dp, Alignment.CenterVertically)
             ) {
-                // Large Prominent "+ New" Action Button at top
+                // Action Buttons at top: Native Compose Editor + Embedded HTML/JS Studio (Inside APK)
                 item {
-                    Button(
-                        onClick = onNewProjectClick,
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
-                        contentPadding = PaddingValues(horizontal = if (deviceEnv.compactChrome) 12.dp else 24.dp, vertical = if (deviceEnv.compactChrome) 10.dp else 16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(if (deviceEnv.compactChrome) 50.dp else 60.dp)
-                            .focusable()
-                            .testTag("new_project_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = "New Project",
-                            modifier = Modifier.size(26.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "New Project",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Button(
+                            onClick = onNewProjectClick,
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
+                            contentPadding = PaddingValues(horizontal = if (deviceEnv.compactChrome) 8.dp else 16.dp, vertical = if (deviceEnv.compactChrome) 10.dp else 14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(if (deviceEnv.compactChrome) 50.dp else 56.dp)
+                                .focusable()
+                                .testTag("new_project_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Add,
+                                contentDescription = "New Project",
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "New Project",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Button(
+                            onClick = onOpenWebStudio,
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = StudioEmerald),
+                            contentPadding = PaddingValues(horizontal = if (deviceEnv.compactChrome) 8.dp else 16.dp, vertical = if (deviceEnv.compactChrome) 10.dp else 14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(if (deviceEnv.compactChrome) 50.dp else 56.dp)
+                                .focusable()
+                                .testTag("open_web_studio_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Code,
+                                contentDescription = "HTML Studio",
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "HTML Studio",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 

@@ -29,6 +29,7 @@ import com.example.ui.components.FontLibrarySheet
 import com.example.ui.components.SettingsDialog
 import com.example.ui.screens.EditorScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.OfflineWebStudioScreen
 import com.example.ui.theme.PixelForgeTheme
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -38,6 +39,9 @@ private object HomeRoute
 
 @Serializable
 private object EditorRoute
+
+@Serializable
+private object OfflineWebRoute
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -123,6 +127,9 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                         viewModel.createNewProject()
                         navController.navigate(EditorRoute)
                     },
+                    onOpenWebStudio = {
+                        navController.navigate(OfflineWebRoute)
+                    },
                     onOpenProject = { projectId ->
                         scope.launch {
                             if (viewModel.openProjectFromHistory(projectId)) {
@@ -160,6 +167,14 @@ fun PixelForgeApp(viewModel: StudioViewModel = viewModel()) {
                     },
                     onImportArchiveClick = {
                         fontArchiveLauncher.launch(arrayOf("*/*"))
+                    }
+                )
+            }
+
+            composable<OfflineWebRoute> {
+                OfflineWebStudioScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
                     }
                 )
             }

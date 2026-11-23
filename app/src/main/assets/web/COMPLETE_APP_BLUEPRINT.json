@@ -1,0 +1,69 @@
+{
+  "project_name": "PixelForge Studio",
+  "architecture_pattern": "File-Path-Based Modular Architecture (Android Kotlin/Compose + React/TypeScript Web Mirror)",
+  "components_blueprint": [
+    {
+      "module": "Web Frontend Core (/src/)",
+      "files": [
+        { "path": "/src/index.html", "role": "HTML5 root entry point" },
+        { "path": "/src/main.tsx", "role": "React DOM mounting script" },
+        { "path": "/src/App.tsx", "role": "Root navigation & state controller" },
+        { "path": "/src/manifest.json", "role": "PWA Web App manifest" },
+        { "path": "/src/README.md", "role": "Modular architecture documentation" },
+        { "path": "/src/UI_LAYOUT_BLUEPRINT.json", "role": "UI layout coordinate map" },
+        { "path": "/src/COMPLETE_APP_BLUEPRINT.json", "role": "Complete application master blueprint" }
+      ]
+    },
+    {
+      "module": "Web UI Components (/src/components/)",
+      "files": [
+        { "path": "/src/components/HomeScreen.tsx", "role": "Project history grid & new project creation" },
+        { "path": "/src/components/EditorScreen.tsx", "role": "Main studio workspace shell & toolbar coordinator" },
+        { "path": "/src/components/TextToolPanel.tsx", "role": "Text layer editing & typography input" },
+        { "path": "/src/components/ColorToolPanel.tsx", "role": "Color swatches & eyedropper selector" },
+        { "path": "/src/components/CropToolPanel.tsx", "role": "Interactive crop & mask controller" },
+        { "path": "/src/components/CanvasSettingsPanel.tsx", "role": "Canvas dimension aspect ratio presets (1:1, 16:9, 9:16, 4:3)" },
+        { "path": "/src/components/RotateTransformPanel.tsx", "role": "Layer rotation 90 deg and horizontal/vertical flips" },
+        { "path": "/src/components/AdjustToolPanel.tsx", "role": "Exposure, contrast, and saturation sliders" },
+        { "path": "/src/components/EmojiSettingsPanel.tsx", "role": "Emoji & sticker insertion grid" },
+        { "path": "/src/components/FilterToolPanel.tsx", "role": "Blend modes, shadow, stroke, and opacity controls" },
+        { "path": "/src/components/CornerPinAnd3DPanels.tsx", "role": "Perspective corner pin warp and 3D transform controller (Move, Rotate, Scale, Skew)" },
+        { "path": "/src/components/FloatingPanelContainer.tsx", "role": "Draggable and resizable floating panel wrapper" },
+        { "path": "/src/components/SettingsDialog.tsx", "role": "Studio settings & dark mode toggle dialog" },
+        { "path": "/src/components/MyProjectsDrawer.tsx", "role": "Saved project history side drawer" },
+        { "path": "/src/components/LayersDrawer.tsx", "role": "Layer stack management drawer" },
+        { "path": "/src/components/SaveExportDialog.tsx", "role": "Image export format selector (PNG transparent / JPG opaque)" }
+      ]
+    },
+    {
+      "module": "Web Services & Styles (/src/services/ & /src/styles/)",
+      "files": [
+        { "path": "/src/services/PixelForgeEngine.ts", "role": "Core layer & project state models" },
+        { "path": "/src/services/GestureHandler.ts", "role": "Touch gesture and tap/long-press manager" },
+        { "path": "/src/services/AnimationEngine.ts", "role": "UI motion & transition specs" },
+        { "path": "/src/styles/pixelforge.css", "role": "Design tokens, theme variables, and responsive CSS classes" }
+      ]
+    },
+    {
+      "module": "Web Icon Assets (/src/assets/icons/)",
+      "files": [
+        { "path": "/src/assets/icons/icons_manifest.json", "role": "Complete icon asset registry map" },
+        { "path": "/src/assets/icons/ic_*.png", "role": "32 standalone PNG icon asset files" }
+      ]
+    },
+    {
+      "module": "Android Native & Kotlin Core (/app/src/main/)",
+      "files": [
+        { "path": "/app/src/main/AndroidManifest.xml", "role": "Multi-device features & strict HTTPS network security config" },
+        { "path": "/app/src/main/cpp/CMakeLists.txt", "role": "CMake native C++ build configuration for ARMv8, ARMv7, x86, x86_64" },
+        { "path": "/app/src/main/cpp/pixelforge_native.h", "role": "C/C++ pixel processing header" },
+        { "path": "/app/src/main/cpp/pixelforge_native.cpp", "role": "High-performance native ARM NEON / SIMD pixel adjustments & sharpening" },
+        { "path": "/app/src/main/java/com/example/MainActivity.kt", "role": "Android root activity & navigation host" },
+        { "path": "/app/src/main/java/com/example/compat/LegacyCompatBridge.java", "role": "Java 5 to 17 compatibility, ABI detection, and Java pixel fallbacks" },
+        { "path": "/app/src/main/java/com/example/compat/NativePixelEngine.kt", "role": "JNI native pixel engine loader & fallback bridge" },
+        { "path": "/app/src/main/java/com/example/compat/DeviceEnvironment.kt", "role": "Multi-device environment classifier (Phone, Tablet, Wear OS, TV, Car, XR, Emulator)" },
+        { "path": "/app/src/main/java/com/example/compat/HttpsWebCompanion.kt", "role": "Strict HTTPS URL validator and browsable intent launcher" }
+      ]
+    }
+  ]
+}

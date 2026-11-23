@@ -1,0 +1,16 @@
+{
+  "name": "PixelForge Studio Web Companion",
+  "short_name": "PixelForge",
+  "description": "Modular offline photo & text studio web interface with path-based components, CSS styles, and asset bundles.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0e1118",
+  "theme_color": "#2d8cff",
+  "icons": [
+    {
+      "src": "./assets/icons/ic_add.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
