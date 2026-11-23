@@ -11,6 +11,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.RotateRight
 import androidx.compose.material.icons.automirrored.rounded.Undo
@@ -122,6 +124,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.compat.rememberDeviceEnvironment
 import com.example.model.GroupLayer
 import com.example.model.ImageLayer
 import com.example.model.TextLayer
@@ -300,8 +303,9 @@ fun EditorScreen(
     val isClearTypingMode = isImeVisible && activeToolDrawer == ToolDrawerTab.TEXT
     val motionSpecs = rememberUiMotionSpecs()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-    Scaffold(
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val deviceEnv = rememberDeviceEnvironment(maxWidth.value, maxHeight.value)
+        Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -321,14 +325,25 @@ fun EditorScreen(
                         .fillMaxWidth()
                         .statusBarsPadding()
                 ) {
-                    // Row 1: Add | Undo | Redo | Save | Share | 3-Dot Menu (⋮)
+                    // Row 1: (Optional In-App Back for Auto/TV/XR) | Add | Undo | Redo | Save | Share | 3-Dot Menu (⋮)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                            .padding(horizontal = if (deviceEnv.compactChrome) 2.dp else 4.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
+                        if (deviceEnv.needsInAppBackButton) {
+                            TopActionItem(
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                label = "Back",
+                                tag = "top_back_button",
+                                onClick = {
+                                    viewModel.saveProjectToHistory(silent = true)
+                                    onNavigateBack()
+                                }
+                            )
+                        }
                         Box {
                             TopActionItem(
                                 icon = Icons.Rounded.Add,
@@ -2110,6 +2125,7 @@ private fun TopActionItem(
         modifier = modifier
             .widthIn(min = 50.dp)
             .clip(RoundedCornerShape(8.dp))
+            .focusable(enabled = enabled)
             .clickable(enabled = enabled, onClick = onClick)
             .minimumInteractiveComponentSize()
             .padding(horizontal = 4.dp, vertical = 4.dp)
@@ -2144,6 +2160,7 @@ private fun TransformLockTopItem(
             .widthIn(min = 50.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
+            .focusable()
             .clickable(onClick = onClick)
             .minimumInteractiveComponentSize()
             .padding(horizontal = 6.dp, vertical = 4.dp)
@@ -2194,6 +2211,7 @@ private fun BottomToolItem(
             .widthIn(min = 68.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) StudioAzure.copy(alpha = 0.14f) else Color.Transparent)
+            .focusable()
             .clickable(onClick = onClick)
             .minimumInteractiveComponentSize()
             .padding(horizontal = 12.dp, vertical = 6.dp)

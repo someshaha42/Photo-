@@ -6,11 +6,13 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -75,6 +77,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.compat.rememberDeviceEnvironment
 import com.example.data.ProjectEntity
 import com.example.ui.theme.CheckerDark1
 import com.example.ui.theme.CheckerDark2
@@ -206,19 +209,22 @@ fun HomeScreen(
             }
         }
     ) { innerPadding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .navigationBarsPadding(),
             contentAlignment = Alignment.Center
         ) {
+            val deviceEnv = rememberDeviceEnvironment(maxWidth.value, maxHeight.value)
+            val horizontalPad = if (deviceEnv.compactChrome) 8.dp else 16.dp
+            val verticalPad = if (deviceEnv.compactChrome) 10.dp else 20.dp
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 600.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)
+                    .widthIn(max = deviceEnv.recommendedMaxContentWidth),
+                contentPadding = PaddingValues(horizontal = horizontalPad, vertical = verticalPad),
+                verticalArrangement = Arrangement.spacedBy(if (deviceEnv.compactChrome) 8.dp else 14.dp, Alignment.CenterVertically)
             ) {
                 // Large Prominent "+ New" Action Button at top
                 item {
@@ -226,10 +232,11 @@ fun HomeScreen(
                         onClick = onNewProjectClick,
                         shape = RoundedCornerShape(18.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
+                        contentPadding = PaddingValues(horizontal = if (deviceEnv.compactChrome) 12.dp else 24.dp, vertical = if (deviceEnv.compactChrome) 10.dp else 16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp)
+                            .height(if (deviceEnv.compactChrome) 50.dp else 60.dp)
+                            .focusable()
                             .testTag("new_project_button")
                     ) {
                         Icon(
@@ -381,6 +388,7 @@ private fun HistoryProjectCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .focusable()
             .clip(RoundedCornerShape(16.dp))
             .border(
                 width = if (isSelected) 2.dp else 1.dp,

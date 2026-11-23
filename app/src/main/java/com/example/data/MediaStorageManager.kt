@@ -691,37 +691,7 @@ class MediaStorageManager(private val context: Context) {
     private fun applySharpenBitmap(src: Bitmap, strength: Float): Bitmap {
         val amount = strength.coerceIn(0f, 1f) * 1.4f
         if (amount <= 0.01f) return src
-        val w = src.width
-        val h = src.height
-        val pixels = IntArray(w * h)
-        val out = IntArray(w * h)
-        src.getPixels(pixels, 0, w, 0, 0, w, h)
-        System.arraycopy(pixels, 0, out, 0, pixels.size)
-        for (y in 1 until h - 1) {
-            val row = y * w
-            for (x in 1 until w - 1) {
-                val c = pixels[row + x]
-                val t = pixels[row - w + x]
-                val b = pixels[row + w + x]
-                val l = pixels[row + x - 1]
-                val r = pixels[row + x + 1]
-
-                val a = (c ushr 24) and 0xFF
-                val cr = (c ushr 16) and 0xFF
-                val cg = (c ushr 8) and 0xFF
-                val cb = c and 0xFF
-
-                val avgR = (((t ushr 16) and 0xFF) + ((b ushr 16) and 0xFF) + ((l ushr 16) and 0xFF) + ((r ushr 16) and 0xFF)) / 4f
-                val avgG = (((t ushr 8) and 0xFF) + ((b ushr 8) and 0xFF) + ((l ushr 8) and 0xFF) + ((r ushr 8) and 0xFF)) / 4f
-                val avgB = ((t and 0xFF) + (b and 0xFF) + (l and 0xFF) + (r and 0xFF)) / 4f
-
-                val nr = (cr + (cr - avgR) * amount).roundToInt().coerceIn(0, 255)
-                val ng = (cg + (cg - avgG) * amount).roundToInt().coerceIn(0, 255)
-                val nb = (cb + (cb - avgB) * amount).roundToInt().coerceIn(0, 255)
-                out[row + x] = (a shl 24) or (nr shl 16) or (ng shl 8) or nb
-            }
-        }
-        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+        return com.example.compat.NativePixelEngine.sharpenBitmap(src, amount)
     }
 
     companion object {

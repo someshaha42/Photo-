@@ -13,9 +13,14 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val sdkRootPath = System.getenv("ANDROID_SDK_ROOT") ?: System.getenv("ANDROID_HOME")
+  val hasNativeNdkToolchain = sdkRootPath != null &&
+    file("$sdkRootPath/ndk").let { it.exists() && (it.listFiles()?.isNotEmpty() == true) } &&
+    file("$sdkRootPath/cmake").let { it.exists() && (it.listFiles()?.isNotEmpty() == true) }
+
   defaultConfig {
     applicationId = "com.aistudio.pixelforge.mrxkqp"
-    minSdk = 24
+    minSdk = 23
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
@@ -24,7 +29,15 @@ android {
 
     ndk {
       abiFilters.clear()
-      abiFilters.add("arm64-v8a")
+      abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
+    }
+
+    if (hasNativeNdkToolchain) {
+      externalNativeBuild {
+        cmake {
+          cppFlags += listOf("-std=c++17", "-O3")
+        }
+      }
     }
   }
 
@@ -74,13 +87,18 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+  if (hasNativeNdkToolchain) {
+    externalNativeBuild {
+      cmake {
+        path = file("src/main/cpp/CMakeLists.txt")
+        version = "3.22.1"
+      }
+    }
+  }
   packaging {
     jniLibs {
       excludes += listOf(
-        "lib/armeabi/**",
-        "lib/armeabi-v7a/**",
-        "lib/x86/**",
-        "lib/x86_64/**"
+        "lib/armeabi/**"
       )
     }
   }

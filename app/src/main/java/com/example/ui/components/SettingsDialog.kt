@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material3.AlertDialog
@@ -22,13 +25,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.compat.DeviceEnvironment
 import com.example.data.AppSettings
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
@@ -42,6 +49,16 @@ fun SettingsDialog(
     onToggleDarkTheme: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val config = LocalConfiguration.current
+    val env = remember(context, config.screenWidthDp, config.screenHeightDp) {
+        DeviceEnvironment.detect(
+            context = context,
+            availWidthDp = config.screenWidthDp.toFloat(),
+            availHeightDp = config.screenHeightDp.toFloat()
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -52,7 +69,10 @@ fun SettingsDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 // 1) Keep Local Copy of Media
                 Card(
                     shape = RoundedCornerShape(14.dp),
@@ -165,6 +185,39 @@ fun SettingsDialog(
                             onCheckedChange = onToggleDarkTheme,
                             modifier = Modifier.testTag("setting_dark_mode_switch")
                         )
+                    }
+                }
+
+                // Runtime Platform & Multi-Architecture Info
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.testTag("settings_runtime_platform_card")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Devices,
+                            contentDescription = null,
+                            tint = StudioAzure
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${env.primaryFormFactor.displayName} • ${env.androidVersionLabel}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Engine: ${env.nativeBackendLabel} • TLS HTTPS Strict • SDK 21–37",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
