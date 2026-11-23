@@ -2,8 +2,19 @@ import React, { useState } from 'react';
 import { CornerPinToolPanel, FloatingThreeDControllerPanel } from './CornerPinAnd3DPanels';
 import { FilterToolPanel } from './FilterToolPanel';
 import { FloatingPanelContainer } from './FloatingPanelContainer';
+import { TextToolPanel } from './TextToolPanel';
+import { ColorToolPanel } from './ColorToolPanel';
+import { CropToolPanel } from './CropToolPanel';
+import { CanvasSettingsPanel } from './CanvasSettingsPanel';
+import { SettingsDialog } from './SettingsDialog';
+import { MyProjectsDrawer } from './MyProjectsDrawer';
+import { LayersDrawer } from './LayersDrawer';
+import { SaveExportDialog } from './SaveExportDialog';
+import { RotateTransformPanel } from './RotateTransformPanel';
+import { AdjustToolPanel } from './AdjustToolPanel';
+import { EmojiSettingsPanel } from './EmojiSettingsPanel';
 
-export type ActiveTab = 'NONE' | 'TEXT' | 'COLOR' | 'FONT' | 'ROTATE' | 'ADJUST' | 'CROP' | 'CORNER_PIN' | 'FILTER' | 'THREE_D';
+export type ActiveTab = 'NONE' | 'TEXT' | 'COLOR' | 'FONT' | 'ROTATE' | 'ADJUST' | 'CROP' | 'CORNER_PIN' | 'FILTER' | 'THREE_D' | 'EMOJI';
 
 export interface EditorScreenProps {
   projectTitle: string;
@@ -15,11 +26,21 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ projectTitle, onNavi
   const [isZoomMode, setIsZoomMode] = useState(false);
   const [creatorView, setCreatorView] = useState(false);
   const [layerText, setLayerText] = useState('PixelForge');
+  const [layerColor, setLayerColor] = useState('#ffffff');
   const [blendMode, setBlendMode] = useState('Normal (Default)');
   const [opacity, setOpacity] = useState(1);
   const [strokeOn, setStrokeOn] = useState(false);
   const [shadowOn, setShadowOn] = useState(false);
   const [pins, setPins] = useState(0);
+  const [canvasRatio, setCanvasRatio] = useState('1:1');
+  const [exposure, setExposure] = useState(0);
+  const [contrast, setContrast] = useState(0);
+  const [saturation, setSaturation] = useState(0);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showProjectsDrawer, setShowProjectsDrawer] = useState(false);
+  const [showLayersDrawer, setShowLayersDrawer] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [isDarkTheme, setIsDarkTheme] = useState(true);
 
   return (
     <div className="pf-editor-shell">
@@ -39,13 +60,13 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ projectTitle, onNavi
             </div>
             <span style={{ fontSize: 13, fontWeight: 700 }}>{projectTitle}</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <button type="button" className="pf-touch-btn" data-testid="top_save_button">
+              <button type="button" className="pf-touch-btn" onClick={() => setShowExportDialog(true)} data-testid="top_save_button">
                 <img src="../assets/icons/ic_save.png" alt="Save" className="pf-icon" />
               </button>
               <button type="button" className="pf-touch-btn" data-testid="top_share_button">
                 <img src="../assets/icons/ic_share.png" alt="Share" className="pf-icon" />
               </button>
-              <button type="button" className="pf-touch-btn" onClick={onNavigateBack} data-testid="three_dot_menu_button">
+              <button type="button" className="pf-touch-btn" onClick={() => setShowSettings(true)} data-testid="three_dot_menu_button">
                 <img src="../assets/icons/ic_more_vert.png" alt="Menu" className="pf-icon" />
               </button>
             </div>
@@ -83,7 +104,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ projectTitle, onNavi
               <img src="../assets/icons/ic_zoom.png" alt="Zoom" className="pf-icon pf-icon-sm" />
               <span>Zoom</span>
             </button>
-            <button type="button" className="pf-floating-corner-btn" style={{ right: 14, top: 74 }} onClick={() => setCreatorView((v) => !v)} data-testid="top_layers_button">
+            <button type="button" className="pf-floating-corner-btn" style={{ right: 14, top: 74 }} onClick={() => setShowLayersDrawer(true)} data-testid="top_layers_button">
               <img src="../assets/icons/ic_layers.png" alt="Layers" className="pf-icon pf-icon-sm" />
               <span>Layers</span>
             </button>
@@ -91,7 +112,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ projectTitle, onNavi
         )}
 
         <div className={`pf-canvas-frame ${creatorView ? '' : 'pf-checkerboard'}`} style={creatorView ? { background: '#00ff00' } : undefined}>
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 28, opacity }}>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 28, color: layerColor, opacity }}>
             {layerText}
           </div>
         </div>
@@ -123,9 +144,50 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ projectTitle, onNavi
               />
             )}
             {activeTab === 'TEXT' && (
-              <div style={{ padding: 12 }}>
-                <input value={layerText} onChange={(e) => setLayerText(e.target.value)} style={{ width: '100%', padding: 10, borderRadius: 10 }} />
-              </div>
+              <TextToolPanel
+                draftText={layerText}
+                onTextChange={setLayerText}
+                onConfirm={() => setActiveTab('NONE')}
+              />
+            )}
+            {activeTab === 'COLOR' && (
+              <ColorToolPanel
+                selectedColor={layerColor}
+                onSelectColor={setLayerColor}
+              />
+            )}
+            {activeTab === 'CROP' && (
+              <CropToolPanel
+                onCommitCrop={() => setActiveTab('NONE')}
+              />
+            )}
+            {activeTab === 'FONT' && (
+              <CanvasSettingsPanel
+                activeRatio={canvasRatio}
+                onSelectRatio={setCanvasRatio}
+              />
+            )}
+            {activeTab === 'ROTATE' && (
+              <RotateTransformPanel
+                onRotate90={() => {}}
+                onFlipHorizontal={() => {}}
+                onFlipVertical={() => {}}
+              />
+            )}
+            {activeTab === 'ADJUST' && (
+              <AdjustToolPanel
+                exposure={exposure}
+                contrast={contrast}
+                saturation={saturation}
+                onUpdateExposure={setExposure}
+                onUpdateContrast={setContrast}
+                onUpdateSaturation={setSaturation}
+              />
+            )}
+            {activeTab === 'EMOJI' && (
+              <EmojiSettingsPanel
+                onSelectEmoji={(em) => setLayerText((t) => t + em)}
+              />
             )}
           </FloatingPanelContainer>
         )}
@@ -158,7 +220,38 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ projectTitle, onNavi
             <img src="../assets/icons/ic_rotate.png" alt="Rotate" className="pf-icon pf-icon-sm" />
             <span>Rotate</span>
           </button>
+          <button type="button" className={`pf-dock-btn ${activeTab === 'ADJUST' ? 'active' : ''}`} onClick={() => setActiveTab('ADJUST')} data-testid="bottom_tool_adjust">
+            <img src="../assets/icons/ic_adjust.png" alt="Adjust" className="pf-icon pf-icon-sm" />
+            <span>Adjust</span>
+          </button>
         </nav>
+      )}
+
+      {showSettings && (
+        <SettingsDialog
+          isDarkTheme={isDarkTheme}
+          onToggleTheme={setIsDarkTheme}
+          onDismiss={() => setShowSettings(false)}
+        />
+      )}
+
+      {showProjectsDrawer && (
+        <MyProjectsDrawer
+          projects={[{ id: '1', title: projectTitle, updatedAtLabel: 'Active' }]}
+          onClose={() => setShowProjectsDrawer(false)}
+          onOpenProject={() => {}}
+        />
+      )}
+
+      {showLayersDrawer && (
+        <LayersDrawer onClose={() => setShowLayersDrawer(false)} />
+      )}
+
+      {showExportDialog && (
+        <SaveExportDialog
+          onExport={() => setShowExportDialog(false)}
+          onDismiss={() => setShowExportDialog(false)}
+        />
       )}
     </div>
   );

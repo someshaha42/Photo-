@@ -1,0 +1,28 @@
+{
+  "app_name": "PixelForge Studio",
+  "architecture": "File-path-based modular structure across /app (Android) and /src (Web)",
+  "screens": [
+    {
+      "screen_name": "HomeScreen",
+      "file_path": "/src/components/HomeScreen.tsx (and /app/src/main/java/com/example/ui/screens/HomeScreen.kt)",
+      "position_and_layout": "Vertical column layout with top app bar, prominent "+ New Project" button, and history projects list",
+      "elements": [
+        { "name": "Top App Bar", "position": "Topmost row", "components": ["App Title / Selection Header", "Theme Toggle Button", "Settings Button"] },
+        { "name": "New Project Action", "position": "Below top app bar", "components": ["Large rounded Primary button with Add icon"] },
+        { "name": "History Section", "position": "Main scrollable body", "components": ["History Header with item count", "List of Project Cards with index numbering, checkerboard thumbnails, title, aspect ratio, layer count, and save/delete buttons"] }
+      ]
+    },
+    {
+      "screen_name": "EditorScreen",
+      "file_path": "/src/components/EditorScreen.tsx (and /app/src/main/java/com/example/ui/screens/EditorScreen.kt)",
+      "position_and_layout": "Shell layout comprising top bar navigation, central canvas viewport, floating corner controls, bottom tool dock, and movable tool panels",
+      "elements": [
+        { "name": "Top Bar Row 1", "position": "Top header bar", "components": ["Add Menu (+ Photo, Text)", "Undo", "Redo", "Save", "Share", "Three-Dot Menu (Canvas, Background, Emoji, My Projects, Preview, Settings)"] },
+        { "name": "Top Bar Row 2", "position_and_layout": "Context tool chip bar below row 1", "components": ["Delete", "Corner Pin", "3D", "Filter", "Crop", "Lock toggles S, Z, R, P"] },
+        { "name": "Canvas Viewport", "position": "Center stage", "components": ["Checkerboard background", "Rendered text/image layers", "Movable Zoom and Layers floating buttons at top-right"] },
+        { "name": "Bottom Dock", "position": "Bottom fixed dock", "components": ["Edit Text", "Color", "Font", "Rotate", "Adjust"] },
+        { "name": "Floating Tool Drawers", "position": "Draggable/resizable floating overlay cards", "components": ["TextToolPanel", "ColorToolPanel", "FilterToolPanel", "CornerPinToolPanel", "FloatingThreeDControllerPanel", "CropToolPanel", "CanvasSettingsPanel", "RotateTransformPanel", "AdjustToolPanel", "EmojiSettingsPanel"] }
+      ]
+    }
+  ]
+}
