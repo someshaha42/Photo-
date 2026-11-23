@@ -38,6 +38,11 @@ import com.example.model.PuppetPinPoint
 import com.example.model.TextCaseMode
 import com.example.model.TextCaseTransformer
 import com.example.model.TextLayer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -75,7 +80,10 @@ enum class ToolDrawerTab(val label: String) {
 
 enum class EyedropperTarget {
     NONE,
-    SELECTED_LAYER
+    SELECTED_LAYER,
+    FILTER_STROKE,
+    FILTER_SHADOW,
+    FILTER_FILL
 }
 
 /**
@@ -110,13 +118,39 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     val fontRepository = FontRepository(context, fontRenderEngine)
 
     private val _previewWindowOverride = MutableStateFlow<Boolean?>(null)
+    private val _tabHideOverride = MutableStateFlow<Boolean?>(null)
+    private val _hiddenTabIdsOverride = MutableStateFlow<Set<String>?>(null)
+    private val _creatorViewEnabledOverride = MutableStateFlow<Boolean?>(null)
+    private val _creatorViewColorOverride = MutableStateFlow<Long?>(null)
+
     val settings: StateFlow<AppSettings> = combine(
         settingsRepository.settingsFlow,
-        _previewWindowOverride
-    ) { repoSettings, previewOverride ->
-        if (previewOverride != null) repoSettings.copy(previewWindowEnabled = previewOverride)
-        else repoSettings
+        combine(
+            _previewWindowOverride,
+            _tabHideOverride,
+            _hiddenTabIdsOverride,
+            _creatorViewEnabledOverride,
+            _creatorViewColorOverride
+        ) { p, t, h, ce, cc ->
+            SettingsOverrides(p, t, h, ce, cc)
+        }
+    ) { repoSettings, o ->
+        repoSettings.copy(
+            previewWindowEnabled = o.preview ?: repoSettings.previewWindowEnabled,
+            tabHideFeatureEnabled = o.tabHide ?: repoSettings.tabHideFeatureEnabled,
+            hiddenTabIds = o.hiddenTabs ?: repoSettings.hiddenTabIds,
+            creatorViewEnabled = o.creatorEnabled ?: repoSettings.creatorViewEnabled,
+            creatorViewColorArgb = o.creatorColor ?: repoSettings.creatorViewColorArgb
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
+
+    private data class SettingsOverrides(
+        val preview: Boolean?,
+        val tabHide: Boolean?,
+        val hiddenTabs: Set<String>?,
+        val creatorEnabled: Boolean?,
+        val creatorColor: Long?
+    )
 
     val projectHistory: StateFlow<List<ProjectEntity>> = projectRepository.projectsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -209,6 +243,28 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _isEditingFillMedia = MutableStateFlow(false)
     val isEditingFillMedia: StateFlow<Boolean> = _isEditingFillMedia.asStateFlow()
 
+    private val _creatorViewPaused = MutableStateFlow(false)
+    private val _creatorViewEyeGraceVisible = MutableStateFlow(false)
+    private var creatorEyeGraceJob: Job? = null
+    private var autoSaveThumbJob: Job? = null
+    private var hasSavedCurrentProjectOnce = false
+
+    val isCreatorViewActive: StateFlow<Boolean> = combine(
+        settings,
+        _creatorViewPaused,
+        _activeToolDrawer,
+        _document
+    ) { s, paused, tab, doc ->
+        s.creatorViewEnabled && !paused && tab != ToolDrawerTab.NONE && doc.selectedLayerId != null
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val showCreatorViewEyeButton: StateFlow<Boolean> = combine(
+        isCreatorViewActive,
+        _creatorViewEyeGraceVisible
+    ) { active, grace ->
+        active || grace
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     init {
         viewModelScope.launch {
             fontRepository.initialize()
@@ -242,8 +298,37 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _statusBanner.value = null
     }
 
+    private fun resetCreatorViewTransientState() {
+        creatorEyeGraceJob?.cancel()
+        creatorEyeGraceJob = null
+        _creatorViewPaused.value = false
+        _creatorViewEyeGraceVisible.value = false
+    }
+
+    fun onCreatorViewEyeTapped() {
+        if (isCreatorViewActive.value) {
+            creatorEyeGraceJob?.cancel()
+            _creatorViewPaused.value = false
+            _creatorViewEnabledOverride.value = false
+            viewModelScope.launch { settingsRepository.setCreatorViewEnabled(false) }
+            _creatorViewEyeGraceVisible.value = true
+            creatorEyeGraceJob = viewModelScope.launch {
+                delay(3000L)
+                _creatorViewEyeGraceVisible.value = false
+            }
+        } else if (_creatorViewEyeGraceVisible.value) {
+            creatorEyeGraceJob?.cancel()
+            creatorEyeGraceJob = null
+            _creatorViewEyeGraceVisible.value = false
+            _creatorViewPaused.value = false
+            _creatorViewEnabledOverride.value = true
+            viewModelScope.launch { settingsRepository.setCreatorViewEnabled(true) }
+        }
+    }
+
     fun openToolDrawer(tab: ToolDrawerTab) {
         endTransformTransaction()
+        resetCreatorViewTransientState()
         val prevTab = _activeToolDrawer.value
         val nextTab = if (prevTab == tab) ToolDrawerTab.NONE else tab
         _isCornerPinAddPointMode.value = false
@@ -268,6 +353,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeToolDrawer() {
         endTransformTransaction()
+        resetCreatorViewTransientState()
         _isCornerPinAddPointMode.value = false
         _isEditingFillMedia.value = false
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
@@ -283,6 +369,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun confirmCornerPin() {
         endTransformTransaction()
+        resetCreatorViewTransientState()
         _isCornerPinAddPointMode.value = false
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
             restoreLocksAfterCornerPin()
@@ -299,6 +386,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissAllOverlaysAndSelection() {
         endTransformTransaction()
+        resetCreatorViewTransientState()
         _isCornerPinAddPointMode.value = false
         _isEditingFillMedia.value = false
         if (_activeToolDrawer.value == ToolDrawerTab.CORNER_PIN) {
@@ -405,6 +493,26 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             EyedropperTarget.SELECTED_LAYER -> {
                 applyColorToSelectedLayer(opaqueLong)
             }
+            EyedropperTarget.FILTER_STROKE -> {
+                updateSelectedLayerEffectStyle({ eff ->
+                    eff.copy(
+                        strokeWidth = if (eff.strokeWidth <= 0.5f) 4f else eff.strokeWidth,
+                        strokeColorArgb = opaqueLong
+                    )
+                })
+            }
+            EyedropperTarget.FILTER_SHADOW -> {
+                updateSelectedLayerEffectStyle({ eff ->
+                    eff.copy(
+                        shadowEnabled = true,
+                        shadowRadius = if (eff.shadowRadius <= 0.5f) 10f else eff.shadowRadius,
+                        shadowColorArgb = opaqueLong
+                    )
+                })
+            }
+            EyedropperTarget.FILTER_FILL -> {
+                setSelectedLayerFillColor(opaqueLong)
+            }
             EyedropperTarget.NONE -> Unit
         }
         _eyedropperTarget.value = EyedropperTarget.NONE
@@ -419,6 +527,34 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { settingsRepository.setPreviewWindowEnabled(enabled) }
     }
 
+    fun setTabHideFeatureEnabled(enabled: Boolean) {
+        _tabHideOverride.value = enabled
+        viewModelScope.launch { settingsRepository.setTabHideFeatureEnabled(enabled) }
+    }
+
+    fun hideTab(tabId: String) {
+        val updated = (_hiddenTabIdsOverride.value ?: settings.value.hiddenTabIds) + tabId
+        _hiddenTabIdsOverride.value = updated
+        viewModelScope.launch { settingsRepository.setHiddenTabIds(updated) }
+    }
+
+    fun unhideTab(tabId: String) {
+        val updated = (_hiddenTabIdsOverride.value ?: settings.value.hiddenTabIds) - tabId
+        _hiddenTabIdsOverride.value = updated
+        viewModelScope.launch { settingsRepository.setHiddenTabIds(updated) }
+    }
+
+    fun setCreatorViewEnabled(enabled: Boolean) {
+        _creatorViewEnabledOverride.value = enabled
+        resetCreatorViewTransientState()
+        viewModelScope.launch { settingsRepository.setCreatorViewEnabled(enabled) }
+    }
+
+    fun setCreatorViewColorArgb(argb: Long) {
+        _creatorViewColorOverride.value = argb
+        viewModelScope.launch { settingsRepository.setCreatorViewColorArgb(argb) }
+    }
+
     fun setKeepLocalMediaCopy(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setKeepLocalMediaCopy(enabled) }
     }
@@ -427,9 +563,59 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { settingsRepository.setUnlimitedLayers(enabled) }
     }
 
+    private fun shouldAutoSave(doc: ProjectDocument): Boolean {
+        return hasSavedCurrentProjectOnce ||
+            doc.layers.isNotEmpty() ||
+            doc.background != BackgroundConfig() ||
+            doc.canvas != CanvasDimensions.SQUARE_1_1
+    }
+
+    private var immediateAutoSaveJob: Job? = null
+
+    private fun triggerAutoSave(doc: ProjectDocument = _document.value) {
+        if (!shouldAutoSave(doc)) return
+        hasSavedCurrentProjectOnce = true
+        immediateAutoSaveJob = CoroutineScope(Dispatchers.IO + NonCancellable).launch {
+            projectRepository.saveDocument(doc, null)
+        }
+        autoSaveThumbJob?.cancel()
+        autoSaveThumbJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(450L)
+            if (_document.value.id == doc.id && projectRepository.loadDocument(doc.id) != null) {
+                val thumbPath = runCatching {
+                    mediaManager.saveProjectThumbnail(doc, fontRenderEngine)
+                }.getOrNull()
+                if (_document.value.id == doc.id && projectRepository.loadDocument(doc.id) != null) {
+                    projectRepository.saveDocument(doc, thumbPath)
+                }
+            }
+        }
+    }
+
+    fun flushAutoSave() {
+        val doc = _document.value
+        if (!shouldAutoSave(doc)) return
+        hasSavedCurrentProjectOnce = true
+        autoSaveThumbJob?.cancel()
+        immediateAutoSaveJob = CoroutineScope(Dispatchers.IO + NonCancellable).launch {
+            val thumbPath = runCatching {
+                mediaManager.saveProjectThumbnail(doc, fontRenderEngine)
+            }.getOrNull()
+            projectRepository.saveDocument(doc, thumbPath)
+        }
+    }
+
+    override fun onCleared() {
+        flushAutoSave()
+        super.onCleared()
+    }
+
     fun createNewProject() {
         activeTransactionBaseline = null
         restoreLocksAfterCornerPin()
+        resetCreatorViewTransientState()
+        autoSaveThumbJob?.cancel()
+        hasSavedCurrentProjectOnce = false
         undoStack.clear()
         redoStack.clear()
         _canUndo.value = false
@@ -465,6 +651,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val loaded = projectRepository.loadDocument(projectId) ?: return false
         activeTransactionBaseline = null
         restoreLocksAfterCornerPin()
+        resetCreatorViewTransientState()
+        autoSaveThumbJob?.cancel()
+        hasSavedCurrentProjectOnce = true
         undoStack.clear()
         redoStack.clear()
         _canUndo.value = false
@@ -602,6 +791,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = false
             syncPinnedFonts()
+            triggerAutoSave(current)
         }
     }
 
@@ -617,6 +807,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canRedo.value = false
         _document.value = next
         syncPinnedFonts()
+        triggerAutoSave(next)
     }
 
     fun undo() {
@@ -628,6 +819,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
         _document.value = prev
+        triggerAutoSave(prev)
     }
 
     fun redo() {
@@ -639,6 +831,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = redoStack.isNotEmpty()
         _document.value = next
+        triggerAutoSave(next)
     }
 
     private fun canAddLayer(extraCount: Int = 1): Boolean {
@@ -1843,7 +2036,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val group = current.layers.filterIsInstance<GroupLayer>().firstOrNull { it.id == groupId } ?: return
         val nextExpanded = !group.isExpanded
         _isMultiSelectMode.value = false
-        _document.value = current.copy(
+        val updated = current.copy(
             layers = current.layers.map { layer ->
                 if (layer is GroupLayer) {
                     if (layer.id == groupId) layer.copy(isExpanded = nextExpanded)
@@ -1861,6 +2054,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 listOf(groupId)
             }
         )
+        _document.value = updated
+        triggerAutoSave(updated)
     }
 
     fun ungroupLayer(groupId: String) {

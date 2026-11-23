@@ -1383,4 +1383,55 @@ class PixelForgeEngineTest {
             assertEquals(0, cleared.cornerPin.puppetPins.size)
         }
     }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun tightOpaqueBoundsMatchTransparentPngContentAfterCrop() {
+        val bmp = android.graphics.Bitmap.createBitmap(100, 100, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        // Opaque content only in center 20..80 X and 30..70 Y
+        val paint = android.graphics.Paint().apply { color = Color.CYAN }
+        canvas.drawRect(20f, 30f, 80f, 70f, paint)
+
+        val uncropped = com.example.data.LayerEffectsHelper.computeTightOpaqueBoundsNorm(
+            bmp = bmp,
+            cropNorm = ImageCropRect(),
+            cropShape = ImageCropShape.RECTANGLE
+        )
+        assertTrue(uncropped.left in 0.17f..0.22f)
+        assertTrue(uncropped.top in 0.27f..0.32f)
+        assertTrue(uncropped.right in 0.78f..0.83f)
+        assertTrue(uncropped.bottom in 0.68f..0.73f)
+
+        val cropped = com.example.data.LayerEffectsHelper.computeTightOpaqueBoundsNorm(
+            bmp = bmp,
+            cropNorm = ImageCropRect(left = 0.25f, top = 0.2f, right = 0.7f, bottom = 0.8f),
+            cropShape = ImageCropShape.RECTANGLE
+        )
+        assertTrue(cropped.left <= 0.02f)
+        assertTrue(cropped.right >= 0.98f)
+        assertTrue(cropped.top in 0.13f..0.20f)
+        assertTrue(cropped.bottom in 0.78f..0.86f)
+        bmp.recycle()
+    }
+
+    @Test
+    fun autoSavePersistsEditsToRoomDatabaseWithoutManualSave() {
+        runBlocking {
+            val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+            vm.createNewProject()
+            val projectId = vm.document.value.id
+            val addedId = vm.addTextLayer("Auto Saved Layer")!!
+            vm.flushAutoSave()
+            kotlinx.coroutines.delay(150L)
+
+            val db = ProjectDatabase.getInstance(context)
+            val repo = ProjectRepository(context, db.projectDao())
+            val persisted = repo.loadDocument(projectId)
+            assertNotNull("Auto-saved project must be persisted to Room immediately", persisted)
+            val persistedLayer = persisted!!.layers.firstOrNull { it.id == addedId } as? TextLayer
+            assertNotNull("Added text layer must exist in auto-saved document", persistedLayer)
+            assertEquals("Auto Saved Layer", persistedLayer!!.text)
+        }
+    }
 }

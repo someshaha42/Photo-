@@ -8,9 +8,12 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -41,6 +45,7 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Crop
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
@@ -56,31 +61,42 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Preview
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Title
 import androidx.compose.material.icons.rounded.Transform
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewInAr
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ZoomIn
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -93,11 +109,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.GroupLayer
@@ -110,6 +131,7 @@ import com.example.ui.ToolDrawerTab
 import com.example.ui.components.AdjustToolPanel
 import com.example.ui.components.BackgroundSettingsPanel
 import com.example.ui.components.CanvasSettingsPanel
+import com.example.ui.components.ColorPalettePickerDialog
 import com.example.ui.components.ColorToolPanel
 import com.example.ui.components.CornerPinToolPanel
 import com.example.ui.components.CropToolPanel
@@ -132,6 +154,8 @@ import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioCoral
 import com.example.ui.theme.StudioEmerald
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -140,7 +164,8 @@ private enum class ThreeDotSheetSection(val title: String) {
     NONE(""),
     CANVAS("Canvas"),
     BACKGROUND("Background"),
-    EMOJI("Emoji")
+    EMOJI("Emoji"),
+    SETTINGS("Settings")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -183,11 +208,15 @@ fun EditorScreen(
     val pendingCropQueue by viewModel.pendingCropQueue.collectAsStateWithLifecycle()
     val isCornerPinAddPointMode by viewModel.isCornerPinAddPointMode.collectAsStateWithLifecycle()
     val isEditingFillMedia by viewModel.isEditingFillMedia.collectAsStateWithLifecycle()
+    val isCreatorViewActive by viewModel.isCreatorViewActive.collectAsStateWithLifecycle()
+    val showCreatorViewEyeButton by viewModel.showCreatorViewEyeButton.collectAsStateWithLifecycle()
 
     var showAddMenu by remember { mutableStateOf(false) }
     var showThreeDotMenu by remember { mutableStateOf(false) }
     var activeThreeDotSection by remember { mutableStateOf(ThreeDotSheetSection.NONE) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var pendingHideTab by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var showCreatorColorPalette by remember { mutableStateOf(false) }
 
     val density = LocalDensity.current
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
@@ -195,6 +224,12 @@ fun EditorScreen(
     // Multi-stage Android Back behavior: never quit app directly when panels/options are open
     BackHandler {
         when {
+            showCreatorColorPalette -> {
+                showCreatorColorPalette = false
+            }
+            pendingHideTab != null -> {
+                pendingHideTab = null
+            }
             isEyedropperActive -> {
                 viewModel.setEyedropperActive(false)
             }
@@ -268,15 +303,16 @@ fun EditorScreen(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Surface(
-                color = StudioAzure,
-                contentColor = Color.White,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .detectUnconsumedTap(key = "topbar_empty") {
-                        viewModel.dismissAllOverlaysAndSelection()
-                    }
-            ) {
+            if (!isCreatorViewActive) {
+                Surface(
+                    color = StudioAzure,
+                    contentColor = Color.White,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .detectUnconsumedTap(key = "topbar_empty") {
+                            viewModel.dismissAllOverlaysAndSelection()
+                        }
+                ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -409,6 +445,15 @@ fun EditorScreen(
                                         viewModel.setPreviewWindowEnabled(!settings.previewWindowEnabled)
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("6. Settings") },
+                                    leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
+                                    modifier = Modifier.testTag("menu_settings"),
+                                    onClick = {
+                                        showThreeDotMenu = false
+                                        activeThreeDotSection = ThreeDotSheetSection.SETTINGS
+                                    }
+                                )
                             }
                         }
                     }
@@ -420,6 +465,7 @@ fun EditorScreen(
                     val hasSelection = selectedLayer != null
                     val topControls = listOf(
                         TopBarControlSpec.Action(
+                            id = "top_delete",
                             icon = Icons.Rounded.DeleteOutline,
                             label = "Delete",
                             enabled = hasSelection,
@@ -427,6 +473,7 @@ fun EditorScreen(
                             onClick = { selectedLayer?.let { viewModel.deleteLayer(it.id) } }
                         ),
                         TopBarControlSpec.Action(
+                            id = "top_corner_pin",
                             icon = Icons.Rounded.Transform,
                             label = "Corner Pin",
                             enabled = hasSelection,
@@ -436,6 +483,7 @@ fun EditorScreen(
                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.CORNER_PIN) }
                         ),
                         TopBarControlSpec.Action(
+                            id = "top_3d",
                             icon = Icons.Rounded.ViewInAr,
                             label = "3D",
                             enabled = hasSelection,
@@ -445,6 +493,7 @@ fun EditorScreen(
                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.THREE_D) }
                         ),
                         TopBarControlSpec.Action(
+                            id = "top_filter",
                             icon = Icons.Rounded.AutoAwesome,
                             label = "Filter",
                             enabled = hasSelection,
@@ -454,6 +503,7 @@ fun EditorScreen(
                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.FILTER) }
                         ),
                         TopBarControlSpec.Action(
+                            id = "top_crop",
                             icon = Icons.Rounded.Crop,
                             label = "Crop",
                             enabled = hasSelection,
@@ -463,6 +513,7 @@ fun EditorScreen(
                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.CROP) }
                         ),
                         TopBarControlSpec.Lock(
+                            id = "top_lock_s",
                             shortCode = "S",
                             label = "Stretch",
                             isLocked = transformLocks.stretchLocked,
@@ -470,6 +521,7 @@ fun EditorScreen(
                             onClick = { viewModel.toggleStretchLock() }
                         ),
                         TopBarControlSpec.Lock(
+                            id = "top_lock_z",
                             shortCode = "Z",
                             label = "Zoom",
                             isLocked = transformLocks.zoomLocked,
@@ -477,6 +529,7 @@ fun EditorScreen(
                             onClick = { viewModel.toggleZoomLock() }
                         ),
                         TopBarControlSpec.Lock(
+                            id = "top_lock_r",
                             shortCode = "R",
                             label = "Rotate",
                             isLocked = transformLocks.rotationLocked,
@@ -484,70 +537,77 @@ fun EditorScreen(
                             onClick = { viewModel.toggleRotationLock() }
                         ),
                         TopBarControlSpec.Lock(
+                            id = "top_lock_p",
                             shortCode = "P",
                             label = "Move",
                             isLocked = transformLocks.positionLocked,
                             tag = "top_lock_position_button",
                             onClick = { viewModel.togglePositionLock() }
                         )
-                    )
+                    ).filter { it.id !in settings.hiddenTabIds }
 
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("top_controls_row2")
-                    ) {
-                        val canvasRatioForTop = document.canvas.ratioFloat.coerceAtLeast(0.1f)
-                        val topCols = (maxWidth / 60.dp).toInt().coerceIn(3, 9)
-                        val allowTwoTopRows = canvasRatioForTop >= 0.85f || maxWidth >= 500.dp
-                        val neededTopRows = ceil(topControls.size / topCols.toFloat()).toInt().coerceAtLeast(1)
-                        val topRowsPerPage = if (allowTwoTopRows) minOf(2, neededTopRows) else 1
-                        val topPageSize = (topCols * topRowsPerPage).coerceAtLeast(1)
-                        val topPages = topControls.chunked(topPageSize)
+                    if (topControls.isNotEmpty()) {
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("top_controls_row2")
+                        ) {
+                            val canvasRatioForTop = document.canvas.ratioFloat.coerceAtLeast(0.1f)
+                            val topCols = (maxWidth / 60.dp).toInt().coerceIn(3, 9)
+                            val allowTwoTopRows = canvasRatioForTop >= 0.85f || maxWidth >= 500.dp
+                            val neededTopRows = ceil(topControls.size / topCols.toFloat()).toInt().coerceAtLeast(1)
+                            val topRowsPerPage = if (allowTwoTopRows) minOf(2, neededTopRows) else 1
+                            val topPageSize = (topCols * topRowsPerPage).coerceAtLeast(1)
+                            val topPages = topControls.chunked(topPageSize)
 
-                        if (topPages.size <= 1) {
-                            TopActionPageGrid(
-                                pageItems = topControls,
-                                cols = topCols,
-                                rows = topRowsPerPage
-                            )
-                        } else {
-                            val topPagerState = rememberPagerState(pageCount = { topPages.size })
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                HorizontalPager(
-                                    state = topPagerState,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("top_row2_pager")
-                                ) { pageIdx ->
-                                    TopActionPageGrid(
-                                        pageItems = topPages[pageIdx],
-                                        cols = topCols,
-                                        rows = topRowsPerPage
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.padding(bottom = 4.dp, top = 1.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                            if (topPages.size <= 1) {
+                                TopActionPageGrid(
+                                    pageItems = topControls,
+                                    cols = topCols,
+                                    rows = topRowsPerPage,
+                                    holdHideEnabled = settings.tabHideFeatureEnabled,
+                                    onRequestHideTab = { id, lbl -> pendingHideTab = id to lbl }
+                                )
+                            } else {
+                                val topPagerState = rememberPagerState(pageCount = { topPages.size })
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    repeat(topPages.size) { dotIdx ->
-                                        val isCur = topPagerState.currentPage == dotIdx
-                                        Box(
-                                            modifier = Modifier
-                                                .size(if (isCur) 7.dp else 5.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    if (isCur) Color.White else Color.White.copy(alpha = 0.38f)
-                                                )
-                                                .clickable {
-                                                    scope.launch { topPagerState.animateScrollToPage(dotIdx) }
-                                                }
-                                                .testTag("top_pager_dot_$dotIdx")
+                                    HorizontalPager(
+                                        state = topPagerState,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("top_row2_pager")
+                                    ) { pageIdx ->
+                                        TopActionPageGrid(
+                                            pageItems = topPages[pageIdx],
+                                            cols = topCols,
+                                            rows = topRowsPerPage,
+                                            holdHideEnabled = settings.tabHideFeatureEnabled,
+                                            onRequestHideTab = { id, lbl -> pendingHideTab = id to lbl }
                                         )
+                                    }
+                                    Row(
+                                        modifier = Modifier.padding(bottom = 4.dp, top = 1.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        repeat(topPages.size) { dotIdx ->
+                                            val isCur = topPagerState.currentPage == dotIdx
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(if (isCur) 7.dp else 5.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (isCur) Color.White else Color.White.copy(alpha = 0.38f)
+                                                    )
+                                                    .clickable {
+                                                        scope.launch { topPagerState.animateScrollToPage(dotIdx) }
+                                                    }
+                                                    .testTag("top_pager_dot_$dotIdx")
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -556,26 +616,50 @@ fun EditorScreen(
                 }
             }
         }
+        }
     ) { innerPadding ->
+        var rootOriginInRoot by remember { mutableStateOf(Offset.Zero) }
+        var canvasRightInRoot by remember { mutableFloatStateOf(0f) }
+        var canvasTopInRoot by remember { mutableFloatStateOf(0f) }
+        var zoomBtnOffset by remember { mutableStateOf(Offset.Zero) }
+        var zoomBtnDragged by remember { mutableStateOf(false) }
+        var zoomBtnSize by remember { mutableStateOf(IntSize.Zero) }
+        var layersBtnOffset by remember { mutableStateOf(Offset.Zero) }
+        var layersBtnDragged by remember { mutableStateOf(false) }
+        var layersBtnSize by remember { mutableStateOf(IntSize.Zero) }
+        var creatorEyeOffset by remember { mutableStateOf(Offset.Zero) }
+        var creatorEyeDragged by remember { mutableStateOf(false) }
+        var creatorEyeSize by remember { mutableStateOf(IntSize.Zero) }
+
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .imePadding()
                 .navigationBarsPadding()
-                .background(MaterialTheme.colorScheme.background)
+                .background(
+                    if (isCreatorViewActive) Color(settings.creatorViewColorArgb.toInt())
+                    else MaterialTheme.colorScheme.background
+                )
+                .onGloballyPositioned { coords ->
+                    rootOriginInRoot = coords.positionInRoot()
+                }
                 .detectUnconsumedTap(key = "editor_theme_bg") {
-                    viewModel.dismissAllOverlaysAndSelection()
+                    if (!isCreatorViewActive) {
+                        viewModel.dismissAllOverlaysAndSelection()
+                    }
                 }
                 .testTag("editor_root_theme_background")
         ) {
             val availW = maxWidth
             val availH = maxHeight
+            val availWpx = with(density) { availW.toPx() }
+            val availHpx = with(density) { availH.toPx() }
             val canvasRatio = document.canvas.ratioFloat.coerceAtLeast(0.1f)
             val estimatedCanvasH = ((availW - 16.dp).coerceAtLeast(120.dp)) / canvasRatio
             val spareVerticalDp = (availH - estimatedCanvasH).coerceAtLeast(0.dp)
             val isSpaciousLandscapeCanvas = canvasRatio > 1.15f && spareVerticalDp > 220.dp
-            val maxSafeDrawerHeight = (availH - 165.dp).coerceAtLeast(72.dp)
+            val maxSafeDrawerHeight = (availH - 92.dp).coerceAtLeast(72.dp)
             val toolDrawerMaxHeight = when {
                 isClearTypingMode -> 140.dp
                 isSpaciousLandscapeCanvas -> (spareVerticalDp - 88.dp).coerceIn(280.dp, 460.dp)
@@ -587,9 +671,9 @@ fun EditorScreen(
                     Spacer(modifier = Modifier.weight(0.28f))
                 }
 
-                // Canvas Viewport + Upper-Right Vertical Floating Zoom & Layers
+                // Canvas Viewport
                 Box(
-                    modifier = if (isSpaciousLandscapeCanvas) {
+                    modifier = (if (isSpaciousLandscapeCanvas) {
                         Modifier
                             .fillMaxWidth()
                             .height(estimatedCanvasH.coerceIn(140.dp, availH * 0.56f))
@@ -597,6 +681,10 @@ fun EditorScreen(
                         Modifier
                             .fillMaxWidth()
                             .weight(1f)
+                    }).onGloballyPositioned { coords ->
+                        val pos = coords.positionInRoot()
+                        canvasRightInRoot = pos.x + coords.size.width
+                        canvasTopInRoot = pos.y
                     },
                     contentAlignment = Alignment.Center
                 ) {
@@ -609,6 +697,8 @@ fun EditorScreen(
                         isCornerPinMode = activeToolDrawer == ToolDrawerTab.CORNER_PIN,
                         isCornerPinAddPointMode = isCornerPinAddPointMode,
                         isEditingFillMedia = isEditingFillMedia,
+                        isCreatorViewActive = isCreatorViewActive,
+                        creatorViewMaskColorArgb = settings.creatorViewColorArgb,
                         transformLocks = transformLocks,
                         canvasZoom = canvasZoom,
                         canvasPan = canvasPan,
@@ -669,31 +759,7 @@ fun EditorScreen(
                         }
                     )
 
-                    // Upper-Right Vertical Stack inside Canvas: Zoom on top, Layers directly below
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 10.dp, end = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = Alignment.End
-                    ) {
-                        FloatingCanvasCornerButton(
-                            icon = Icons.Rounded.ZoomIn,
-                            label = "Zoom",
-                            highlighted = isZoomMode,
-                            tag = "top_zoom_button",
-                            onClick = { viewModel.toggleZoomMode() }
-                        )
-                        FloatingCanvasCornerButton(
-                            icon = Icons.Rounded.Layers,
-                            label = "Layers",
-                            highlighted = showLayersDrawer,
-                            tag = "top_layers_button",
-                            onClick = { viewModel.toggleLayersDrawer() }
-                        )
-                    }
-
-                    if (canvasZoom != 1f || canvasPan.first != 0f || canvasPan.second != 0f) {
+                    if (!isCreatorViewActive && (canvasZoom != 1f || canvasPan.first != 0f || canvasPan.second != 0f)) {
                         Surface(
                             shape = RoundedCornerShape(999.dp),
                             color = Color.Black.copy(alpha = 0.65f),
@@ -716,11 +782,11 @@ fun EditorScreen(
                     Spacer(modifier = Modifier.height(10.dp))
                 }
 
-                // Always-visible Layer Strip + Single-Row Bottom Tool Bar (canvas stays static full-size!)
+                // Always-visible Layer Strip + Single-Row Bottom Tool Bar (hidden in Creator View)
                 Column(modifier = Modifier.fillMaxWidth()) {
                     // Always-visible Horizontal Layer Strip whenever NO floating tool option panel is open
                     AnimatedVisibility(
-                        visible = activeToolDrawer == ToolDrawerTab.NONE,
+                        visible = activeToolDrawer == ToolDrawerTab.NONE && !isCreatorViewActive,
                         enter = expandVertically(),
                         exit = shrinkVertically()
                     ) {
@@ -734,7 +800,7 @@ fun EditorScreen(
                     }
 
                     // Original-Size Context-Sensitive Bottom Tool Bar
-                    AnimatedVisibility(visible = !isClearTypingMode) {
+                    AnimatedVisibility(visible = !isClearTypingMode && !isCreatorViewActive) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
 
@@ -748,6 +814,7 @@ fun EditorScreen(
                                 val dockTools = when {
                                     isInTextMode -> listOf(
                                         DockToolSpec(
+                                            id = "dock_edit_text",
                                             icon = Icons.Rounded.Edit,
                                             label = "Edit",
                                             selected = activeToolDrawer == ToolDrawerTab.TEXT,
@@ -755,6 +822,7 @@ fun EditorScreen(
                                             onClick = { viewModel.openTextToolDrawer() }
                                         ),
                                         DockToolSpec(
+                                            id = "dock_color",
                                             icon = Icons.Rounded.Palette,
                                             label = "Color",
                                             selected = activeToolDrawer == ToolDrawerTab.COLOR,
@@ -762,6 +830,7 @@ fun EditorScreen(
                                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
                                         ),
                                         DockToolSpec(
+                                            id = "dock_font",
                                             icon = Icons.Rounded.FontDownload,
                                             label = "Font",
                                             selected = activeToolDrawer == ToolDrawerTab.FONT,
@@ -769,6 +838,7 @@ fun EditorScreen(
                                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.FONT) }
                                         ),
                                         DockToolSpec(
+                                            id = "dock_rotate",
                                             icon = Icons.AutoMirrored.Rounded.RotateRight,
                                             label = "Rotate",
                                             selected = activeToolDrawer == ToolDrawerTab.ROTATE,
@@ -778,6 +848,7 @@ fun EditorScreen(
                                     )
                                     isPhotoSelected -> listOf(
                                         DockToolSpec(
+                                            id = "dock_color",
                                             icon = Icons.Rounded.Palette,
                                             label = "Color",
                                             selected = activeToolDrawer == ToolDrawerTab.COLOR,
@@ -785,6 +856,7 @@ fun EditorScreen(
                                             onClick = { viewModel.openToolDrawer(ToolDrawerTab.COLOR) }
                                         ),
                                         DockToolSpec(
+                                            id = "dock_adjust",
                                             icon = Icons.Rounded.Tune,
                                             label = "Adjust",
                                             selected = activeToolDrawer == ToolDrawerTab.ADJUST,
@@ -795,6 +867,7 @@ fun EditorScreen(
                                             }
                                         ),
                                         DockToolSpec(
+                                            id = "dock_rotate",
                                             icon = Icons.AutoMirrored.Rounded.RotateRight,
                                             label = "Rotate",
                                             selected = activeToolDrawer == ToolDrawerTab.ROTATE,
@@ -804,6 +877,7 @@ fun EditorScreen(
                                     )
                                     selectedLayer is GroupLayer -> listOf(
                                         DockToolSpec(
+                                            id = "dock_rotate",
                                             icon = Icons.AutoMirrored.Rounded.RotateRight,
                                             label = "Rotate",
                                             selected = activeToolDrawer == ToolDrawerTab.ROTATE,
@@ -813,6 +887,7 @@ fun EditorScreen(
                                     )
                                     else -> listOf(
                                         DockToolSpec(
+                                            id = "dock_photo",
                                             icon = Icons.Rounded.Image,
                                             label = "Photo",
                                             selected = false,
@@ -820,6 +895,7 @@ fun EditorScreen(
                                             onClick = onPickPhotosDirect
                                         ),
                                         DockToolSpec(
+                                            id = "dock_text_plus",
                                             icon = Icons.Rounded.Title,
                                             label = "Text+",
                                             selected = activeToolDrawer == ToolDrawerTab.TEXT,
@@ -827,64 +903,70 @@ fun EditorScreen(
                                             onClick = { viewModel.startNewTextDraft() }
                                         )
                                     )
-                                }
+                                }.filter { it.id !in settings.hiddenTabIds }
 
-                                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                                    val cols = (maxWidth / 76.dp).toInt().coerceIn(2, 6)
-                                    val maxSpareRows = if (activeToolDrawer != ToolDrawerTab.NONE) {
-                                        1
-                                    } else {
-                                        ((spareVerticalDp - 72.dp) / 60.dp).toInt().coerceIn(1, 3)
-                                    }
-                                    val neededRows = ceil(dockTools.size / cols.toFloat()).toInt().coerceAtLeast(1)
-                                    val rowsPerPage = minOf(neededRows, maxSpareRows).coerceAtLeast(1)
-                                    val pageSize = (cols * rowsPerPage).coerceAtLeast(1)
-                                    val pages = dockTools.chunked(pageSize)
+                                if (dockTools.isNotEmpty()) {
+                                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                                        val cols = (maxWidth / 76.dp).toInt().coerceIn(2, 6)
+                                        val maxSpareRows = if (activeToolDrawer != ToolDrawerTab.NONE) {
+                                            1
+                                        } else {
+                                            ((spareVerticalDp - 72.dp) / 60.dp).toInt().coerceIn(1, 3)
+                                        }
+                                        val neededRows = ceil(dockTools.size / cols.toFloat()).toInt().coerceAtLeast(1)
+                                        val rowsPerPage = minOf(neededRows, maxSpareRows).coerceAtLeast(1)
+                                        val pageSize = (cols * rowsPerPage).coerceAtLeast(1)
+                                        val pages = dockTools.chunked(pageSize)
 
-                                    if (pages.size <= 1) {
-                                        BottomDockPageGrid(
-                                            pageItems = dockTools,
-                                            cols = cols,
-                                            rows = rowsPerPage
-                                        )
-                                    } else {
-                                        val dockPagerState = rememberPagerState(pageCount = { pages.size })
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            HorizontalPager(
-                                                state = dockPagerState,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .testTag("bottom_tool_pager")
-                                            ) { pageIdx ->
-                                                BottomDockPageGrid(
-                                                    pageItems = pages[pageIdx],
-                                                    cols = cols,
-                                                    rows = rowsPerPage
-                                                )
-                                            }
-                                            Row(
-                                                modifier = Modifier.padding(bottom = 6.dp, top = 2.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                        if (pages.size <= 1) {
+                                            BottomDockPageGrid(
+                                                pageItems = dockTools,
+                                                cols = cols,
+                                                rows = rowsPerPage,
+                                                holdHideEnabled = settings.tabHideFeatureEnabled,
+                                                onRequestHideTab = { id, lbl -> pendingHideTab = id to lbl }
+                                            )
+                                        } else {
+                                            val dockPagerState = rememberPagerState(pageCount = { pages.size })
+                                            Column(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalAlignment = Alignment.CenterHorizontally
                                             ) {
-                                                repeat(pages.size) { dotIdx ->
-                                                    val isCur = dockPagerState.currentPage == dotIdx
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(if (isCur) 7.dp else 5.dp)
-                                                            .clip(CircleShape)
-                                                            .background(
-                                                                if (isCur) StudioAzure
-                                                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
-                                                            )
-                                                            .clickable {
-                                                                scope.launch { dockPagerState.animateScrollToPage(dotIdx) }
-                                                            }
-                                                            .testTag("bottom_pager_dot_$dotIdx")
+                                                HorizontalPager(
+                                                    state = dockPagerState,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .testTag("bottom_tool_pager")
+                                                ) { pageIdx ->
+                                                    BottomDockPageGrid(
+                                                        pageItems = pages[pageIdx],
+                                                        cols = cols,
+                                                        rows = rowsPerPage,
+                                                        holdHideEnabled = settings.tabHideFeatureEnabled,
+                                                        onRequestHideTab = { id, lbl -> pendingHideTab = id to lbl }
                                                     )
+                                                }
+                                                Row(
+                                                    modifier = Modifier.padding(bottom = 6.dp, top = 2.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    repeat(pages.size) { dotIdx ->
+                                                        val isCur = dockPagerState.currentPage == dotIdx
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(if (isCur) 7.dp else 5.dp)
+                                                                .clip(CircleShape)
+                                                                .background(
+                                                                    if (isCur) StudioAzure
+                                                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                                                                )
+                                                                .clickable {
+                                                                    scope.launch { dockPagerState.animateScrollToPage(dotIdx) }
+                                                                }
+                                                                .testTag("bottom_pager_dot_$dotIdx")
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -900,6 +982,101 @@ fun EditorScreen(
                 }
             }
 
+            // Movable Floating Zoom & Layers Buttons (freely draggable anywhere on screen, beneath active tool panels)
+            if (!isCreatorViewActive) {
+                val margin10Px = with(density) { 10.dp.toPx() }
+                val gap8Px = with(density) { 8.dp.toPx() }
+                val fallbackBtnPx = with(density) { 52.dp.toPx() }
+                val zW = if (zoomBtnSize.width > 0) zoomBtnSize.width.toFloat() else fallbackBtnPx
+                val zH = if (zoomBtnSize.height > 0) zoomBtnSize.height.toFloat() else fallbackBtnPx
+                val lW = if (layersBtnSize.width > 0) layersBtnSize.width.toFloat() else fallbackBtnPx
+                val lH = if (layersBtnSize.height > 0) layersBtnSize.height.toFloat() else fallbackBtnPx
+                val canvasRightLocal = if (canvasRightInRoot > 0f) (canvasRightInRoot - rootOriginInRoot.x) else availWpx
+                val canvasTopLocal = (canvasTopInRoot - rootOriginInRoot.y).coerceAtLeast(0f)
+
+                val defaultZoomPos = Offset(
+                    x = (canvasRightLocal - zW - margin10Px).coerceIn(0f, (availWpx - zW).coerceAtLeast(0f)),
+                    y = (canvasTopLocal + margin10Px).coerceIn(0f, (availHpx - zH).coerceAtLeast(0f))
+                )
+                val defaultLayersPos = Offset(
+                    x = (canvasRightLocal - lW - margin10Px).coerceIn(0f, (availWpx - lW).coerceAtLeast(0f)),
+                    y = (canvasTopLocal + margin10Px + zH + gap8Px).coerceIn(0f, (availHpx - lH).coerceAtLeast(0f))
+                )
+                val effectiveZoomPos = if (zoomBtnDragged) {
+                    Offset(
+                        zoomBtnOffset.x.coerceIn(0f, (availWpx - zW).coerceAtLeast(0f)),
+                        zoomBtnOffset.y.coerceIn(0f, (availHpx - zH).coerceAtLeast(0f))
+                    )
+                } else defaultZoomPos
+
+                val effectiveLayersPos = if (layersBtnDragged) {
+                    Offset(
+                        layersBtnOffset.x.coerceIn(0f, (availWpx - lW).coerceAtLeast(0f)),
+                        layersBtnOffset.y.coerceIn(0f, (availHpx - lH).coerceAtLeast(0f))
+                    )
+                } else defaultLayersPos
+
+                FloatingCanvasCornerButton(
+                    icon = Icons.Rounded.ZoomIn,
+                    label = "Zoom",
+                    highlighted = isZoomMode,
+                    tag = "top_zoom_button",
+                    modifier = Modifier
+                        .offset { IntOffset(effectiveZoomPos.x.roundToInt(), effectiveZoomPos.y.roundToInt()) }
+                        .onSizeChanged { zoomBtnSize = it }
+                        .pointerInput(availWpx, availHpx) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    if (!zoomBtnDragged) {
+                                        zoomBtnOffset = defaultZoomPos
+                                        zoomBtnDragged = true
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val w = if (zoomBtnSize.width > 0) zoomBtnSize.width.toFloat() else fallbackBtnPx
+                                    val h = if (zoomBtnSize.height > 0) zoomBtnSize.height.toFloat() else fallbackBtnPx
+                                    zoomBtnOffset = Offset(
+                                        x = (zoomBtnOffset.x + dragAmount.x).coerceIn(0f, (availWpx - w).coerceAtLeast(0f)),
+                                        y = (zoomBtnOffset.y + dragAmount.y).coerceIn(0f, (availHpx - h).coerceAtLeast(0f))
+                                    )
+                                }
+                            )
+                        },
+                    onClick = { viewModel.toggleZoomMode() }
+                )
+
+                FloatingCanvasCornerButton(
+                    icon = Icons.Rounded.Layers,
+                    label = "Layers",
+                    highlighted = showLayersDrawer,
+                    tag = "top_layers_button",
+                    modifier = Modifier
+                        .offset { IntOffset(effectiveLayersPos.x.roundToInt(), effectiveLayersPos.y.roundToInt()) }
+                        .onSizeChanged { layersBtnSize = it }
+                        .pointerInput(availWpx, availHpx) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    if (!layersBtnDragged) {
+                                        layersBtnOffset = defaultLayersPos
+                                        layersBtnDragged = true
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val w = if (layersBtnSize.width > 0) layersBtnSize.width.toFloat() else fallbackBtnPx
+                                    val h = if (layersBtnSize.height > 0) layersBtnSize.height.toFloat() else fallbackBtnPx
+                                    layersBtnOffset = Offset(
+                                        x = (layersBtnOffset.x + dragAmount.x).coerceIn(0f, (availWpx - w).coerceAtLeast(0f)),
+                                        y = (layersBtnOffset.y + dragAmount.y).coerceIn(0f, (availHpx - h).coerceAtLeast(0f))
+                                    )
+                                }
+                            )
+                        },
+                    onClick = { viewModel.toggleLayersDrawer() }
+                )
+            }
+
             // Universal Floating & 4-Corner-Resizable Option Panels (canvas stays fixed full-size underneath)
             if (activeToolDrawer != ToolDrawerTab.NONE && activeToolDrawer != ToolDrawerTab.THREE_D) {
                 FloatingDraggableResizablePanel(
@@ -907,7 +1084,7 @@ fun EditorScreen(
                     dragHandleTag = "tool_drawer_drag_handle",
                     resizeTagPrefix = "tool_drawer_resize",
                     defaultAlignment = Alignment.BottomCenter,
-                    bottomClearanceDp = if (isClearTypingMode) 6.dp else 72.dp,
+                    bottomClearanceDp = if (isClearTypingMode || isCreatorViewActive) 10.dp else 72.dp,
                     defaultHeightDp = toolDrawerMaxHeight,
                     minWidthDp = 210.dp,
                     minHeightDp = if (isClearTypingMode) 90.dp else 110.dp,
@@ -1024,6 +1201,7 @@ fun EditorScreen(
                                     onPickFillMedia = onPickFillMediaDirect,
                                     onSetEditingFillMedia = { viewModel.setEditingFillMedia(it) },
                                     onClearFillMedia = { viewModel.clearSelectedLayerFillMedia() },
+                                    onLaunchEyedropper = { target -> viewModel.startEyedropper(target) },
                                     onEndTransaction = { viewModel.endTransformTransaction() }
                                 )
                             }
@@ -1053,7 +1231,7 @@ fun EditorScreen(
             }
 
             // Optional Floating Live Preview Window (3-Dot Menu -> Preview toggle)
-            if (settings.previewWindowEnabled && activeToolDrawer != ToolDrawerTab.NONE) {
+            if (settings.previewWindowEnabled && activeToolDrawer != ToolDrawerTab.NONE && !isCreatorViewActive) {
                 FloatingPreviewWindow(
                     document = document,
                     imageBitmaps = imageBitmaps,
@@ -1067,9 +1245,175 @@ fun EditorScreen(
                 )
             }
 
+            // Creator View: compact active-tab chip at top-start
+            if (isCreatorViewActive && activeToolDrawer != ToolDrawerTab.NONE) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = StudioAmber.copy(alpha = 0.95f),
+                    contentColor = Color.Black,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { viewModel.closeToolDrawer() }
+                        .minimumInteractiveComponentSize()
+                        .testTag("creator_active_tab_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = toolTabIcon(activeToolDrawer),
+                            contentDescription = toolTabLabel(activeToolDrawer),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = toolTabLabel(activeToolDrawer),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Creator View Movable Floating Eye Button (Bottom-Right default, visible while active + 3s grace)
+            if (showCreatorViewEyeButton) {
+                val eyeFallbackPx = with(density) { 48.dp.toPx() }
+                val eW = if (creatorEyeSize.width > 0) creatorEyeSize.width.toFloat() else eyeFallbackPx
+                val eH = if (creatorEyeSize.height > 0) creatorEyeSize.height.toFloat() else eyeFallbackPx
+                val defaultEyePos = Offset(
+                    x = (availWpx - eW - with(density) { 14.dp.toPx() }).coerceAtLeast(0f),
+                    y = (availHpx - eH - with(density) { 18.dp.toPx() }).coerceAtLeast(0f)
+                )
+                val effectiveEyePos = if (creatorEyeDragged) {
+                    Offset(
+                        creatorEyeOffset.x.coerceIn(0f, (availWpx - eW).coerceAtLeast(0f)),
+                        creatorEyeOffset.y.coerceIn(0f, (availHpx - eH).coerceAtLeast(0f))
+                    )
+                } else defaultEyePos
+
+                Surface(
+                    shape = CircleShape,
+                    color = if (isCreatorViewActive) Color.Black.copy(alpha = 0.78f) else StudioAmber,
+                    contentColor = if (isCreatorViewActive) Color.White else Color.Black,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .offset { IntOffset(effectiveEyePos.x.roundToInt(), effectiveEyePos.y.roundToInt()) }
+                        .onSizeChanged { creatorEyeSize = it }
+                        .pointerInput(availWpx, availHpx) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    if (!creatorEyeDragged) {
+                                        creatorEyeOffset = defaultEyePos
+                                        creatorEyeDragged = true
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val w = if (creatorEyeSize.width > 0) creatorEyeSize.width.toFloat() else eyeFallbackPx
+                                    val h = if (creatorEyeSize.height > 0) creatorEyeSize.height.toFloat() else eyeFallbackPx
+                                    creatorEyeOffset = Offset(
+                                        x = (creatorEyeOffset.x + dragAmount.x).coerceIn(0f, (availWpx - w).coerceAtLeast(0f)),
+                                        y = (creatorEyeOffset.y + dragAmount.y).coerceIn(0f, (availHpx - h).coerceAtLeast(0f))
+                                    )
+                                }
+                            )
+                        }
+                        .clip(CircleShape)
+                        .clickable { viewModel.onCreatorViewEyeTapped() }
+                        .minimumInteractiveComponentSize()
+                        .testTag("creator_view_eye_button")
+                ) {
+                    Box(
+                        modifier = Modifier.size(48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isCreatorViewActive) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                            contentDescription = if (isCreatorViewActive) "Turn off Creator View" else "Re-enable Creator View",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
+            // Floating 2-Second Long-Press Hide Tab Prompt
+            val hidePromptTarget = pendingHideTab
+            if (hidePromptTarget != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { pendingHideTab = null },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp)
+                            .widthIn(min = 250.dp, max = 340.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {}
+                            .testTag("hide_tab_prompt")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Hide \"${hidePromptTarget.second}\"?",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "You can unhide it anytime from 3-Dot Menu → Settings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = { pendingHideTab = null },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("hide_tab_cancel_button")
+                                ) {
+                                    Text("Not")
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.hideTab(hidePromptTarget.first)
+                                        pendingHideTab = null
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = StudioAzure),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("hide_tab_confirm_button")
+                                ) {
+                                    Text("Hide")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Right-Half Vertical Side Layers Drawer (Top-to-bottom on right side)
             AnimatedVisibility(
-                visible = showLayersDrawer,
+                visible = showLayersDrawer && !isCreatorViewActive,
                 enter = slideInHorizontally { it },
                 exit = slideOutHorizontally { it },
                 modifier = Modifier.align(Alignment.CenterEnd)
@@ -1095,7 +1439,7 @@ fun EditorScreen(
 
             // Right-Half Vertical Side My Projects Drawer (Auto-backups current project on switch)
             AnimatedVisibility(
-                visible = showProjectsDrawer,
+                visible = showProjectsDrawer && !isCreatorViewActive,
                 enter = slideInHorizontally { it },
                 exit = slideOutHorizontally { it },
                 modifier = Modifier.align(Alignment.CenterEnd)
@@ -1171,12 +1515,36 @@ fun EditorScreen(
                             onSelectAppEmojiFont = { viewModel.setAppEmojiFont(it) }
                         )
                     }
+                    ThreeDotSheetSection.SETTINGS -> {
+                        EditorSettingsSheetContent(
+                            tabHideEnabled = settings.tabHideFeatureEnabled,
+                            hiddenTabIds = settings.hiddenTabIds,
+                            creatorViewEnabled = settings.creatorViewEnabled,
+                            creatorViewColorArgb = settings.creatorViewColorArgb,
+                            onToggleTabHide = { viewModel.setTabHideFeatureEnabled(it) },
+                            onUnhideTab = { viewModel.unhideTab(it) },
+                            onToggleCreatorView = { viewModel.setCreatorViewEnabled(it) },
+                            onSelectCreatorColor = { viewModel.setCreatorViewColorArgb(it) },
+                            onOpenCreatorPalette = { showCreatorColorPalette = true }
+                        )
+                    }
                     ThreeDotSheetSection.NONE -> Unit
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }
+    }
+
+    if (showCreatorColorPalette) {
+        ColorPalettePickerDialog(
+            initialArgb = settings.creatorViewColorArgb,
+            onColorSelected = { argb ->
+                viewModel.setCreatorViewColorArgb(argb)
+                showCreatorColorPalette = false
+            },
+            onDismiss = { showCreatorColorPalette = false }
+        )
     }
 
     if (showExportDialog) {
@@ -1222,11 +1590,251 @@ fun EditorScreen(
 }
 
 @Composable
+private fun EditorSettingsSheetContent(
+    tabHideEnabled: Boolean,
+    hiddenTabIds: Set<String>,
+    creatorViewEnabled: Boolean,
+    creatorViewColorArgb: Long,
+    onToggleTabHide: (Boolean) -> Unit,
+    onUnhideTab: (String) -> Unit,
+    onToggleCreatorView: (Boolean) -> Unit,
+    onSelectCreatorColor: (Long) -> Unit,
+    onOpenCreatorPalette: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Tab Hide & Unhide Section
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Hold Tab to Hide (2s)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Press & hold any editor tab for 2 seconds to hide it",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = tabHideEnabled,
+                        onCheckedChange = onToggleTabHide,
+                        modifier = Modifier.testTag("settings_hide_tabs_switch")
+                    )
+                }
+
+                if (hiddenTabIds.isNotEmpty()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                    Text(
+                        text = "Hidden Tabs (${hiddenTabIds.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    hiddenTabIds.sorted().forEach { tabId ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = tabLabelForId(tabId),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            IconButton(
+                                onClick = { onUnhideTab(tabId) },
+                                modifier = Modifier.testTag("unhide_tab_$tabId")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Visibility,
+                                    contentDescription = "Unhide ${tabLabelForId(tabId)}",
+                                    tint = StudioAzure
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "No tabs are currently hidden.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Creator View Section
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Creator View",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Isolate selected layer & option panel over chroma mask",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = creatorViewEnabled,
+                        onCheckedChange = onToggleCreatorView,
+                        modifier = Modifier.testTag("settings_creator_view_switch")
+                    )
+                }
+
+                Text(
+                    text = "Mask Color",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val presets = listOf(
+                    0xFF00FF00L to "creator_color_green",
+                    0xFF000000L to "creator_color_black",
+                    0xFFFFFFFFL to "creator_color_white",
+                    0xFF007AFFL to "creator_color_blue",
+                    0xFFFF00FFL to "creator_color_magenta",
+                    0xFFFF3B30L to "creator_color_red"
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    presets.forEach { (argb, tag) ->
+                        val selected = creatorViewColorArgb == argb
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color(argb.toInt()))
+                                .border(
+                                    width = if (selected) 3.dp else 1.dp,
+                                    color = if (selected) StudioAmber else MaterialTheme.colorScheme.outline,
+                                    shape = CircleShape
+                                )
+                                .clickable { onSelectCreatorColor(argb) }
+                                .testTag(tag),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected Mask Color",
+                                    tint = if (argb == 0xFFFFFFFFL || argb == 0xFF00FF00L) Color.Black else Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                    IconButton(
+                        onClick = onOpenCreatorPalette,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .testTag("creator_color_palette")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Palette,
+                            contentDescription = "Custom Mask Color Palette",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun tabLabelForId(tabId: String): String = when (tabId) {
+    "top_delete" -> "Delete"
+    "top_corner_pin" -> "Corner Pin"
+    "top_3d" -> "3D"
+    "top_filter" -> "Filter"
+    "top_crop" -> "Crop"
+    "top_lock_s" -> "Stretch (S)"
+    "top_lock_z" -> "Zoom (Z)"
+    "top_lock_r" -> "Rotate (R)"
+    "top_lock_p" -> "Move (P)"
+    "dock_edit_text" -> "Edit Text"
+    "dock_color" -> "Color"
+    "dock_font" -> "Font"
+    "dock_rotate" -> "Rotate"
+    "dock_adjust" -> "Adjust"
+    "dock_photo" -> "Photo"
+    "dock_text_plus" -> "Text+"
+    else -> tabId
+}
+
+private fun toolTabIcon(tab: ToolDrawerTab): ImageVector = when (tab) {
+    ToolDrawerTab.TEXT -> Icons.Rounded.Edit
+    ToolDrawerTab.COLOR -> Icons.Rounded.Palette
+    ToolDrawerTab.FONT -> Icons.Rounded.FontDownload
+    ToolDrawerTab.ROTATE -> Icons.AutoMirrored.Rounded.RotateRight
+    ToolDrawerTab.ADJUST -> Icons.Rounded.Tune
+    ToolDrawerTab.CROP -> Icons.Rounded.Crop
+    ToolDrawerTab.CORNER_PIN -> Icons.Rounded.Transform
+    ToolDrawerTab.FILTER -> Icons.Rounded.AutoAwesome
+    ToolDrawerTab.THREE_D -> Icons.Rounded.ViewInAr
+    ToolDrawerTab.PHOTO -> Icons.Rounded.Image
+    ToolDrawerTab.NONE -> Icons.Rounded.AutoAwesome
+}
+
+private fun toolTabLabel(tab: ToolDrawerTab): String = when (tab) {
+    ToolDrawerTab.TEXT -> "Text"
+    ToolDrawerTab.COLOR -> "Color"
+    ToolDrawerTab.FONT -> "Font"
+    ToolDrawerTab.ROTATE -> "Rotate"
+    ToolDrawerTab.ADJUST -> "Adjust"
+    ToolDrawerTab.CROP -> "Crop"
+    ToolDrawerTab.CORNER_PIN -> "Corner Pin"
+    ToolDrawerTab.FILTER -> "Filter"
+    ToolDrawerTab.THREE_D -> "3D"
+    ToolDrawerTab.PHOTO -> "Photo"
+    ToolDrawerTab.NONE -> ""
+}
+
+@Composable
 private fun FloatingCanvasCornerButton(
     icon: ImageVector,
     label: String,
     highlighted: Boolean,
     tag: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Surface(
@@ -1234,7 +1842,7 @@ private fun FloatingCanvasCornerButton(
         color = if (highlighted) StudioAmber.copy(alpha = 0.94f) else Color.Black.copy(alpha = 0.72f),
         contentColor = if (highlighted) Color.Black else Color.White,
         shadowElevation = 4.dp,
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .minimumInteractiveComponentSize()
@@ -1257,9 +1865,13 @@ private fun FloatingCanvasCornerButton(
 }
 
 private sealed class TopBarControlSpec {
+    abstract val id: String
+    abstract val label: String
+
     data class Action(
+        override val id: String,
         val icon: ImageVector,
-        val label: String,
+        override val label: String,
         val enabled: Boolean = true,
         val highlighted: Boolean = false,
         val highlightColor: Color = StudioAmber,
@@ -1268,8 +1880,9 @@ private sealed class TopBarControlSpec {
     ) : TopBarControlSpec()
 
     data class Lock(
+        override val id: String,
         val shortCode: String,
-        val label: String,
+        override val label: String,
         val isLocked: Boolean,
         val tag: String,
         val onClick: () -> Unit
@@ -1277,6 +1890,7 @@ private sealed class TopBarControlSpec {
 }
 
 private data class DockToolSpec(
+    val id: String,
     val icon: ImageVector,
     val label: String,
     val selected: Boolean,
@@ -1288,7 +1902,9 @@ private data class DockToolSpec(
 private fun TopActionPageGrid(
     pageItems: List<TopBarControlSpec>,
     cols: Int,
-    rows: Int
+    rows: Int,
+    holdHideEnabled: Boolean,
+    onRequestHideTab: (String, String) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1314,6 +1930,10 @@ private fun TopActionPageGrid(
                                 highlighted = item.highlighted,
                                 highlightColor = item.highlightColor,
                                 tag = item.tag,
+                                modifier = Modifier.onTwoSecondHold(
+                                    key = item.id,
+                                    enabled = holdHideEnabled
+                                ) { onRequestHideTab(item.id, item.label) },
                                 onClick = item.onClick
                             )
                             is TopBarControlSpec.Lock -> TransformLockTopItem(
@@ -1321,6 +1941,10 @@ private fun TopActionPageGrid(
                                 label = item.label,
                                 isLocked = item.isLocked,
                                 tag = item.tag,
+                                modifier = Modifier.onTwoSecondHold(
+                                    key = item.id,
+                                    enabled = holdHideEnabled
+                                ) { onRequestHideTab(item.id, "${item.label} (${item.shortCode})") },
                                 onClick = item.onClick
                             )
                         }
@@ -1335,7 +1959,9 @@ private fun TopActionPageGrid(
 private fun BottomDockPageGrid(
     pageItems: List<DockToolSpec>,
     cols: Int,
-    rows: Int
+    rows: Int,
+    holdHideEnabled: Boolean,
+    onRequestHideTab: (String, String) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1358,9 +1984,65 @@ private fun BottomDockPageGrid(
                             label = item.label,
                             selected = item.selected,
                             tag = item.tag,
+                            modifier = Modifier.onTwoSecondHold(
+                                key = item.id,
+                                enabled = holdHideEnabled
+                            ) { onRequestHideTab(item.id, item.label) },
                             onClick = item.onClick
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Fires [onHoldTriggered] when user presses & holds cleanly (within touch slop) for [holdMillis] (default 2s),
+ * consuming the release so click handlers do not also trigger, while staying transparent to normal clicks & swipes.
+ */
+private fun Modifier.onTwoSecondHold(
+    key: Any,
+    enabled: Boolean,
+    holdMillis: Long = 2000L,
+    onHoldTriggered: () -> Unit
+): Modifier = if (!enabled) this else pointerInput(key, enabled) {
+    coroutineScope {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            var triggered = false
+            var cancelled = false
+            val holdJob = launch {
+                delay(holdMillis)
+                if (!cancelled && !triggered) {
+                    triggered = true
+                    onHoldTriggered()
+                }
+            }
+            while (true) {
+                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                if (triggered) {
+                    event.changes.forEach { it.consume() }
+                    if (event.changes.none { it.pressed }) {
+                        break
+                    }
+                    continue
+                }
+                val active = event.changes.firstOrNull { it.id == down.id } ?: event.changes.firstOrNull()
+                if (active == null || !active.pressed) {
+                    cancelled = true
+                    holdJob.cancel()
+                    if (active != null && (active.uptimeMillis - down.uptimeMillis) >= holdMillis) {
+                        triggered = true
+                        event.changes.forEach { it.consume() }
+                        onHoldTriggered()
+                    }
+                    break
+                }
+                if ((active.position - down.position).getDistance() >= viewConfiguration.touchSlop) {
+                    cancelled = true
+                    holdJob.cancel()
+                    break
                 }
             }
         }
@@ -1413,6 +2095,7 @@ private fun TopActionItem(
     highlighted: Boolean = false,
     highlightColor: Color = StudioAmber,
     tag: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val tint = when {
@@ -1421,7 +2104,7 @@ private fun TopActionItem(
         else -> Color.White
     }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .widthIn(min = 50.dp)
             .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick)
@@ -1448,12 +2131,13 @@ private fun TransformLockTopItem(
     label: String,
     isLocked: Boolean,
     tag: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val tint = if (isLocked) StudioCoral else Color.White
     val bgColor = if (isLocked) Color.White.copy(alpha = 0.2f) else Color.Transparent
     Column(
-        modifier = Modifier
+        modifier = modifier
             .widthIn(min = 50.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
@@ -1498,11 +2182,12 @@ private fun BottomToolItem(
     label: String,
     selected: Boolean,
     tag: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val tint = if (selected) StudioAzure else MaterialTheme.colorScheme.onSurface
     Column(
-        modifier = Modifier
+        modifier = modifier
             .widthIn(min = 68.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) StudioAzure.copy(alpha = 0.14f) else Color.Transparent)

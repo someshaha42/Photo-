@@ -18,7 +18,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +49,7 @@ import com.example.model.EditorLayer
 import com.example.model.LayerBlendMode
 import com.example.model.LayerEffectStyle
 import com.example.model.TextLayer
+import com.example.ui.EyedropperTarget
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioAzure
 import com.example.ui.theme.StudioEmerald
@@ -55,6 +59,12 @@ private enum class FilterSubTab(val label: String) {
     BLEND("Blend"),
     SHADOW("Shadow"),
     FILL("Fill")
+}
+
+private enum class FilterPaletteTarget {
+    STROKE,
+    SHADOW,
+    FILL
 }
 
 @Composable
@@ -68,15 +78,17 @@ fun FilterToolPanel(
     onPickFillMedia: () -> Unit,
     onSetEditingFillMedia: (Boolean) -> Unit,
     onClearFillMedia: () -> Unit,
+    onLaunchEyedropper: (EyedropperTarget) -> Unit = {},
     onEndTransaction: () -> Unit
 ) {
     var activeTab by remember { mutableStateOf(FilterSubTab.BLEND) }
+    var activePaletteTarget by remember { mutableStateOf<FilterPaletteTarget?>(null) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         if (selectedLayer == null) {
             Text(
@@ -181,6 +193,8 @@ fun FilterToolPanel(
                     FilterColorSwatchesRow(
                         selectedArgb = strokeCol,
                         tagPrefix = "filter_stroke_color",
+                        onOpenPalette = { activePaletteTarget = FilterPaletteTarget.STROKE },
+                        onLaunchEyedropper = { onLaunchEyedropper(EyedropperTarget.FILTER_STROKE) },
                         onSelectColor = { c ->
                             onUpdateEffectStyleTransient { it.copy(strokeColorArgb = c) }
                             onEndTransaction()
@@ -226,6 +240,8 @@ fun FilterToolPanel(
                     FilterColorSwatchesRow(
                         selectedArgb = shadowCol,
                         tagPrefix = "filter_shadow_color",
+                        onOpenPalette = { activePaletteTarget = FilterPaletteTarget.SHADOW },
+                        onLaunchEyedropper = { onLaunchEyedropper(EyedropperTarget.FILTER_SHADOW) },
                         onSelectColor = { c ->
                             onUpdateEffectStyleTransient { it.copy(shadowEnabled = true, shadowColorArgb = c) }
                             onEndTransaction()
@@ -233,7 +249,7 @@ fun FilterToolPanel(
                     )
                 }
 
-                // 3. Opacity (moved cleanly from Adjust & Rotate into Filter -> Shadow)
+                // 3. Opacity
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -259,9 +275,7 @@ fun FilterToolPanel(
                     fontWeight = FontWeight.SemiBold
                 )
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -274,21 +288,42 @@ fun FilterToolPanel(
                     ) {
                         Text("None")
                     }
-                    LAYER_COLORS.forEachIndexed { idx, argb ->
-                        val selected = fill.fillColorArgb == argb
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(Color(argb.toInt()))
-                                .border(
-                                    width = if (selected) 2.5.dp else 1.dp,
-                                    color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
-                                    shape = CircleShape
-                                )
-                                .clickable { onSetFillColor(argb) }
-                                .testTag("filter_fill_color_$idx")
-                        )
+
+                    // Eyedropper Pen button
+                    FilterEyedropperButton(
+                        tag = "filter_fill_color_eyedropper",
+                        onClick = { onLaunchEyedropper(EyedropperTarget.FILTER_FILL) }
+                    )
+
+                    // Custom Color Palette button
+                    FilterPaletteButton(
+                        tag = "filter_fill_color_palette",
+                        onClick = { activePaletteTarget = FilterPaletteTarget.FILL }
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LAYER_COLORS.forEachIndexed { idx, argb ->
+                            val selected = fill.fillColorArgb == argb
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(argb.toInt()))
+                                    .border(
+                                        width = if (selected) 2.5.dp else 1.dp,
+                                        color = if (selected) StudioAzure else MaterialTheme.colorScheme.outline,
+                                        shape = CircleShape
+                                    )
+                                    .clickable { onSetFillColor(argb) }
+                                    .testTag("filter_fill_color_$idx")
+                            )
+                        }
                     }
                 }
 
@@ -361,36 +396,146 @@ fun FilterToolPanel(
             }
         }
     }
+
+    val paletteTarget = activePaletteTarget
+    if (paletteTarget != null && selectedLayer != null) {
+        val textLayer = selectedLayer as? TextLayer
+        val eff = selectedLayer.effectStyle
+        val seedColor = when (paletteTarget) {
+            FilterPaletteTarget.STROKE -> textLayer?.strokeColorArgb ?: eff.strokeColorArgb
+            FilterPaletteTarget.SHADOW -> textLayer?.shadowColorArgb ?: eff.shadowColorArgb
+            FilterPaletteTarget.FILL -> selectedLayer.fillStyle.fillColorArgb ?: 0xFFFF4D4FL
+        }
+        ColorPalettePickerDialog(
+            initialArgb = seedColor,
+            onColorSelected = { chosenArgb ->
+                when (paletteTarget) {
+                    FilterPaletteTarget.STROKE -> {
+                        onUpdateEffectStyleTransient { prev ->
+                            prev.copy(
+                                strokeWidth = if (prev.strokeWidth <= 0.5f) 4f else prev.strokeWidth,
+                                strokeColorArgb = chosenArgb
+                            )
+                        }
+                        onEndTransaction()
+                    }
+                    FilterPaletteTarget.SHADOW -> {
+                        onUpdateEffectStyleTransient { prev ->
+                            prev.copy(
+                                shadowEnabled = true,
+                                shadowRadius = if (prev.shadowRadius <= 0.5f) 10f else prev.shadowRadius,
+                                shadowColorArgb = chosenArgb
+                            )
+                        }
+                        onEndTransaction()
+                    }
+                    FilterPaletteTarget.FILL -> {
+                        onSetFillColor(chosenArgb)
+                    }
+                }
+                activePaletteTarget = null
+            },
+            onDismiss = { activePaletteTarget = null }
+        )
+    }
 }
 
 @Composable
 private fun FilterColorSwatchesRow(
     selectedArgb: Long,
     tagPrefix: String,
+    onOpenPalette: () -> Unit,
+    onLaunchEyedropper: () -> Unit,
     onSelectColor: (Long) -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        LAYER_COLORS.forEachIndexed { idx, argb ->
-            val selected = selectedArgb == argb
-            Box(
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(Color(argb.toInt()))
-                    .border(
-                        width = if (selected) 2.5.dp else 1.dp,
-                        color = if (selected) StudioEmerald else MaterialTheme.colorScheme.outline,
-                        shape = CircleShape
-                    )
-                    .clickable { onSelectColor(argb) }
-                    .testTag("${tagPrefix}_$idx")
-            )
+        FilterEyedropperButton(
+            tag = "${tagPrefix}_eyedropper",
+            onClick = onLaunchEyedropper
+        )
+        FilterPaletteButton(
+            tag = "${tagPrefix}_palette",
+            onClick = onOpenPalette
+        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            LAYER_COLORS.forEachIndexed { idx, argb ->
+                val selected = selectedArgb == argb
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(Color(argb.toInt()))
+                        .border(
+                            width = if (selected) 2.5.dp else 1.dp,
+                            color = if (selected) StudioEmerald else MaterialTheme.colorScheme.outline,
+                            shape = CircleShape
+                        )
+                        .clickable { onSelectColor(argb) }
+                        .testTag("${tagPrefix}_$idx")
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun FilterEyedropperButton(
+    tag: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.5.dp, StudioAzure, CircleShape)
+            .clickable(onClick = onClick)
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Colorize,
+            contentDescription = "Pick Color from Screen",
+            tint = StudioAzure,
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun FilterPaletteButton(
+    tag: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(
+                Brush.sweepGradient(
+                    listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)
+                )
+            )
+            .border(1.5.dp, Color.White, CircleShape)
+            .clickable(onClick = onClick)
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Palette,
+            contentDescription = "Custom Color Palette",
+            tint = Color.White,
+            modifier = Modifier.size(15.dp)
+        )
     }
 }

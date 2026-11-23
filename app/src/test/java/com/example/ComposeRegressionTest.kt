@@ -14,12 +14,15 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
@@ -825,8 +828,8 @@ class ComposeRegressionTest {
         }
         composeRule.waitForIdle()
         val tdAfterDrag = composeRule.onNodeWithTag("three_d_floating_panel").getBoundsInRoot()
-        assertTrue("3D panel moves freely in X", tdAfterDrag.left < tdBefore.left)
-        assertTrue("3D panel moves freely in Y", tdAfterDrag.top < tdBefore.top)
+        assertTrue("3D panel moves freely in X ($tdBefore -> $tdAfterDrag)", tdAfterDrag.left < tdBefore.left)
+        assertTrue("3D panel moves freely in Y ($tdBefore -> $tdAfterDrag)", tdAfterDrag.top < tdBefore.top)
 
         composeRule.onNodeWithTag("three_d_resize_br").performTouchInput {
             down(center)
@@ -844,7 +847,7 @@ class ComposeRegressionTest {
         }
         composeRule.waitForIdle()
         val initialWrap = (StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer).wrapWidthNorm
-        composeRule.onNodeWithTag("horizontal_stretch_handle_3").performTouchInput {
+        composeRule.onNodeWithTag("horizontal_stretch_handle_1").performTouchInput {
             down(center)
             moveBy(Offset(-25f, 0f))
             up()
@@ -853,6 +856,221 @@ class ComposeRegressionTest {
         val afterWrap = (StudioViewModel.findLayerRecursive(vm.document.value.layers, textId) as TextLayer).wrapWidthNorm
         assertTrue("Right handle reflows text width ($initialWrap -> $afterWrap)", afterWrap != initialWrap)
         bmp.recycle()
+    }
+
+    @Test
+    fun stickyCornerPinStaysOpenOnCanvasTapsAndLiveCropTightensSelectionHitBounds() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        val textId = vm.addTextLayer("STICKY PIN TARGET")!!
+        vm.openToolDrawer(ToolDrawerTab.CORNER_PIN)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Corner Pin is active and empty-canvas corner tap MUST NOT close it
+        assertEquals(ToolDrawerTab.CORNER_PIN, vm.activeToolDrawer.value)
+        composeRule.onNodeWithTag("editor_canvas_viewport").performTouchInput {
+            click(Offset(8f, 8f))
+        }
+        composeRule.waitForIdle()
+        assertEquals("Empty canvas tap inside Corner Pin must keep Corner Pin active", ToolDrawerTab.CORNER_PIN, vm.activeToolDrawer.value)
+        composeRule.onNodeWithTag("corner_pin_confirm_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertEquals(ToolDrawerTab.NONE, vm.activeToolDrawer.value)
+
+        // Compare hit-box bounds before and after a heavy liveCrop
+        composeRule.runOnUiThread { vm.selectLayer(textId) }
+        composeRule.waitForIdle()
+        val boundsFull = composeRule.onNodeWithTag("layer_hit_box_$textId", useUnmergedTree = true).getBoundsInRoot()
+        composeRule.runOnUiThread {
+            vm.updateSelectedLayerCrop {
+                ImageCropRect(left = 0.25f, top = 0.25f, right = 0.75f, bottom = 0.75f)
+            }
+        }
+        composeRule.waitForIdle()
+        val boundsCropped = composeRule.onNodeWithTag("layer_hit_box_$textId", useUnmergedTree = true).getBoundsInRoot()
+        val fullW = boundsFull.right - boundsFull.left
+        val croppedW = boundsCropped.right - boundsCropped.left
+        assertTrue("Cropped hit box ($croppedW) must shrink relative to uncropped ($fullW)", croppedW < fullW)
+    }
+
+    @Test
+    fun filterTabPalettesAndEyedropperControlsWork() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        vm.addTextLayer("PALETTE")
+        vm.openToolDrawer(ToolDrawerTab.FILTER)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Fill tab -> Palette & Eyedropper buttons exist & open ColorPalettePickerDialog
+        composeRule.onNodeWithTag("filter_tab_fill").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_fill_color_eyedropper").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("filter_fill_color_palette").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("color_palette_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("color_palette_apply_button").performClick()
+        composeRule.waitForIdle()
+
+        // Shadow tab hosts both Stroke & Shadow -> toggle Stroke & Shadow ON and verify Eyedropper & Palette buttons
+        composeRule.onNodeWithTag("filter_tab_shadow").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_stroke_toggle").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_stroke_color_eyedropper").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("filter_stroke_color_palette").performScrollTo().assertIsDisplayed()
+
+        composeRule.onNodeWithTag("filter_shadow_toggle").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("filter_shadow_color_palette").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("filter_shadow_color_eyedropper").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertTrue("Filter Shadow eyedropper must activate overlay", vm.isEyedropperActive.value)
+    }
+
+    @Test
+    fun movableZoomLayersButtonsAndTwoSecondHoldHideTabManagerWork() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        vm.addTextLayer("TOOLBAR")
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // 1. Zoom & Layers floating buttons drag freely across screen
+        val zoomBefore = composeRule.onNodeWithTag("top_zoom_button").getBoundsInRoot()
+        composeRule.onNodeWithTag("top_zoom_button").performTouchInput {
+            down(center)
+            moveBy(Offset(-60f, 90f))
+            up()
+        }
+        composeRule.waitForIdle()
+        val zoomAfter = composeRule.onNodeWithTag("top_zoom_button").getBoundsInRoot()
+        assertTrue("Zoom button moves horizontally", zoomAfter.left < zoomBefore.left)
+        assertTrue("Zoom button moves vertically", zoomAfter.top > zoomBefore.top)
+
+        // 2. 2-second hold on top_tool_crop opens Hide Tab prompt ("Not" left cancels, "Hide" right hides)
+        composeRule.onNodeWithTag("top_tool_crop").performTouchInput {
+            down(center)
+            advanceEventTime(2100L)
+            up()
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("hide_tab_prompt").assertIsDisplayed()
+        val notBounds = composeRule.onNodeWithTag("hide_tab_cancel_button").getBoundsInRoot()
+        val hideBounds = composeRule.onNodeWithTag("hide_tab_confirm_button").getBoundsInRoot()
+        assertTrue("'Not' button must sit left of 'Hide' button", notBounds.left < hideBounds.left)
+        composeRule.onNodeWithTag("hide_tab_cancel_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("top_tool_crop").assertIsDisplayed()
+
+        // Hold again and confirm Hide -> tab disappears and flows cleanly
+        composeRule.onNodeWithTag("top_tool_crop").performTouchInput {
+            down(center)
+            advanceEventTime(2100L)
+            up()
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("hide_tab_confirm_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(0, composeRule.onAllNodesWithText("Crop").fetchSemanticsNodes().size)
+
+        // 3. Open 3-Dot Menu -> Settings and unhide Crop via Eye button
+        composeRule.onNodeWithTag("three_dot_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("menu_settings").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_hide_tabs_switch").assertIsDisplayed()
+        composeRule.onNodeWithTag("unhide_tab_top_crop").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertFalse("top_crop must be removed from hiddenTabIds", "top_crop" in vm.settings.value.hiddenTabIds)
+    }
+
+    @Test
+    fun creatorViewIsolatesSelectedLayerAndShowsMovableEyeWithThreeSecondGrace() {
+        val vm = StudioViewModel(ApplicationProvider.getApplicationContext())
+        vm.createNewProject()
+        vm.addTextLayer("CREATOR")
+        vm.openToolDrawer(ToolDrawerTab.FILTER)
+
+        composeRule.setContent {
+            PixelForgeTheme {
+                EditorScreen(
+                    viewModel = vm,
+                    onNavigateBack = {},
+                    onPickPhotosDirect = {},
+                    onOpenFontLibrary = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Turn ON Creator View
+        composeRule.runOnUiThread { vm.setCreatorViewEnabled(true) }
+        composeRule.waitForIdle()
+
+        assertTrue(vm.isCreatorViewActive.value)
+        composeRule.onNodeWithTag("creator_active_tab_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("tool_drawer_container").assertIsDisplayed()
+        composeRule.onNodeWithTag("creator_view_eye_button").assertIsDisplayed()
+        assertFalse("Top add button must be hidden in Creator View", composeRule.onAllNodesWithTag("top_add_button").fetchSemanticsNodes().isNotEmpty())
+        assertFalse("Bottom dock must be hidden in Creator View", composeRule.onAllNodesWithTag("bottom_tool_rotate").fetchSemanticsNodes().isNotEmpty())
+
+        // Drag floating Eye button freely in X/Y
+        val eyeBefore = composeRule.onNodeWithTag("creator_view_eye_button").getBoundsInRoot()
+        composeRule.onNodeWithTag("creator_view_eye_button").performTouchInput {
+            down(center)
+            moveBy(Offset(-45f, -65f))
+            up()
+        }
+        composeRule.waitForIdle()
+        val eyeAfter = composeRule.onNodeWithTag("creator_view_eye_button").getBoundsInRoot()
+        assertTrue("Creator Eye drags freely in X/Y", eyeAfter.left < eyeBefore.left && eyeAfter.top < eyeBefore.top)
+
+        // Tap Eye button -> Creator View turns OFF immediately, chrome restores, Eye stays visible for 3s
+        composeRule.onNodeWithTag("creator_view_eye_button").performClick()
+        composeRule.waitForIdle()
+        assertFalse(vm.isCreatorViewActive.value)
+        composeRule.onNodeWithTag("top_add_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("creator_view_eye_button").assertIsDisplayed()
+
+        // After > 3s with no second tap, Eye button disappears automatically
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(3150L, java.util.concurrent.TimeUnit.MILLISECONDS)
+        composeRule.waitForIdle()
+        assertFalse(
+            "Creator Eye button must vanish after 3s grace period",
+            composeRule.onAllNodesWithTag("creator_view_eye_button").fetchSemanticsNodes().isNotEmpty()
+        )
     }
 }
 

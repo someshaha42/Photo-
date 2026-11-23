@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -705,7 +706,7 @@ fun ColorToolPanel(
 }
 
 @Composable
-private fun HSVColorWheelPicker(
+internal fun HSVColorWheelPicker(
     hue: Float,
     saturation: Float,
     value: Float,
@@ -791,4 +792,104 @@ private fun HSVColorWheelPicker(
             drawCircle(color = Color.White, radius = 6.dp.toPx(), center = thumbCenter, style = Stroke(2.dp.toPx()))
         }
     }
+}
+
+@Composable
+fun ColorPalettePickerDialog(
+    initialArgb: Long,
+    onColorSelected: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val initInt = initialArgb.toInt()
+    val initHsv = remember(initialArgb) {
+        FloatArray(3).also { AndroidColor.colorToHSV(initInt, it) }
+    }
+    var hue by remember(initialArgb) { mutableFloatStateOf(initHsv[0]) }
+    var sat by remember(initialArgb) { mutableFloatStateOf(initHsv[1].coerceAtLeast(0.01f)) }
+    var valBright by remember(initialArgb) { mutableFloatStateOf(initHsv[2].coerceAtLeast(0.15f)) }
+    var alphaFrac by remember(initialArgb) {
+        mutableFloatStateOf((AndroidColor.alpha(initInt) / 255f).coerceIn(0.05f, 1f))
+    }
+
+    val previewInt = AndroidColor.HSVToColor(
+        (alphaFrac.coerceIn(0f, 1f) * 255f).roundToInt().coerceIn(0, 255),
+        floatArrayOf(hue.coerceIn(0f, 360f), sat.coerceIn(0f, 1f), valBright.coerceIn(0f, 1f))
+    )
+    val previewArgbLong = previewInt.toLong() and 0xFFFFFFFFL
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("color_palette_dialog"),
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color(previewInt))
+                        .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                )
+                Column {
+                    Text("Custom Color", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = String.format("#%08X", previewInt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HSVColorWheelPicker(
+                    hue = hue,
+                    saturation = sat,
+                    value = valBright,
+                    onColorChanged = { h, s ->
+                        hue = h
+                        sat = s
+                    },
+                    onColorFinished = {},
+                    modifier = Modifier
+                        .size(164.dp)
+                        .testTag("color_palette_wheel")
+                )
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Brightness", style = MaterialTheme.typography.labelSmall)
+                    Slider(
+                        value = valBright,
+                        onValueChange = { valBright = it },
+                        valueRange = 0f..1f
+                    )
+                    Text("Opacity (${(alphaFrac * 100).roundToInt()}%)", style = MaterialTheme.typography.labelSmall)
+                    Slider(
+                        value = alphaFrac,
+                        onValueChange = { alphaFrac = it },
+                        valueRange = 0.05f..1f
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onColorSelected(previewArgbLong) },
+                modifier = Modifier.testTag("color_palette_apply_button")
+            ) {
+                Text("Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

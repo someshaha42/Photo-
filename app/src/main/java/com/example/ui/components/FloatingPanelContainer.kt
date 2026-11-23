@@ -5,6 +5,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +46,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -147,23 +150,54 @@ fun FloatingDraggableResizablePanel(
         val panelHdp = with(density) { effectiveHpx.toDp() }
 
         val shape = RoundedCornerShape(16.dp)
-        val dragModifier = Modifier.pointerInput(Unit) {
-            var swipeAccumY = 0f
-            detectDragGestures(
-                onDragStart = { swipeAccumY = 0f }
-            ) { change, dragAmount ->
-                change.consume()
-                panelX = (panelX + dragAmount.x).coerceIn(-effectiveWpx + minKeepVisiblePx, availWpx - minKeepVisiblePx)
-                panelY = (panelY + dragAmount.y).coerceIn(-effectiveHpx + minKeepVisiblePx, availHpx - minKeepVisiblePx)
-                if (onDismissSwipeDown != null) {
-                    swipeAccumY += dragAmount.y
-                    if (clampedY >= availHpx - effectiveHpx - 4f && swipeAccumY > with(density) { 64.dp.toPx() }) {
-                        swipeAccumY = 0f
-                        onDismissSwipeDown()
+        var dragHandleCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+        val dragModifier = Modifier
+            .onGloballyPositioned { dragHandleCoords = it }
+            .pointerInput(Unit) {
+                var swipeAccumY = 0f
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val coords = dragHandleCoords
+                    val startRoot = coords?.localToRoot(down.position) ?: down.position
+                    var lastRoot = startRoot
+                    var dragging = false
+                    swipeAccumY = 0f
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val active = event.changes.firstOrNull { it.id == down.id } ?: event.changes.firstOrNull()
+                        if (active == null || !active.pressed) {
+                            break
+                        }
+                        val curRoot = dragHandleCoords?.localToRoot(active.position) ?: active.position
+                        if (!dragging) {
+                            val dist = (curRoot - startRoot).getDistance()
+                            if (dist >= viewConfiguration.touchSlop) {
+                                dragging = true
+                                val delta = curRoot - lastRoot
+                                panelX = (panelX + delta.x).coerceIn(-effectiveWpx + minKeepVisiblePx, availWpx - minKeepVisiblePx)
+                                panelY = (panelY + delta.y).coerceIn(-effectiveHpx + minKeepVisiblePx, availHpx - minKeepVisiblePx)
+                                lastRoot = curRoot
+                                active.consume()
+                            }
+                        } else {
+                            val delta = curRoot - lastRoot
+                            if (delta != Offset.Zero) {
+                                panelX = (panelX + delta.x).coerceIn(-effectiveWpx + minKeepVisiblePx, availWpx - minKeepVisiblePx)
+                                panelY = (panelY + delta.y).coerceIn(-effectiveHpx + minKeepVisiblePx, availHpx - minKeepVisiblePx)
+                                if (onDismissSwipeDown != null) {
+                                    swipeAccumY += delta.y
+                                    if (panelY >= availHpx - effectiveHpx - 4f && swipeAccumY > with(density) { 64.dp.toPx() }) {
+                                        swipeAccumY = 0f
+                                        onDismissSwipeDown()
+                                    }
+                                }
+                            }
+                            lastRoot = curRoot
+                            active.consume()
+                        }
                     }
                 }
             }
-        }
 
         Surface(
             color = surfaceColor,

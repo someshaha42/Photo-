@@ -243,18 +243,20 @@ class FontRenderEngine(private val context: Context) {
         val layout = StaticLayout.Builder
             .obtain(styled, 0, styled.length, paint, layoutWidth)
             .setAlignment(alignment)
-            .setIncludePad(true)
+            .setIncludePad(false)
             .build()
-        val lineMaxW = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 28f
-        val pad = effectiveFontSizePx * 0.45f
+        val lineMaxW = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 20f
+        val strokeAllow = if (layer.strokeWidth > 0f) (layer.strokeWidth * (effectiveFontSizePx / 36f)).coerceAtMost(24f) else 0f
+        val padH = if (layer.bgPillEnabled) effectiveFontSizePx * 0.55f else effectiveFontSizePx * 0.12f + strokeAllow
+        val padV = if (layer.bgPillEnabled) effectiveFontSizePx * 0.35f else effectiveFontSizePx * 0.08f + strokeAllow
         val measuredW = if (clampedExactW != null) {
-            maxOf(clampedExactW, lineMaxW + pad * 0.4f).coerceIn(28f, maxWidthPx.coerceAtLeast(28f))
+            maxOf(clampedExactW, lineMaxW + padH * 0.5f).coerceIn(24f, maxWidthPx.coerceAtLeast(24f))
         } else {
-            (lineMaxW + pad).coerceIn(48f, maxWidthPx.coerceAtLeast(48f))
+            (lineMaxW + padH).coerceIn(24f, maxWidthPx.coerceAtLeast(24f))
         }
         return MeasuredTextBounds(
             widthPx = measuredW,
-            heightPx = (layout.height + pad).coerceAtLeast(48f)
+            heightPx = (layout.height + padV).coerceAtLeast(24f)
         )
     }
 

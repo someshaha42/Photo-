@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.os.Build
 import com.example.model.CornerPinOffsets
 import com.example.model.ImageCropRect
+import com.example.model.ImageCropShape
 import com.example.model.Layer3DTransform
 import com.example.model.LayerBlendMode
 import com.example.model.LayerEffectStyle
@@ -35,6 +36,66 @@ object LayerEffectsHelper {
         val padPx: Float,
         val recycledSource: Boolean
     )
+
+    /**
+     * Scans opaque pixels (alpha > 8) inside [cropNorm] + [cropShape] of [bmp] on a bounded sample grid
+     * and returns the tight normalized bounding rect inside [0f..1f]. Falls back cleanly to full 0..1
+     * when the bitmap is uniform/fully transparent.
+     */
+    fun computeTightOpaqueBoundsNorm(
+        bmp: Bitmap,
+        cropNorm: ImageCropRect = ImageCropRect(),
+        cropShape: ImageCropShape = ImageCropShape.RECTANGLE
+    ): RectF {
+        if (bmp.isRecycled || bmp.width <= 0 || bmp.height <= 0) return RectF(0f, 0f, 1f, 1f)
+        val norm = cropNorm.normalized()
+        val srcL = (norm.left * bmp.width).roundToInt().coerceIn(0, bmp.width - 1)
+        val srcT = (norm.top * bmp.height).roundToInt().coerceIn(0, bmp.height - 1)
+        val srcR = (norm.right * bmp.width).roundToInt().coerceIn(srcL + 1, bmp.width)
+        val srcB = (norm.bottom * bmp.height).roundToInt().coerceIn(srcT + 1, bmp.height)
+        val cw = (srcR - srcL).coerceAtLeast(1)
+        val ch = (srcB - srcT).coerceAtLeast(1)
+
+        val grid = 96
+        val stepX = max(1, cw / grid)
+        val stepY = max(1, ch / grid)
+        var minNx = 1f
+        var minNy = 1f
+        var maxNx = 0f
+        var maxNy = 0f
+        var found = false
+
+        var y = srcT
+        while (y < srcB) {
+            val ny = (y - srcT).toFloat() / ch.toFloat()
+            var x = srcL
+            while (x < srcR) {
+                val nx = (x - srcL).toFloat() / cw.toFloat()
+                val insideShape = if (cropShape == ImageCropShape.CIRCLE) {
+                    val dx = nx - 0.5f
+                    val dy = ny - 0.5f
+                    (dx * dx + dy * dy) <= 0.255f
+                } else true
+                if (insideShape && android.graphics.Color.alpha(bmp.getPixel(x, y)) > 8) {
+                    found = true
+                    if (nx < minNx) minNx = nx
+                    if (nx > maxNx) maxNx = nx
+                    if (ny < minNy) minNy = ny
+                    if (ny > maxNy) maxNy = ny
+                }
+                x += stepX
+            }
+            y += stepY
+        }
+        if (!found) return RectF(0f, 0f, 1f, 1f)
+        val padX = (stepX.toFloat() / cw.toFloat()).coerceAtLeast(1f / grid.toFloat())
+        val padY = (stepY.toFloat() / ch.toFloat()).coerceAtLeast(1f / grid.toFloat())
+        val l = (minNx - padX).coerceIn(0f, 0.96f)
+        val t = (minNy - padY).coerceIn(0f, 0.96f)
+        val r = (maxNx + padX).coerceIn(l + 0.04f, 1f)
+        val b = (maxNy + padY).coerceIn(t + 0.04f, 1f)
+        return RectF(l, t, r, b)
+    }
 
     fun toPorterDuffMode(blend: LayerBlendMode): PorterDuff.Mode {
         return when (blend) {

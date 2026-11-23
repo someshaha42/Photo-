@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.EmojiSourceMode
@@ -26,7 +27,11 @@ data class AppSettings(
     val exportResolutionPreset: ExportResolutionPreset = ExportResolutionPreset.RES_2K,
     val exportCustomWidth: Int = 1080,
     val exportCustomHeight: Int = 1080,
-    val previewWindowEnabled: Boolean = false
+    val previewWindowEnabled: Boolean = false,
+    val tabHideFeatureEnabled: Boolean = true,
+    val hiddenTabIds: Set<String> = emptySet(),
+    val creatorViewEnabled: Boolean = false,
+    val creatorViewColorArgb: Long = 0xFF00FF00L
 )
 
 class SettingsRepository(private val context: Context) {
@@ -41,6 +46,10 @@ class SettingsRepository(private val context: Context) {
         val EXPORT_CUSTOM_WIDTH = intPreferencesKey("export_custom_width")
         val EXPORT_CUSTOM_HEIGHT = intPreferencesKey("export_custom_height")
         val PREVIEW_WINDOW_ENABLED = booleanPreferencesKey("preview_window_enabled")
+        val TAB_HIDE_FEATURE_ENABLED = booleanPreferencesKey("tab_hide_feature_enabled")
+        val HIDDEN_TAB_IDS = stringPreferencesKey("hidden_tab_ids")
+        val CREATOR_VIEW_ENABLED = booleanPreferencesKey("creator_view_enabled")
+        val CREATOR_VIEW_COLOR_ARGB = longPreferencesKey("creator_view_color_argb")
     }
 
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -53,6 +62,11 @@ class SettingsRepository(private val context: Context) {
         val expPreset = runCatching {
             ExportResolutionPreset.valueOf(prefs[Keys.EXPORT_RES_PRESET] ?: ExportResolutionPreset.RES_2K.name)
         }.getOrDefault(ExportResolutionPreset.RES_2K)
+        val hiddenSet = (prefs[Keys.HIDDEN_TAB_IDS] ?: "")
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
 
         AppSettings(
             isDarkTheme = prefs[Keys.DARK_THEME] ?: true,
@@ -64,7 +78,11 @@ class SettingsRepository(private val context: Context) {
             exportResolutionPreset = expPreset,
             exportCustomWidth = (prefs[Keys.EXPORT_CUSTOM_WIDTH] ?: 1080).coerceIn(64, 8192),
             exportCustomHeight = (prefs[Keys.EXPORT_CUSTOM_HEIGHT] ?: 1080).coerceIn(64, 8192),
-            previewWindowEnabled = prefs[Keys.PREVIEW_WINDOW_ENABLED] ?: false
+            previewWindowEnabled = prefs[Keys.PREVIEW_WINDOW_ENABLED] ?: false,
+            tabHideFeatureEnabled = prefs[Keys.TAB_HIDE_FEATURE_ENABLED] ?: true,
+            hiddenTabIds = hiddenSet,
+            creatorViewEnabled = prefs[Keys.CREATOR_VIEW_ENABLED] ?: false,
+            creatorViewColorArgb = prefs[Keys.CREATOR_VIEW_COLOR_ARGB] ?: 0xFF00FF00L
         )
     }
 
@@ -89,6 +107,24 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setUnlimitedLayers(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.UNLIMITED_LAYERS] = enabled }
+    }
+
+    suspend fun setTabHideFeatureEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.TAB_HIDE_FEATURE_ENABLED] = enabled }
+    }
+
+    suspend fun setHiddenTabIds(ids: Set<String>) {
+        context.settingsDataStore.edit {
+            it[Keys.HIDDEN_TAB_IDS] = ids.sorted().joinToString(",")
+        }
+    }
+
+    suspend fun setCreatorViewEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.CREATOR_VIEW_ENABLED] = enabled }
+    }
+
+    suspend fun setCreatorViewColorArgb(argb: Long) {
+        context.settingsDataStore.edit { it[Keys.CREATOR_VIEW_COLOR_ARGB] = argb }
     }
 
     suspend fun setEmojiSource(mode: EmojiSourceMode, appEmojiFontId: String?) {
